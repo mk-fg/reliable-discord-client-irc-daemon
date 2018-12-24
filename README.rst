@@ -1,0 +1,20 @@
+reliable-discord-irc-client (rdirc)
+===================================
+
+Python3/asyncio daemon to present personal discord client as local irc server,
+with a list of channels corresponding to ones available on connected discord
+hubs ("servers").
+
+One additional "reliable" quirk is that plan is to have it actually connect to
+discord under two separate accounts ("main" and "ghost"), and have these monitor
+same channels to detect when stuff posted by the "main" account doesn't make it,
+or any other messages don't get relayed to either of the accounts,
+which is unfortunately an issue that discord API seem to have from time to time.
+
+Under development and not ready for use yet.
+
+
+Requirements
+------------
+
+* `Python 3.7+ <http://python.org/>`_
