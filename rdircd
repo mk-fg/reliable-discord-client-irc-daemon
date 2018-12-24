@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+import os, sys, logging, contextlib, asyncio, socket, signal
+
+
+class LogMessage:
+	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
+	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
+
+class LogStyleAdapter(logging.LoggerAdapter):
+	def __init__(self, logger, extra=None):
+		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def log(self, level, msg, *args, **kws):
+		if not self.isEnabledFor(level): return
+		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		msg, kws = self.process(msg, kws)
+		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
+def sockopt_resolve(prefix, v):
+	prefix = prefix.upper()
+	for k in dir(socket):
+		if not k.startswith(prefix): continue
+		if getattr(socket, k) == v: return k[len(prefix):]
+	return v
+
+
+
+async def run_ircd(loop, sock_af, sock_p, host, port):
+	# transport, proto = await loop.create_datagram_endpoint(
+	# 	lambda: MuxServerProtocol(loop), local_addr=(host, port), family=sock_af, proto=sock_p )
+	return
+
+
+
+class RDIRCDConfig:
+	irc_bind = '127.0.0.1', 6667
+
+
+def main(args=None, conf=None):
+	if not conf: conf = RDIRCDConfig()
+
+	import argparse
+	parser = argparse.ArgumentParser(
+		description='Reliable personal discord-client to irc-server translation daemon.')
+
+	parser.add_argument('-i', '--irc-bind', default='127.0.0.1:6667',
+		help='Address/host (to be resolved via gai) and port to bind IRC server to.'
+			' When specifying port after raw IPv6 address, enclose the latter in [],'
+			' for example - [::]:6667. Default: %(default)s')
+
+	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	global log
+	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log = get_logger('main')
+
+	host, port = opts.irc_bind, conf.irc_bind[1]
+	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
+	else: host, port = str_part(host, ':>', port)
+	port = int(port)
+
+	try:
+		addrinfo = socket.getaddrinfo(
+			host, str(port), type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
+		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
+	except (socket.gaierror, socket.error) as err:
+		parser.error( 'Failed to resolve irc socket parameters (address, family)'
+			' via getaddrinfo: {!r} - [{}] {}'.format((host, port), err.__class__.__name__, err) )
+	sock_af, sock_t, sock_p, _, sock_addr = addrinfo[0]
+	log.debug(
+		'Resolved irc host:port {!r}:{!r} to endpoint: {} (family: {}, type: {}, proto: {})',
+		host, port, sock_addr, *(sockopt_resolve(pre, n)
+			for pre, n in [('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p)]) )
+
+	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		ircd = loop.create_task(run_ircd(loop, sock_af, sock_p, host, port))
+		for sig in 'INT TERM'.split():
+			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ircd.cancel)
+		try: return loop.run_until_complete(ircd)
+		except asyncio.CancelledError: return
+
+if __name__ == '__main__': sys.exit(main())
