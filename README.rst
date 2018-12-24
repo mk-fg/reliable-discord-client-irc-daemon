@@ -2,8 +2,8 @@ Reliable Discord-client IRC Daemon (rdircd)
 ===========================================
 
 Python3/asyncio daemon to present personal discord client as local irc server,
-with a list of channels corresponding to ones available on all "connected" discord
-channel-hubs (or "servers" as discord confusingly calls these).
+with a list of channels corresponding to ones available on all joined "discord
+servers" (group of users/channels with its own theme/auth/rules on discord).
 
 One additional "reliable" quirk is that the plan is to have it actually connect
 to discord under two separate accounts ("main" and "ghost"), and have these

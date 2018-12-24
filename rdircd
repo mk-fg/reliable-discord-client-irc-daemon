@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 
-import os, sys, logging, contextlib, asyncio, socket, signal
+import os, sys, logging, re
+import contextlib, asyncio, socket, signal, inspect
+import datetime as dt, collections as cs
 
+
+err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 
 class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
@@ -31,17 +35,349 @@ def sockopt_resolve(prefix, v):
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
 
+class adict(dict):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.__dict__ = self
+
+str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 
-async def run_ircd(loop, sock_af, sock_p, host, port):
-	# transport, proto = await loop.create_datagram_endpoint(
-	# 	lambda: MuxServerProtocol(loop), local_addr=(host, port), family=sock_af, proto=sock_p )
-	return
+
+class IRCProtocolError(Exception): pass
+class IRCProtocolArgsError(IRCProtocolError): pass
+
+class IRCProtocol:
+
+	# Extensive lists of modes are copied from freenode to make clients happy
+	feats_modes = 'DOQRSZaghilopswz CFILMPQSbcefgijklmnopqrstvz'
+	feats_support = ( 'AWAYLEN=200 CASEMAPPING=ascii'
+		' CHANLIMIT=#:512 CHANTYPES=# CHANMODES=eIbq,k,flj,CFLMPQScgimnprstz'
+		' CHANNELLEN=80 ELIST=C NETWORK=rdircd NICKLEN=64'
+		' PREFIX=(ov)@+ SAFELIST STATUSMSG=@+ TOPICLEN=390 USERLEN=32' ).split()
+
+	@classmethod
+	def factory_for_bridge(cls, rdircd):
+		def _wrapper():
+			try: return cls(rdircd)
+			except Exception as err:
+				log = get_logger('rdircd.irc')
+				log.exception('Failed to initialize ircd protocol: {}', err_fmt(err))
+				log.critical('Stopping daemon due to unhandled protocol error')
+				loop.stop()
+		return _wrapper
+
+	def __init__(self, rdircd):
+		self.transport, self.buff = None, b''
+		self.bridge, self.loop = rdircd, rdircd.loop
+		self.log = get_logger('rdircd.irc')
+		self.st = adict(
+			nick=None, user=None, host=None, auth=False,
+			cap_neg=False, chan_set=list() )
+
+	def connection_made(self, tr):
+		host, port = tr.get_extra_info('peername')[:2]
+		self.log.debug('Connection from {}', host)
+		self.transport, self.st.host = tr, host
+		self.send('NOTICE * :*** rdircd ready')
+		self.bridge.irc_conn_new(self)
+
+	def data_received(self, data):
+		data_len, data_repr = self._repr(data, True)
+		self.log.debug('<<< [{}] {}', data_len, data_repr)
+		self.buff += data
+		while b'\n' in self.buff:
+			line, self.buff = self.buff.split(b'\n', 1)
+			if not line.strip(): continue
+			self.recv(line)
+
+	def eof_received(self): pass
+	def connection_lost(self, err):
+		self.log.debug('Connection lost: {}', err or 'closed cleanly')
+		self.bridge.irc_conn_lost(self)
+
+	def data_send(self, data):
+		data_len, data_repr = self._repr(data, True)
+		self.log.debug(' >> [{}] {}', data_len, data_repr)
+		self.transport.write(data)
+
+
+	def _repr(self, data, prefix=False, max_len=99, ext=' [{data_len}]'):
+		if isinstance(data, str): data = data.encode()
+		data_len, data_repr, ext_len = f'{len(data):03,d}', repr(data)[2:-1], len(ext)
+		if len(data_repr) > max_len:
+			data_len = f'{max_len}/{data_len}'
+			data_repr = data_repr[:max_len - ext_len] + ext.format(data_len=data_len)
+		return (data_len, data_repr) if prefix else data_repr
+
+	def _parse(self, line):
+		m = adict(line=line, params=list())
+		for k in '@tags', ':src':
+			pre, k = k[0], k[1:]
+			if line.startswith(pre):
+				try: m[k], line = line.split(' ', 1)
+				except ValueError:
+					raise IRCProtocolLineError(line) from None
+				line = line.lstrip(' ')
+			else: m[k] = None
+		while True:
+			if line.startswith(':'):
+				m.params.append(line[1:])
+				break
+			if ' ' in line:
+				param, line = line.split(' ', 1)
+				line = line.lstrip(' ')
+			else: param, line = line, ''
+			m.params.append(param)
+			if not line: break
+		if m.params: m.cmd, m.params = m.params[0].lower(), m.params[1:]
+		else: raise IRCProtocolLineError(line)
+		return m
+
+	def send(self, line_or_code, *args):
+		line = line_or_code
+		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
+		if args: line += ' ' + ' '.join(args)
+		if isinstance(line, str): line = line.encode()
+		if not line.endswith(b'\n'): line += b'\r\n'
+		if len(line) >= 500:
+			self.log.warning('Sending line with >500B: {!r}', self._repr(line))
+		self.data_send(line)
+
+	def recv(self, line_raw, _cmd_cache=dict()):
+		if isinstance(line_raw, str): line = line_raw
+		else:
+			try: line = line_raw.decode().strip()
+			except UnicodeDecodeError:
+				return self.log.error('Failed to decode line as utf-8: {!r}', self._repr(line_raw))
+		try: m = self._parse(line)
+		except IRCProtocolLineError:
+			return self.log.error('Line protocol error: {!r}', self._repr(line_raw))
+		cmd_cache = _cmd_cache.get(m.cmd)
+		if cmd_cache: cmd_func, cmd_ps_n = cmd_cache
+		else:
+			cmd_func, cmd_ps_n = getattr(self, f'recv_cmd_{m.cmd}', None), 0
+			if cmd_func:
+				args = list(inspect.signature(cmd_func).parameters.values())
+				cmd_ps_n = len(args)
+				if cmd_ps_n == 1 and args[0].annotation == 'msg': cmd_ps_n = None
+				else: cmd_ps_n = cmd_ps_n - sum(1 for p in args if p.default is not p.empty), cmd_ps_n
+			_cmd_cache[m.cmd] = cmd_func, cmd_ps_n
+		if not cmd_func:
+			self.log.error('Unhandled cmd: {!r}', self._repr(line_raw))
+			return self.send(421, ':Unknown command')
+		if not self.check_access(m.cmd):
+			return self.log.error('Out-of-order cmd: {!r}', self._repr(line_raw))
+		if cmd_ps_n is None: cmd_func(m)
+		else:
+			(a, b), n = cmd_ps_n, len(m.params)
+			if not a <= n <= b:
+				self.log.error( 'Command/args'
+					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr(line) )
+				return self.send(461, ':Incorrect command parameters')
+			cmd_func(*m.params)
+
+	def check_access(self, cmd):
+		if self.st.cap_neg: return cmd in ['cap', 'quit']
+		if not (self.st.nick and self.st.user):
+			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
+			if not res: self.send(451, ':You have not registered')
+			return res
+		res = cmd not in ['user', 'pass']
+		if not res: self.send(462, ':You may not reregister')
+		return res
+
+	def recv_cmd_ping(self, server, server_dst=None):
+		self.send(f'PONG {self.bridge.server_host}')
+
+	def recv_cmd_cap(self, sub, caps=''):
+		sub = sub.lower()
+		if sub == 'ls':
+			self.send('CAP * LS :')
+			if caps == '302': self.st.cap_neg = True
+		elif sub == 'list': self.send('CAP * LIST :')
+		elif sub == 'req':
+			self.st.cap_neg = True
+			reject = set(c for c in caps.split() if not c.startswith('-'))
+			if reject: self.send(f'CAP * NAK :{caps}')
+			else: self.send(f'CAP * ACK :{caps}')
+		elif sub == 'end': self.st.cap_neg = False
+
+	def recv_cmd_pass(self, pw):
+		self.st.pw = pw
+		self.check_auth_done()
+	def recv_cmd_user(self, name, a, b, real_name):
+		self.st.update(user=name, real_name=real_name)
+		self.check_auth_done()
+	def recv_cmd_nick(self, nick):
+		if not re.search(r'^[a-zA-Z-._]+$', nick):
+			return self.send(432, nick, ':Erroneus nickname')
+		if self.st.nick: self.send(':{self.st.nick} NICK {nick}')
+		self.st.nick = nick
+		self.check_auth_done()
+
+	def check_auth_done(self):
+		if self.st.auth: return
+		if not (self.st.nick and self.st.user): return
+		self.st.auth = True
+		self.send(1, f':Welcome to the rdircd discord-irc bridge, {self.st.nick}')
+		self.send(2,
+			f':Your host is {self.bridge.server_host},'
+			f' running rdircd {self.bridge.server_ver}' )
+		self.send(3, ':This server was created at {}'.format(
+			self.bridge.server_ts.strftime('%Y-%m-%d %H:%M:%S UTC') ))
+		self.send(4, f'{self.bridge.server_host} rdircd-{self.bridge.server_ver} {self.feats_modes}')
+		self.send_feats()
+		self.send_stats()
+		self.send_motd()
+
+	def send_feats(self):
+		feat_line, ext = list(), ':are supported by this server'
+		for feat in self.feats_support:
+			n, msg_len = len(feat_line), sum((len(f)+2) for f in feat_line)
+			if n >= 10 or msg_len >= 200:
+				self.send(5, ' '.join(feat_line), ext)
+				feat_line.clear()
+			feat_line.append(feat)
+		self.send(5, ' '.join(feat_line), ext)
+
+	def send_stats(self):
+		s = self.bridge.irc_conn_stats()
+		self.send(251, f':There are {s.auth} users and 0 invisible on {s.servers} server(s)')
+		self.send(252, f'{s.op} :IRC Operators online')
+		self.send(253, f'{s.unknown} :unknown connection(s)')
+		self.send(254, f'{s.chans} :channels formed')
+		self.send(255, f':I have {s.total} client(s) and {s.servers} server(s)')
+		self.send( 265, f'{s.total} {s.total_max}',
+			f':Current local users {s.total}, max {s.total_max}' )
+		self.send( 266, f'{s.total} {s.total_max}',
+			f':Current global users {s.total}, max {s.total_max}' )
+
+	def send_motd(self): self.send(422, ':MOTD File is missing')
+
+	def recv_cmd_quit(self, reason=None):
+		self.send('ERROR :Connection closed')
+		self.transport.close()
+
+	def recv_cmd_join(self, chan, key=None):
+		chan_list = chan.split(',')
+		self.log.warning('XXX: join {}', chan_list)
+		for chan in chan_list:
+			self.send(403, chan, ':No such channel') # XXX
+			# self.send(324, chan, mode_str, *mode_args)
+			# if not topic: self.send(331, chan, ':No topic is set')
+			# else:
+			# 	self.send(332, chan, ':XXX: channel topic here')
+			# 	self.send(333, chan, nick, set_at_unix_timestamp) # after 332
+			# # See https://modern.ircdocs.horse/#rplnamreply-353
+			# for name in names.chunks(512-cmd-len):
+			# 	self.send(353, '=', chan, :[prefix]<nick>{ [prefix]<nick>})
+			# self.send(366, chan, ':End of /NAMES list')
+
+	def recv_cmd_part(self, chan, reason=None):
+		chan_list = chan.split(',')
+		for chan in chan_list:
+			self.send(403, chan, ':No such channel') # XXX
+			# if chan not in ...: self.send(403, chan, ':No such channel')
+			# if chan in self.st.chan_set: self.send(f'PART {chan}')
+			# else: self.send(442, chan, ':You are not on that channel')
+
+	def recv_cmd_topic(self, chan, topic=None):
+		self.send(403, chan, ':No such channel') # XXX
+		# topic = ...
+		# if not topic: self.send(331, chan, ':No topic is set')
+		# else: # XXX: may return 442 if it's hard to fetch
+		# 	self.send(332, chan, ':XXX: channel topic here')
+		# 	self.send(333, chan, nick, set_at_unix_timestamp) # after 332
+
+	def recv_cmd_names(self, chan):
+		chan_list = chan.split(',')
+		for chan in chan_list:
+			self.send(403, chan, ':No such channel') # XXX
+			# # See https://modern.ircdocs.horse/#rplnamreply-353
+			# for name in names.chunks(512-cmd-len):
+			# 	self.send(353, '=', chan, :[prefix]<nick>{ [prefix]<nick>})
+			# self.send(366, chan, ':End of /NAMES list')
+
+	def recv_cmd_list(self, chan=None, cond=None):
+		# XXX: searching for new channels (ELIST=C) might be nice to have
+		self.send(321, 'Channel :Users  Name')
+		for c in self.discord_chans: self.send(322, c.name, c.users, ':{c.topic}')
+		self.send(321, ':End of /LIST')
+
+	def recv_cmd_motd(self, target=None): self.send_motd()
+
+	def recv_cmd_version(self, target=None):
+		# XXX: also send RPL_ISUPPORT here
+		self.send(351, self.bridge.server_ver, 'rdircd', ':rdircd discord-to-irc bridge')
+
+	# XXX: more server info commands
+	# def recv_cmd_admin(self):
+	# def recv_cmd_connect(self):
+	# def recv_cmd_time(self):
+	# def recv_cmd_stats(self):
+	# def recv_cmd_info(self):
+	# def recv_cmd_mode(self): # https://modern.ircdocs.horse/#mode-message
+
+	# XXX: msg commands
+	# def recv_cmd_privmsg(self, target, text): # https://modern.ircdocs.horse/#privmsg-message
+	# def recv_cmd_notice(self, target, text):
+
+	def recv_cmd_userhost(self, nick):
+		if str_norm(nick) == str_norm(self.st.nick):
+			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
+		else: self.send(401, nick, ':No such nick/channel') # XXX: info for discord nicks
+
+	# def recv_cmd_whois(self, nick): # XXX: RPL_*WHOIS* + discord info via notices?
+
+
+
+class RDIRCD:
+
+	def __init__(self, loop, conf):
+		self.conf, self.loop = conf, loop
+		self.log = get_logger('rdircd.bridge')
+
+	async def __aenter__(self):
+		self.server_ver = '1.0.0'
+		self.server_ts = dt.datetime.utcnow()
+		self.server_host = os.uname().nodename
+		self.irc_conns, self.irc_conns_max = dict(), 0
+		return self
+	async def __aexit__(self, *err): pass
+
+	async def run(self):
+		ircd = await self.loop.create_server(
+			IRCProtocol.factory_for_bridge(self),
+			self.conf.irc_host, self.conf.irc_port,
+			family=self.conf.irc_host_af, start_serving=False )
+		# XXX: connect to discord here
+		await ircd.serve_forever()
+
+	async def run_async(self):
+		async with self: await self.run()
+
+	def irc_conn_new(self, irc):
+		self.irc_conns[id(irc)] = irc
+		self.irc_conns_max = max(self.irc_conns_max, len(self.irc_conns))
+	def irc_conn_lost(self, irc): self.irc_conns.pop(id(irc), None)
+	def irc_conn_stats(self):
+		stats = adict(
+			servers=1, chans=0, # XXX: number of servers/chans from discord
+			total=0, total_max=self.irc_conns_max, unknown=0, auth=0, op=0 )
+		for conn in self.irc_conns.values():
+			stats.total += 1
+			if conn.st.auth: stats.auth += 1
+			else: stats.unknown += 1
+		return stats
 
 
 
 class RDIRCDConfig:
-	irc_bind = '127.0.0.1', 6667
+	irc_host = '127.0.0.1'
+	irc_port = 6667
+	irc_host_af = None
+
 
 
 def main(args=None, conf=None):
@@ -51,7 +387,8 @@ def main(args=None, conf=None):
 	parser = argparse.ArgumentParser(
 		description='Reliable personal discord-client to irc-server translation daemon.')
 
-	parser.add_argument('-i', '--irc-bind', default='127.0.0.1:6667',
+	parser.add_argument('-i', '--irc-bind',
+		metavar='host(:port)', default=f'{conf.irc_host}:{conf.irc_port}',
 		help='Address/host (to be resolved via gai) and port to bind IRC server to.'
 			' When specifying port after raw IPv6 address, enclose the latter in [],'
 			' for example - [::]:6667. Default: %(default)s')
@@ -59,18 +396,24 @@ def main(args=None, conf=None):
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	global log
-	logging.basicConfig(level=logging.DEBUG if opts.debug else logging.WARNING)
+	log_fmt = '%(name)-8s %(levelname)5s :: %(message)s'
+	if opts.debug: log_fmt = '%(asctime)s :: ' + log_fmt
+	log_fmt = logging.Formatter(log_fmt)
+	log_handler = logging.StreamHandler(sys.stderr)
+	log_handler.setLevel(logging.DEBUG if opts.debug else logging.WARNING)
+	log_handler.setFormatter(log_fmt)
+	logging.root.addHandler(log_handler)
+	logging.root.setLevel(0)
 	log = get_logger('main')
 
-	host, port = opts.irc_bind, conf.irc_bind[1]
+	host, port, family = opts.irc_bind, conf.irc_port, 0
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
 	else: host, port = str_part(host, ':>', port)
-	port = int(port)
-
+	if '[' in host: family = socket.AF_INET6
+	host, port = host.strip('[]'), int(port)
 	try:
-		addrinfo = socket.getaddrinfo(
-			host, str(port), type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
+		addrinfo = socket.getaddrinfo( host, str(port),
+			family=family, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
 		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
 	except (socket.gaierror, socket.error) as err:
 		parser.error( 'Failed to resolve irc socket parameters (address, family)'
@@ -80,12 +423,18 @@ def main(args=None, conf=None):
 		'Resolved irc host:port {!r}:{!r} to endpoint: {} (family: {}, type: {}, proto: {})',
 		host, port, sock_addr, *(sockopt_resolve(pre, n)
 			for pre, n in [('af_', sock_af), ('sock_', sock_t), ('ipproto_', sock_p)]) )
+	assert ( sock_t == socket.SOCK_STREAM
+		and sock_p == socket.IPPROTO_TCP ), [sock_t, sock_p]
+	conf.irc_host_af, (conf.irc_host, conf.irc_port) = sock_af, sock_addr[:2]
 
+	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		ircd = loop.create_task(run_ircd(loop, sock_af, sock_p, host, port))
+		rdircd = RDIRCD(loop, conf)
+		rdircd_task = loop.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
-			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), ircd.cancel)
-		try: return loop.run_until_complete(ircd)
-		except asyncio.CancelledError: return
+			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
+		try: return loop.run_until_complete(rdircd_task)
+		except asyncio.CancelledError: pass
+	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
