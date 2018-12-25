@@ -21,22 +21,24 @@ Usage
 - Go to https://discordapp.com/developers/applications/#top and register your
   fork or instance of the app.
 
-  These discord client app id/secret can be - and usually are - hardcoded into
-  the application, so that every user don't need to go get them,
-  but as I'm probably the only one using this one, don't see much reason to bother.
+  Discord client_id can be hardcoded into the app, so that every user don't need
+  to go get it, but as I'm probably the only one using this one, don't see much
+  reason to bother.
 
-- In OAuth2 tab there, type https://localhost as a redirect URL,
-  select it and "messages.read" scope, copy resulting /api/oauth2/authorize
-  URL into ~/.rdircd.ini file like this one::
+- In OAuth2 tab there, find "Client ID" (big number) and copy it into
+  ~/.rdircd.ini file like this one::
 
     [irc]
     password = xyzxyz123
 
     [discord]
-    auth-url = https://discordapp.com/api/oauth2/authorize?client_id=...
+    client-id = 157730590492196864
 
   That ini file will be updated with [auth] section by the script to store
   OAuth2 credentials, but it should not touch anything else there.
+
+  If whole file or that client-id is missing there,
+  script will prompt for it interactively.
 
 - Run ./rdircd and it will present an URL for browser and a prompt for
   redirected-to URL after access is granted there - fill that in.

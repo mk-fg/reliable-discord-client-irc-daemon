@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import os, sys, io, stat, logging, re
-import contextlib, asyncio, socket, signal, inspect, unicodedata
+import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
 
@@ -223,7 +223,7 @@ class IRCProtocol:
 		elif sub == 'end': self.st.cap_neg = False
 
 	def recv_cmd_pass(self, pw):
-		self.st.pw = pw
+		self.st.pw = pw # XXX: check vs config
 		self.check_auth_done()
 	def recv_cmd_user(self, name, a, b, real_name):
 		self.st.update(user=name, real_name=real_name)
@@ -351,6 +351,79 @@ class IRCProtocol:
 
 
 
+class DiscordError(Exception): pass
+
+class Discord:
+
+	api_url = 'https://discordapp.com/api/v6'
+
+	def __init__(self, loop, conf):
+		self.loop, self.conf = loop, conf
+		self.log = get_logger('rdircd.discord')
+
+	async def __aenter__(self):
+		await self.fill_in_client_creds()
+		return self
+	async def __aexit__(self, *err): pass
+
+	async def fill_in_client_creds(self):
+		def stdin_line_reader(fut):
+			self.loop.remove_reader(sys.stdin.fileno())
+			fut.set_result(sys.stdin.readline())
+		async def read_stdin_line():
+			input_line = asyncio.Future()
+			self.loop.add_reader(sys.stdin.fileno(), stdin_line_reader, input_line)
+			return (await input_line).strip() or ''
+		if not self.conf.discord_client_id:
+			print('\n'.join([ '',
+				'There is no "client-id" specified under "[discord]"',
+				f'  section of the config file ({self.conf._conf_path}).',
+				'Go to following URL via browser:',
+				'  https://discordapp.com/developers/applications/#top',
+				'Register app there, in OAuth2 tab find'
+				'  "Client ID" (big number) and copy-paste it below.',
+				'Client ID: ' ]), end='')
+			while True:
+				client_id = await read_stdin_line()
+				if client_id.isdigit() and len(client_id) > 10: break
+				print('\n'.join([
+					f'!!! ERROR: Entered client ID looks bogus - {client_id!r}',
+					'Client ID: ' ]), end='')
+			self.conf.discord_client_id = client_id
+			self.conf.update_file_section('discord', ['client_id'])
+			print(f'--- Discord Client ID stored in config file: {self.conf._conf_path}')
+		if not self.conf.auth_code: # XXX: multiple accs - multiple codes
+			print('\n'.join([ '',
+				'Filling-in per-account auth_code value for client.',
+				'Go to following URL via browser:',
+				'  ' 'https://discordapp.com/api/oauth2/authorize?'
+					f'client_id={self.conf.discord_client_id}&redirect_uri=https%3A%2F%2Flocalhost'
+					'&response_type=code&scope=messages.read',
+				'Discord will ask whether app should be authorized'
+				'  for access and redirect to some localhost URL after that.',
+				'Copy-paste that final redirect-to URL below.',
+				'Redirect-to URL: ' ]), end='')
+			while True:
+				url = await read_stdin_line()
+				try:
+					if not re.search(r'https?://.*?\?.*\bcode=', url):
+						raise ValueError('This does not look like an URL')
+					parts = urllib.parse.urlparse(url)
+					qs = urllib.parse.parse_qs(parts.query)
+					code = qs['code'][-1]
+				except Exception as err:
+					print('\n'.join([
+						f'!!! ERROR: Entered redirect URL looks bogus - {url!r}',
+						f'!!! ERROR: Specific error - {err_fmt(err)}',
+						'Redirect-to URL: ' ]), end='')
+					continue
+				else: break
+			self.conf.auth_code = code
+			self.conf.update_file_section('auth', ['code'])
+			print(f'--- Discord Auth Code stored in config file: {self.conf._conf_path}')
+
+
+
 class RDIRCD:
 
 	def __init__(self, loop, conf):
@@ -370,8 +443,9 @@ class RDIRCD:
 			IRCProtocol.factory_for_bridge(self),
 			self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False )
-		# XXX: connect to discord here
-		await ircd.serve_forever()
+		async with Discord(self.loop, self.conf) as discord:
+			# XXX: pass self to discord for control hooks and events
+			await ircd.serve_forever()
 
 	async def run_async(self):
 		async with self: await self.run()
@@ -399,7 +473,7 @@ class RDIRCDConfig:
 	irc_password = ''
 	irc_host_af = 0
 
-	discord_auth_url = ''
+	discord_client_id = ''
 
 	auth_code = ''
 	auth_token = ''
@@ -485,6 +559,7 @@ class RDIRCDConfig:
 				dst.write(f'{k} = {v}\n')
 
 
+
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
@@ -564,7 +639,7 @@ def main(args=None, conf=None):
 	logging.root.setLevel(0)
 	log = get_logger('main')
 
-	host, port, family = opts.irc_bind, conf.irc_port, conf.irc_host_af
+	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
 	else: host, port = str_part(host, ':>', port)
 	if '[' in host: family = socket.AF_INET6
@@ -587,6 +662,7 @@ def main(args=None, conf=None):
 
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
+		# if opts.debug: loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
 		rdircd_task = loop.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
