@@ -2,7 +2,7 @@
 
 import os, sys, logging, re
 import contextlib, asyncio, socket, signal, inspect
-import datetime as dt, collections as cs
+import configparser, datetime as dt, collections as cs
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -335,7 +335,7 @@ class IRCProtocol:
 class RDIRCD:
 
 	def __init__(self, loop, conf):
-		self.conf, self.loop = conf, loop
+		self.loop, self.conf = loop, conf
 		self.log = get_logger('rdircd.bridge')
 
 	async def __aenter__(self):
@@ -374,29 +374,129 @@ class RDIRCD:
 
 
 class RDIRCDConfig:
+
 	irc_host = '127.0.0.1'
 	irc_port = 6667
-	irc_host_af = None
+	irc_password = ''
+	irc_host_af = 0
 
+	discord_auth_url = ''
+
+	auth_code = ''
+	auth_token = ''
+	auth_token_refresh = ''
+
+	# XXX: options for well-timestamped protocol logs
+
+	_conf_path = '~/.rdircd.ini'
+	_conf_sections = 'irc', 'discord', 'auth'
+
+	def __repr__(self): return repr(vars(self))
+	def get(self, *k): return getattr(self, '_'.join(k))
+
+	def pprint(self, title=None):
+		cat, chk = None, re.compile(
+			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
+		if title: print(f';; {title}')
+		for k in sorted(dir(self)):
+			m = chk.search(k)
+			if not m: continue
+			if m.group(1) != cat:
+				cat = m.group(1)
+				print(f'\n[{cat}]')
+			v = self.get(k)
+			if isinstance(v, bool): v = ['no', 'yes'][v]
+			k = m.group(2).replace('_', '-')
+			print(f'{k} = {v}')
+
+	def update_from_file(self, config, section='default', prefix=None):
+		for k in dir(self):
+			if prefix:
+				if not k.startswith(prefix): continue
+				conf_k, k = k, k[len(prefix):]
+			elif k.startswith('_'): continue
+			else: conf_k = k
+			v = getattr(self, conf_k)
+			if isinstance(v, str): get_val = lambda *a: str(config.get(*a, raw=True))
+			elif isinstance(v, bool): get_val = config.getboolean
+			elif isinstance(v, int): get_val = lambda *a: int(re.sub(r'[ _]', '', config.get(*a)))
+			elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
+			else: continue # values with other types cannot be specified in config
+			for k_conf in {k, k.replace('_', '-')}:
+				try: setattr(self, conf_k, get_val(section, k_conf))
+				except configparser.NoSectionError: pass
+				except configparser.NoOptionError: pass
 
 
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
-	import argparse
+	import argparse, textwrap
+	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	text_fill = lambda s,w=100,ind='\t',ind_next=None,**k: textwrap.fill(
+		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
+	class SmartHelpFormatter(argparse.HelpFormatter):
+		def __init__(self, *args, **kws):
+			return super().__init__(*args, **kws, width=100)
+		def _fill_text(self, text, width, indent):
+			if '\n' not in text: return super()._fill_text(text, width, indent)
+			return ''.join( indent + line
+				for line in text.replace('\t', '  ').splitlines(keepends=True) )
+		def _split_lines(self, text, width):
+			return super()._split_lines(text, width)\
+				if '\n' not in text else dedent(text).splitlines()
+
 	parser = argparse.ArgumentParser(
+		formatter_class=SmartHelpFormatter,
 		description='Reliable personal discord-client to irc-server translation daemon.')
 
-	parser.add_argument('-i', '--irc-bind',
-		metavar='host(:port)', default=f'{conf.irc_host}:{conf.irc_port}',
-		help='Address/host (to be resolved via gai) and port to bind IRC server to.'
-			' When specifying port after raw IPv6 address, enclose the latter in [],'
-			' for example - [::]:6667. Default: %(default)s')
+	group = parser.add_argument_group('Configuration file(s)')
+	group.add_argument('-c', '--conf',
+		metavar='file', action='append',
+		help=f'''
+			Path to configuration file to use.
+			It will get updated with OAuth2 credentials
+				(only adding or changing [auth] section), so has to be writable.
+			Default: {conf._conf_path}''')
+	group.add_argument('--conf-dump', action='store_true',
+		help='Print all configuration settings, which will be used with'
+			' currently detected (and/or specified) configuration file(s), and exit.')
+	group.add_argument('--conf-dump-defaults', action='store_true',
+		help='Print all default settings, which would be used'
+			' if no configuration file(s) were overriding these, and exit.')
+
+	group = parser.add_argument_group('Interfaces')
+	group.add_argument('-i', '--irc-bind', metavar='host(:port)',
+		help=f'''
+			Address/host (to be resolved via gai) and port to bind IRC server to.
+			When specifying port after raw IPv6 address,
+				enclose the latter in [], for example - [::]:6667.
+			Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.''')
 
 	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	log_fmt = '%(name)-8s %(levelname)5s :: %(message)s'
+	if opts.conf_dump_defaults:
+		conf.pprint('Default configuration options')
+		return
+
+	conf_file = configparser.ConfigParser(allow_no_value=True)
+	conf_user_paths = list(map(
+		os.path.expanduser, opts.conf or [conf._conf_path] ))
+	for n, p in enumerate(conf_user_paths):
+		mode = os.R_OK
+		if n == len(conf_user_paths) - 1: mode |= os.W_OK
+		if not os.access(p, mode):
+			parser.error(f'Specified config file missing or inaccessible: {p}')
+	conf_file.read(conf_user_paths)
+	for k in conf._conf_sections:
+		conf.update_from_file(conf_file, section=k, prefix=f'{k}_')
+
+	if opts.conf_dump:
+		conf.pprint('Current configuration options')
+		return
+
+	log_fmt = '%(name)s %(levelname)5s :: %(message)s'
 	if opts.debug: log_fmt = '%(asctime)s :: ' + log_fmt
 	log_fmt = logging.Formatter(log_fmt)
 	log_handler = logging.StreamHandler(sys.stderr)
@@ -406,7 +506,7 @@ def main(args=None, conf=None):
 	logging.root.setLevel(0)
 	log = get_logger('main')
 
-	host, port, family = opts.irc_bind, conf.irc_port, 0
+	host, port, family = opts.irc_bind, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
 	else: host, port = str_part(host, ':>', port)
 	if '[' in host: family = socket.AF_INET6
