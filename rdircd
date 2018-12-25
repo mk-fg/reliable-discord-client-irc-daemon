@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-import os, sys, logging, re
-import contextlib, asyncio, socket, signal, inspect
-import configparser, datetime as dt, collections as cs
+import os, sys, io, stat, logging, re
+import contextlib, asyncio, socket, signal, inspect, unicodedata
+import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -41,6 +41,25 @@ class adict(dict):
 		self.__dict__ = self
 
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
+
+@contextlib.contextmanager
+def safe_replacement(path, *open_args, mode=None, **open_kws):
+	path = str(path)
+	if mode is None:
+		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
+		except OSError: pass
+	open_kws.update( delete=False,
+		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	if not open_args: open_kws['mode'] = 'w'
+	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			yield tmp
+			if not tmp.closed: tmp.flush()
+			os.rename(tmp.name, path)
+		finally:
+			try: os.unlink(tmp.name)
+			except OSError: pass
 
 
 
@@ -427,6 +446,44 @@ class RDIRCDConfig:
 				except configparser.NoSectionError: pass
 				except configparser.NoOptionError: pass
 
+	def update_file_section(self, section, keys=None, path=None):
+		if not path: path = self._conf_path
+		if isinstance(path, str): path = pl.Path(path)
+		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
+		sec_prefix = section.lower().replace('-', '_') + '_'
+		if not keys: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
+		for n, k in enumerate(keys):
+			if not k.startswith(sec_prefix): k = sec_prefix + k
+			k, v = k[len(sec_prefix):].replace('_', '-'), self.get(k)
+			if isinstance(v, bool): v = ['no', 'yes'][v]
+			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*=')
+		keys = dict((k, (v, rx)) for k, v, rx in keys)
+		with path.open() as src, safe_replacement(path) as dst:
+			lines, sec, sec_parse = list(), list(), False
+			for n, line in enumerate(src):
+				m, line = sec_re.search(line.strip()), line.rstrip()
+				if m:
+					k = str_norm(m.group(1))
+					if k == sec_k:
+						sec_parse = True
+						if sec: line = '' # drop duplicate headers
+					if k != sec_k: sec_parse = False
+				if sec_parse: sec.append(line)
+				else: lines.append(line)
+			while sec and not sec[-1]: sec.pop()
+			if not sec: sec.append(f'[{section}]')
+			if lines and lines[-1]: lines.append('')
+			for line in lines: dst.write(f'{line}\n')
+			for n, line in enumerate(sec):
+				for k, (v, rx) in keys.items():
+					if not rx.search(line): continue
+					if v is None: line = None
+					else: line, keys[k] = f'{k} = {v}', (None, rx)
+				if line is not None: dst.write(f'{line}\n')
+			for k, (v, rx) in keys.items():
+				if v is None: continue
+				dst.write(f'{k} = {v}\n')
+
 
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
@@ -491,6 +548,7 @@ def main(args=None, conf=None):
 	conf_file.read(conf_user_paths)
 	for k in conf._conf_sections:
 		conf.update_from_file(conf_file, section=k, prefix=f'{k}_')
+	conf._conf_path = conf_user_paths[-1]
 
 	if opts.conf_dump:
 		conf.pprint('Current configuration options')

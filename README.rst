@@ -21,7 +21,7 @@ Usage
 - Go to https://discordapp.com/developers/applications/#top and register your
   fork or instance of the app.
 
-  These discord client app id/creds can be - and usually are - hardcoded into
+  These discord client app id/secret can be - and usually are - hardcoded into
   the application, so that every user don't need to go get them,
   but as I'm probably the only one using this one, don't see much reason to bother.
 
@@ -33,7 +33,7 @@ Usage
     password = xyzxyz123
 
     [discord]
-    auth_url = https://discordapp.com/api/oauth2/authorize?client_id=...
+    auth-url = https://discordapp.com/api/oauth2/authorize?client_id=...
 
   That ini file will be updated with [auth] section by the script to store
   OAuth2 credentials, but it should not touch anything else there.
@@ -44,9 +44,9 @@ Usage
 - Connect IRC client to localhost:6667 with the password from ini above.
 
   Password can be omitted or empty to not bother with it, but be sure to
-  firewall that port from every other thing in the system then
-  (or maybe do it anyway), as it's definitely not a good idea to give
-  every process on the machine access to that ad-hoc ircd or discord.
+  firewall that port from everything in the system then (or maybe do it anyway),
+  as it's definitely not a good idea to give every process on the machine access
+  to that ad-hoc ircd or discord behind it.
 
 
 Requirements
