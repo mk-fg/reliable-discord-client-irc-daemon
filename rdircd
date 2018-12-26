@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import itertools as it, operator as op, functools as ft
 import os, sys, io, stat, logging, re, time, secrets, hashlib
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
@@ -39,6 +40,13 @@ class adict(dict):
 	def __init__(self, *args, **kws):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
+
+def iter_gather(cls):
+	def _cls_wrapper(func):
+		@ft.wraps(func)
+		def _wrapper(*args, **kws): return cls(func(*args, **kws))
+		return _wrapper
+	return _cls_wrapper
 
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
@@ -87,10 +95,6 @@ def token_bucket(spec, negative_tokens=False):
 		val, tokens = (None, tokens - val) if tokens >= val else\
 			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
 		val = (yield val) or 1
-
-async def maybe_coro(res):
-	if asyncio.iscoroutine(res): res = await res
-	return res
 
 async def task_cancel_list(task_list):
 	for task in task_list:
@@ -198,7 +202,7 @@ class IRCProtocol:
 	def send(self, line_or_code, *args):
 		line = line_or_code
 		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
-		if args: line += ' ' + ' '.join(args)
+		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
 		if not line.endswith(b'\n'): line += b'\r\n'
 		if len(line) >= 500:
@@ -303,15 +307,14 @@ class IRCProtocol:
 		self.send_stats()
 		self.send_motd()
 
-	def send_feats(self):
+	def send_feats(self, msg_feats_max=10, msg_len_max=200):
 		feat_line, ext = list(), ':are supported by this server'
-		for feat in self.feats_support:
-			n, msg_len = len(feat_line), sum((len(f)+2) for f in feat_line)
-			if n >= 10 or msg_len >= 200:
+		for feat in it.chain(self.feats_support, [None]):
+			if feat: feat_line.append(feat)
+			n, msg_len = len(feat_line), sum((len(f)+1) for f in feat_line)
+			if feat_line and (not feat or n >= msg_feats_max or msg_len >= msg_len_max):
 				self.send(5, ' '.join(feat_line), ext)
 				feat_line.clear()
-			feat_line.append(feat)
-		self.send(5, ' '.join(feat_line), ext)
 
 	def send_stats(self):
 		s = self.bridge.irc_conn_stats()
@@ -328,72 +331,96 @@ class IRCProtocol:
 	def send_motd(self): self.send(422, ':MOTD File is missing')
 
 	def recv_cmd_quit(self, reason=None):
-		self.send('ERROR :Connection closed')
+		self.send('QUIT :Client quit')
+		self.send('ERROR :Closing connection (client quit)')
 		self.transport.close()
 
+	def req_chan_info(self, chan, cm=None):
+		if not chan.startswith('#'):
+			self.send(403, chan, ':No such channel')
+			return
+		if not cm: cm = self.bridge.cmd_chan_map()
+		c = cm.get(chan[1:])
+		if not c: self.send(403, chan, ':No such channel')
+		return c
+
 	def recv_cmd_join(self, chan, key=None):
-		chan_list = chan.split(',')
-		self.log.warning('XXX: join {}', chan_list)
+		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans))
+		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
-			self.send(403, chan, ':No such channel') # XXX
-			# self.send(324, chan, mode_str, *mode_args)
-			# if not topic: self.send(331, chan, ':No topic is set')
-			# else:
-			# 	self.send(332, chan, ':XXX: channel topic here')
-			# 	self.send(333, chan, nick, set_at_unix_timestamp) # after 332
-			# # See https://modern.ircdocs.horse/#rplnamreply-353
-			# for name in names.chunks(512-cmd-len):
-			# 	self.send(353, '=', chan, :[prefix]<nick>{ [prefix]<nick>})
-			# self.send(366, chan, ':End of /NAMES list')
+			c = self.req_chan_info(chan, cm=chan_map)
+			if not c: continue
+			self.st.chans.add(c.name)
+			self.send(f':{self.st.nick} JOIN {chan}')
+			self.send_topic(chan, c=c)
+			self.send_names(chan, own=True, c=c)
 
 	def recv_cmd_part(self, chan, reason=None):
-		chan_list = chan.split(',')
+		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
-			self.send(403, chan, ':No such channel') # XXX
-			# if chan not in ...: self.send(403, chan, ':No such channel')
-			# if chan in self.st.chan_set: self.send(f'PART {chan}')
-			# else: self.send(442, chan, ':You are not on that channel')
+			c = self.req_chan_info(chan, cm=chan_map)
+			if not c: continue
+			if c.name not in self.st.chans:
+				self.send(442, chan, ':You are not on that channel')
+			else: self.send(f'PART {chan}')
 
 	def recv_cmd_topic(self, chan, topic=None):
-		self.send(403, chan, ':No such channel') # XXX
-		# topic = ...
-		# if not topic: self.send(331, chan, ':No topic is set')
-		# else: # XXX: may return 442 if it's hard to fetch
-		# 	self.send(332, chan, ':XXX: channel topic here')
-		# 	self.send(333, chan, nick, set_at_unix_timestamp) # after 332
+		if not topic: self.send_topic(chan)
+		else: self.send(482, chan, ':You are not channel operator')
+
+	def send_topic(self, chan, c=None):
+		if not c: c = self.req_chan_info(chan)
+		if not c: return
+		if not c.topic: self.send(331, chan, ':No topic is set')
+		else:
+			self.send(332, chan, f':{c.topic}')
+			topic_src = c.get('topic_src')
+			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
 
 	def recv_cmd_names(self, chan):
 		chan_list = chan.split(',')
-		for chan in chan_list:
-			self.send(403, chan, ':No such channel') # XXX
-			# # See https://modern.ircdocs.horse/#rplnamreply-353
-			# for name in names.chunks(512-cmd-len):
-			# 	self.send(353, '=', chan, :[prefix]<nick>{ [prefix]<nick>})
-			# self.send(366, chan, ':End of /NAMES list')
+		for chan in chan_list: self.send_names(chan)
+
+	def send_names(self, chan, own=False, c=None, msg_len_max=200):
+		if not c: c = self.req_chan_info(chan)
+		if not c: return
+		name_line = list()
+		for name in it.chain(c.names, [None]):
+			if name:
+				if name == self.st.nick: own = False
+				name_line.append(name)
+			elif own: name_line.append(self.st.nick)
+			if name_line and (
+					not name or sum(len(n)+1 for n in name_line) > msg_len_max ):
+				self.send(353, '=', chan, ':' + ' '.join(name_line))
+				name_line.clear()
+		self.send(366, chan, ':End of /NAMES list')
+
+	def recv_cmd_mode(self, target, mode=None, mode_args=None):
+		if target.startswith('#'):
+			chan = target
+			c = self.req_chan_info(chan)
+			if not c: return
+			self.send(324, chan, '+cnrt')
+			self.send(329, chan, int(c.ts_created))
+		else:
+			if target != self.st.nick:
+				self.send(502, ':No access to modes of other users')
+				return
+			self.send(221, ':+w')
 
 	def recv_cmd_list(self, chan=None, cond=None):
 		# XXX: searching for new channels (ELIST=C) might be nice to have
 		self.send(321, 'Channel :Users  Name')
-		for c in self.discord_chans: self.send(322, c.name, c.users, ':{c.topic}')
+		for c in self.bridge.cmd_chan_map().values():
+			self.send(322, f'#{c.name}', len(c.names), f':{c.topic}')
 		self.send(321, ':End of /LIST')
 
 	def recv_cmd_motd(self, target=None): self.send_motd()
 
 	def recv_cmd_version(self, target=None):
-		# XXX: also send RPL_ISUPPORT here
 		self.send(351, self.bridge.server_ver, 'rdircd', ':rdircd discord-to-irc bridge')
-
-	# XXX: more server info commands
-	# def recv_cmd_admin(self):
-	# def recv_cmd_connect(self):
-	# def recv_cmd_time(self):
-	# def recv_cmd_stats(self):
-	# def recv_cmd_info(self):
-	# def recv_cmd_mode(self): # https://modern.ircdocs.horse/#mode-message
-
-	# XXX: msg commands
-	# def recv_cmd_privmsg(self, target, text): # https://modern.ircdocs.horse/#privmsg-message
-	# def recv_cmd_notice(self, target, text):
+		self.send_feats()
 
 	def recv_cmd_userhost(self, nick):
 		if str_norm(nick) == str_norm(self.st.nick):
@@ -401,6 +428,17 @@ class IRCProtocol:
 		else: self.send(401, nick, ':No such nick/channel') # XXX: info for discord nicks
 
 	# def recv_cmd_whois(self, nick): # XXX: RPL_*WHOIS* + discord info via notices?
+
+	# XXX: more server info commands
+	# def recv_cmd_admin(self):
+	# def recv_cmd_connect(self):
+	# def recv_cmd_time(self):
+	# def recv_cmd_stats(self):
+	# def recv_cmd_info(self):
+
+	# XXX: msg commands
+	# def recv_cmd_privmsg(self, target, text): # https://modern.ircdocs.horse/#privmsg-message
+	# def recv_cmd_notice(self, target, text):
 
 
 
@@ -500,7 +538,9 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.tasks, self.chans = dict(), {'control', 'debug'}
+		self.tasks, self.chans_sys = dict(), dict(
+			control='rdircd control channel, type "help" for more info',
+			debug='rdircd debug logging channel, read-only' )
 		return self
 
 	async def __aexit__(self, *err):
@@ -561,8 +601,23 @@ class RDIRCD:
 		if delay: self.cmd_task(asyncio.sleep(delay), func)
 		else: func()
 
-	def cmd_chan_list(self):
-		return sorted(self.chans)
+	@iter_gather(list)
+	def cmd_chan_conns(self, name):
+		for conn in self.irc_conns.values():
+			if name in conn.st.chans: yield conn
+	# XXX: def cmd_chan_names_discord(self, name):
+	@iter_gather(list)
+	def cmd_chan_names(self, name):
+		for conn in self.cmd_chan_conns(name): yield conn.st.nick
+		# XXX: cmd_chan_names_discord()
+
+	@iter_gather(adict)
+	def cmd_chan_map(self):
+		for name, topic in self.chans_sys.items():
+			yield (name, adict( name=name, topic=topic,
+				names=self.cmd_chan_names(name),
+				ts_created=self.server_ts.timestamp() ))
+		# XXX: list discord channels/users here as well
 
 
 
