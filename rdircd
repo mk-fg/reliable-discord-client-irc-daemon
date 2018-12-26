@@ -390,11 +390,13 @@ class Discord:
 					f'!!! ERROR: Entered client ID looks bogus - {client_id!r}',
 					'Client ID: ' ]), end='')
 			self.conf.discord_client_id = client_id
-			self.conf.update_file_section('discord', ['client_id'])
+			self.conf.update_file_section('discord', 'client_id')
 			print(f'--- Discord Client ID stored in config file: {self.conf._conf_path}')
-		if not self.conf.auth_code: # XXX: multiple accs - multiple codes
+		for acc in 'main', 'ghost':
+			k = f'auth_{acc}_code'
+			if self.conf.get(k): continue
 			print('\n'.join([ '',
-				'Filling-in per-account auth_code value for client.',
+				f'Filling-in auth code value for **{acc.upper()}** account.',
 				'Go to following URL via browser:',
 				'  ' 'https://discordapp.com/api/oauth2/authorize?'
 					f'client_id={self.conf.discord_client_id}&redirect_uri=https%3A%2F%2Flocalhost'
@@ -402,9 +404,14 @@ class Discord:
 				'Discord will ask whether app should be authorized'
 				'  for access and redirect to some localhost URL after that.',
 				'Copy-paste that final redirect-to URL below.',
+				f'IMPORTANT: do this after logging into {acc.upper()} account.',
+				*([] if acc == 'main' else [f'Leave empty to not use additional {acc} account.']),
 				'Redirect-to URL: ' ]), end='')
 			while True:
 				url = await read_stdin_line()
+				if acc != 'main' and not url:
+					code = 'nx'
+					break
 				try:
 					if not re.search(r'https?://.*?\?.*\bcode=', url):
 						raise ValueError('This does not look like an URL')
@@ -418,9 +425,13 @@ class Discord:
 						'Redirect-to URL: ' ]), end='')
 					continue
 				else: break
-			self.conf.auth_code = code
-			self.conf.update_file_section('auth', ['code'])
-			print(f'--- Discord Auth Code stored in config file: {self.conf._conf_path}')
+			self.conf.set(k, code)
+			self.conf.update_file_section('auth', k)
+			if code != 'nx':
+				print(f'--- Discord Auth Code stored in config file: {self.conf._conf_path}')
+			else:
+				print(f'--- Additional {acc} account will be disabled')
+				print(f'--- Remove "{acc}_code = nx" line from "[auth]" section to enable it')
 
 
 
@@ -475,9 +486,12 @@ class RDIRCDConfig:
 
 	discord_client_id = ''
 
-	auth_code = ''
-	auth_token = ''
-	auth_token_refresh = ''
+	auth_main_code = ''
+	auth_main_token = ''
+	auth_main_token_refresh = ''
+	auth_ghost_code = ''
+	auth_ghost_token = ''
+	auth_ghost_token_refresh = ''
 
 	# XXX: options for well-timestamped protocol logs
 
@@ -486,6 +500,7 @@ class RDIRCDConfig:
 
 	def __repr__(self): return repr(vars(self))
 	def get(self, *k): return getattr(self, '_'.join(k))
+	def set(self, k, v): setattr(self, k, v)
 
 	def pprint(self, title=None):
 		cat, chk = None, re.compile(
@@ -516,7 +531,7 @@ class RDIRCDConfig:
 			elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
 			else: continue # values with other types cannot be specified in config
 			for k_conf in {k, k.replace('_', '-')}:
-				try: setattr(self, conf_k, get_val(section, k_conf))
+				try: self.set(conf_k, get_val(section, k_conf))
 				except configparser.NoSectionError: pass
 				except configparser.NoOptionError: pass
 
@@ -526,6 +541,7 @@ class RDIRCDConfig:
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
 		sec_prefix = section.lower().replace('-', '_') + '_'
 		if not keys: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
+		if isinstance(keys, str): keys = keys.split()
 		for n, k in enumerate(keys):
 			if not k.startswith(sec_prefix): k = sec_prefix + k
 			k, v = k[len(sec_prefix):].replace('_', '-'), self.get(k)
