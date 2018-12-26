@@ -277,9 +277,11 @@ class IRCProtocol:
 	def recv_cmd_nick(self, nick):
 		if not re.search(r'^[a-zA-Z-._]+$', nick):
 			return self.send(432, nick, ':Erroneus nickname')
+		if self.bridge.cmd_conn(nick):
+			return self.send(433, nick, ':Nickname is already in use')
+		self.st.nick = nick
 		if self.st.auth and self.st.nick:
 			self.send(f':{self.st.nick} NICK {nick}')
-		self.st.nick = nick
 		self.check_auth_done()
 
 	def check_auth_done(self):
@@ -429,16 +431,40 @@ class IRCProtocol:
 
 	# def recv_cmd_whois(self, nick): # XXX: RPL_*WHOIS* + discord info via notices?
 
+	def recv_cmd_privmsg(self, target, text):
+		# XXX: auto-split long text here
+		if target.startswith('#'):
+			chan = target
+			c = self.req_chan_info(chan)
+			if not c: return
+			for conn in self.bridge.cmd_chan_conns(c.name):
+				if conn is self: continue
+				conn.send(f':{self.st.nick} PRIVMSG {chan} :{text}')
+		else:
+			conn = self.bridge.cmd_conn(target)
+			if not conn: return conn.send(401, target, ':No such nick/channel')
+			conn.send(f':{self.st.nick} PRIVMSG {target} :{text}')
+
+	def recv_cmd_notice(self, target, text):
+		# XXX: auto-split long text here
+		if target.startswith('#'):
+			chan = target
+			c = self.bridge.cmd_chan_map().get(chan[1:])
+			if not c: return
+			for conn in self.bridge.cmd_chan_conns(c.name):
+				if conn is self: continue
+				conn.send(f':{self.st.nick} NOTICE {chan} :{text}')
+		else:
+			conn = self.bridge.cmd_conn(target)
+			if not conn: return
+			conn.send(f':{self.st.nick} PRIVMSG {target} :{text}')
+
 	# XXX: more server info commands
 	# def recv_cmd_admin(self):
 	# def recv_cmd_connect(self):
 	# def recv_cmd_time(self):
 	# def recv_cmd_stats(self):
 	# def recv_cmd_info(self):
-
-	# XXX: msg commands
-	# def recv_cmd_privmsg(self, target, text): # https://modern.ircdocs.horse/#privmsg-message
-	# def recv_cmd_notice(self, target, text):
 
 
 
@@ -568,6 +594,7 @@ class RDIRCD:
 	async def run_async(self):
 		async with self: await self.run()
 
+
 	def irc_conn_new(self, irc):
 		self.irc_conns[id(irc)] = irc
 		self.irc_conns_max = max(self.irc_conns_max, len(self.irc_conns))
@@ -601,6 +628,9 @@ class RDIRCD:
 		if delay: self.cmd_task(asyncio.sleep(delay), func)
 		else: func()
 
+	def cmd_conn(self, name):
+		for conn in self.irc_conns.values():
+			if name == conn.st.nick: return conn
 	@iter_gather(list)
 	def cmd_chan_conns(self, name):
 		for conn in self.irc_conns.values():
