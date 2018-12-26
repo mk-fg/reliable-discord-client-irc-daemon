@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import os, sys, io, stat, logging, re
+import os, sys, io, stat, logging, re, time, secrets, hashlib
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
@@ -61,6 +61,43 @@ def safe_replacement(path, *open_args, mode=None, **open_kws):
 			try: os.unlink(tmp.name)
 			except OSError: pass
 
+def token_bucket(spec, negative_tokens=False):
+	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
+			Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
+		Expects a number of tokens (can be float, default: 1)
+			and *always* subtracts these.
+		Yields either None if there's enough
+			tokens or delay (in seconds, float) until when there will be.'''
+	try:
+		try: interval, burst = spec.rsplit(':', 1)
+		except (ValueError, AttributeError): interval, burst = spec, 1.0
+		else: burst = float(burst)
+		if isinstance(interval, str):
+			try: a, b = interval.split('/', 1)
+			except ValueError: interval = float(interval)
+			else: interval = float(a) / float(b)
+		if min(interval, burst) < 0: raise ValueError()
+	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
+	# log.debug('tbf parameters: interval={:.1f}, burst={:.1f}', interval, burst)
+	tokens, rate, ts_sync = burst, interval**-1, time.monotonic()
+	val = (yield) or 1
+	while True:
+		ts = time.monotonic()
+		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
+		val, tokens = (None, tokens - val) if tokens >= val else\
+			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
+		val = (yield val) or 1
+
+async def maybe_coro(res):
+	if asyncio.iscoroutine(res): res = await res
+	return res
+
+async def task_cancel_list(task_list):
+	for task in task_list:
+		with contextlib.suppress(asyncio.CancelledError): task.cancel()
+	for task in task_list:
+		with contextlib.suppress(asyncio.CancelledError): await task
+
 
 
 class IRCProtocolError(Exception): pass
@@ -87,12 +124,17 @@ class IRCProtocol:
 		return _wrapper
 
 	def __init__(self, rdircd):
-		self.transport, self.buff = None, b''
-		self.bridge, self.loop = rdircd, rdircd.loop
+		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
 		self.log = get_logger('rdircd.irc')
+		self.transport, self.buff = None, b''
 		self.st = adict(
-			nick=None, user=None, host=None, auth=False,
-			cap_neg=False, chan_set=list() )
+			nick=None, user=None, pw=None, pw_hash=None,
+			host=None, auth=False, cap_neg=False, chans=set() )
+		if self.conf.irc_password:
+			salt = os.urandom(8)
+			self.st.pw_hash = salt, hashlib.blake2b(
+				self.conf.irc_password.encode(), salt=salt ).digest()
+
 
 	def connection_made(self, tr):
 		host, port = tr.get_extra_info('peername')[:2]
@@ -198,7 +240,7 @@ class IRCProtocol:
 
 	def check_access(self, cmd):
 		if self.st.cap_neg: return cmd in ['cap', 'quit']
-		if not (self.st.nick and self.st.user):
+		if not self.st.auth:
 			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
 			if not res: self.send(451, ':You have not registered')
 			return res
@@ -223,7 +265,7 @@ class IRCProtocol:
 		elif sub == 'end': self.st.cap_neg = False
 
 	def recv_cmd_pass(self, pw):
-		self.st.pw = pw # XXX: check vs config
+		self.st.pw = pw
 		self.check_auth_done()
 	def recv_cmd_user(self, name, a, b, real_name):
 		self.st.update(user=name, real_name=real_name)
@@ -231,14 +273,25 @@ class IRCProtocol:
 	def recv_cmd_nick(self, nick):
 		if not re.search(r'^[a-zA-Z-._]+$', nick):
 			return self.send(432, nick, ':Erroneus nickname')
-		if self.st.nick: self.send(':{self.st.nick} NICK {nick}')
+		if self.st.auth and self.st.nick:
+			self.send(f':{self.st.nick} NICK {nick}')
 		self.st.nick = nick
 		self.check_auth_done()
 
 	def check_auth_done(self):
+		# Delay is to avoid trivial bruteforcing
+		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
+
+	def check_auth_done_delayed(self):
 		if self.st.auth: return
 		if not (self.st.nick and self.st.user): return
+		if self.st.pw_hash:
+			salt, pw_hash = self.st.pw_hash
+			if not secrets.compare_digest( pw_hash,
+					hashlib.blake2b((self.st.pw or '').encode(), salt=salt).digest() ):
+				return self.send(464, ':Password incorrect')
 		self.st.auth = True
+		self.send('NOTICE * :*** registration completed')
 		self.send(1, f':Welcome to the rdircd discord-irc bridge, {self.st.nick}')
 		self.send(2,
 			f':Your host is {self.bridge.server_host},'
@@ -357,8 +410,8 @@ class Discord:
 
 	api_url = 'https://discordapp.com/api/v6'
 
-	def __init__(self, loop, conf):
-		self.loop, self.conf = loop, conf
+	def __init__(self, rdircd):
+		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
 		self.log = get_logger('rdircd.discord')
 
 	async def __aenter__(self):
@@ -446,17 +499,31 @@ class RDIRCD:
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
+		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
+		self.tasks, self.chans = dict(), {'control', 'debug'}
 		return self
-	async def __aexit__(self, *err): pass
+
+	async def __aexit__(self, *err):
+		task_list, self.tasks = self.tasks.values(), None
+		await task_cancel_list(task_list)
 
 	async def run(self):
 		ircd = await self.loop.create_server(
 			IRCProtocol.factory_for_bridge(self),
 			self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False )
-		async with Discord(self.loop, self.conf) as discord:
-			# XXX: pass self to discord for control hooks and events
-			await ircd.serve_forever()
+		self.log.debug('Initializing discord...')
+		async with Discord(self) as discord:
+			self.log.debug('Starting ircd...')
+			ircd_task = self.cmd_task(ircd.serve_forever())
+			while True:
+				done, pending = await asyncio.wait( self.tasks.values(),
+					loop=self.loop, return_when=asyncio.FIRST_COMPLETED )
+				for task in done:
+					task = self.tasks.pop(id(task), None)
+					if task: task.result()
+				if ircd_task in done: break
+		self.log.debug('Finished')
 
 	async def run_async(self):
 		async with self: await self.run()
@@ -476,6 +543,28 @@ class RDIRCD:
 		return stats
 
 
+	def cmd_task(self, coro, run_after=None):
+		if run_after:
+			async def _run_after_coro(coro=coro):
+				await coro
+				coro = run_after()
+				if asyncio.iscoroutine(coro): await coro
+			coro = _run_after_coro()
+		task = asyncio.create_task(coro)
+		self.tasks[id(task)] = task
+		return task
+
+	def cmd_delay(self, delay, func):
+		if delay and not isinstance(delay, (int, float)):
+			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
+			else: raise ValueError(delay)
+		if delay: self.cmd_task(asyncio.sleep(delay), func)
+		else: func()
+
+	def cmd_chan_list(self):
+		return sorted(self.chans)
+
+
 
 class RDIRCDConfig:
 
@@ -483,6 +572,7 @@ class RDIRCDConfig:
 	irc_port = 6667
 	irc_password = ''
 	irc_host_af = 0
+	irc_auth_tbf = '30:8'
 
 	discord_client_id = ''
 
@@ -683,8 +773,8 @@ def main(args=None, conf=None):
 		rdircd_task = loop.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
-		try: return loop.run_until_complete(rdircd_task)
-		except asyncio.CancelledError: pass
+		with contextlib.suppress(asyncio.CancelledError):
+			return loop.run_until_complete(rdircd_task)
 	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
