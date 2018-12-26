@@ -50,8 +50,11 @@ Usage
   as it's definitely not a good idea to give every process on the machine access
   to that ad-hoc ircd or discord behind it.
 
+- Try: ``/list``, ``/join #control`` and sending "help" there.
+
 
 Requirements
 ------------
 
 * `Python 3.7+ <http://python.org/>`_
+* `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_

@@ -5,6 +5,8 @@ import os, sys, io, stat, logging, re, time, secrets, hashlib
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
+# import aiohttp
+
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 
@@ -20,6 +22,17 @@ class LogStyleAdapter(logging.LoggerAdapter):
 		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
 		msg, kws = self.process(msg, kws)
 		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
+
+class LogFuncHandler(logging.Handler):
+	def __init__(self, func):
+		super().__init__()
+		self.func, self.locked = func, False
+	def emit(self, record):
+		if self.locked: return # to avoid logging-of-logging loops, assuming sync call
+		self.locked = True
+		try: self.func(self.format(record))
+		except Exception: self.handleError(record)
+		finally: self.locked = False
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 
@@ -148,11 +161,11 @@ class IRCProtocol:
 		self.bridge.irc_conn_new(self)
 
 	def data_received(self, data):
-		data_len, data_repr = self._repr(data, True)
-		self.log.debug('<<< [{}] {}', data_len, data_repr)
 		self.buff += data
 		while b'\n' in self.buff:
 			line, self.buff = self.buff.split(b'\n', 1)
+			line_len, line_repr = self._repr(line, True)
+			self.log.debug('<<  [{} {}] {}', self.st.nick or '---', line_len, line_repr)
 			if not line.strip(): continue
 			self.recv(line)
 
@@ -163,7 +176,7 @@ class IRCProtocol:
 
 	def data_send(self, data):
 		data_len, data_repr = self._repr(data, True)
-		self.log.debug(' >> [{}] {}', data_len, data_repr)
+		self.log.debug(' >> [{} {}] {}', self.st.nick or '---', data_len, data_repr)
 		self.transport.write(data)
 
 
@@ -352,10 +365,10 @@ class IRCProtocol:
 		for chan in chan_list:
 			c = self.req_chan_info(chan, cm=chan_map)
 			if not c: continue
-			self.st.chans.add(c.name)
 			self.send(f':{self.st.nick} JOIN {chan}')
 			self.send_topic(chan, c=c)
 			self.send_names(chan, own=True, c=c)
+			self.st.chans.add(c.name)
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
@@ -364,7 +377,9 @@ class IRCProtocol:
 			if not c: continue
 			if c.name not in self.st.chans:
 				self.send(442, chan, ':You are not on that channel')
-			else: self.send(f'PART {chan}')
+			else:
+				self.st.chans.remove(c.name)
+				self.send(f'PART {chan}')
 
 	def recv_cmd_topic(self, chan, topic=None):
 		if not topic: self.send_topic(chan)
@@ -432,32 +447,34 @@ class IRCProtocol:
 	# def recv_cmd_whois(self, nick): # XXX: RPL_*WHOIS* + discord info via notices?
 
 	def recv_cmd_privmsg(self, target, text):
-		# XXX: auto-split long text here
-		if target.startswith('#'):
-			chan = target
-			c = self.req_chan_info(chan)
-			if not c: return
-			for conn in self.bridge.cmd_chan_conns(c.name):
-				if conn is self: continue
-				conn.send(f':{self.st.nick} PRIVMSG {chan} :{text}')
-		else:
-			conn = self.bridge.cmd_conn(target)
-			if not conn: return conn.send(401, target, ':No such nick/channel')
-			conn.send(f':{self.st.nick} PRIVMSG {target} :{text}')
+		self.cmd_msg(self.st.nick, target, text, skip_self=True)
 
 	def recv_cmd_notice(self, target, text):
+		self.cmd_msg(self.st.nick, target, text, notice=True, skip_self=True)
+
+	def cmd_msg(self, src, target, text, notice=False, skip_self=False, msg_type=None):
 		# XXX: auto-split long text here
+		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if target.startswith('#'):
 			chan = target
-			c = self.bridge.cmd_chan_map().get(chan[1:])
+			if not notice: c = self.req_chan_info(chan)
+			else: c = self.bridge.cmd_chan_map().get(chan[1:])
 			if not c: return
 			for conn in self.bridge.cmd_chan_conns(c.name):
-				if conn is self: continue
-				conn.send(f':{self.st.nick} NOTICE {chan} :{text}')
+				if skip_self and conn is self: continue
+				conn.send(f':{src} {msg_type} {chan} :{text}')
+			if not notice and c.name == 'control':
+				self.bridge.cmd_control(self, text, chan)
 		else:
 			conn = self.bridge.cmd_conn(target)
-			if not conn: return
-			conn.send(f':{self.st.nick} PRIVMSG {target} :{text}')
+			if not conn:
+				if not notice: conn.send(401, target, ':No such nick/channel')
+				return
+			conn.send(f':{src} {msg_type} {target} :{text}')
+
+	def cmd_msg_synth(self, src, target, text):
+		'Synthetic PRIVMSG which avoids any self-reaction loops like notices'
+		return self.cmd_msg(src, target, text, notice=True, msg_type='PRIVMSG')
 
 	# XXX: more server info commands
 	# def recv_cmd_admin(self):
@@ -471,8 +488,6 @@ class IRCProtocol:
 class DiscordError(Exception): pass
 
 class Discord:
-
-	api_url = 'https://discordapp.com/api/v6'
 
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
@@ -551,6 +566,18 @@ class Discord:
 				print(f'--- Remove "{acc}_code = nx" line from "[auth]" section to enable it')
 
 
+class DiscordSession:
+
+	api_url = 'https://discordapp.com/api/v6'
+
+	def __init__(self, discord):
+		self.discord, self.loop = rdircd, rdircd.loop
+		self.log = get_logger('rdircd.discord.session')
+
+	async def __aenter__(self): return self
+	async def __aexit__(self, *err): pass
+
+
 
 class RDIRCD:
 
@@ -564,7 +591,8 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.tasks, self.chans_sys = dict(), dict(
+		self.tasks = dict()
+		self.nick_sys, self.chans_sys = 'core', dict(
 			control='rdircd control channel, type "help" for more info',
 			debug='rdircd debug logging channel, read-only' )
 		return self
@@ -628,9 +656,9 @@ class RDIRCD:
 		if delay: self.cmd_task(asyncio.sleep(delay), func)
 		else: func()
 
-	def cmd_conn(self, name):
+	def cmd_conn(self, name=None):
 		for conn in self.irc_conns.values():
-			if name == conn.st.nick: return conn
+			if not name or name == conn.st.nick: return conn
 	@iter_gather(list)
 	def cmd_chan_conns(self, name):
 		for conn in self.irc_conns.values():
@@ -648,6 +676,33 @@ class RDIRCD:
 				names=self.cmd_chan_names(name),
 				ts_created=self.server_ts.timestamp() ))
 		# XXX: list discord channels/users here as well
+
+	def cmd_control(self, conn, text, chan):
+		line = text.strip().split()
+		# self.nick_sys
+		if not line: return
+		cmd, send = line[0],\
+			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
+		if cmd == 'help':
+			for line in [
+					'Status:',
+					'  XXX: show whether stuff is connected and working atm',
+					'Commands:',
+					'  status - show whether discord is connected and working ',
+					'  connect - (alias: on) connect/login to discord api',
+					'  disconnect - (alias: off) disconnect from discord' ]:
+				send(line)
+		elif cmd in ['connect', 'on']:
+			send('discord: connecting...')
+			# self.discord.connect()
+		elif cmd in ['disconnect', 'off']:
+			send('discord: disconnecting...')
+			# self.discord.disconnect()
+
+	def cmd_log(self, line):
+		conn = self.cmd_conn()
+		if not conn: return
+		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
 
@@ -851,10 +906,20 @@ def main(args=None, conf=None):
 		and sock_p == socket.IPPROTO_TCP ), [sock_t, sock_p]
 	conf.irc_host_af, (conf.irc_host, conf.irc_port) = sock_af, sock_addr[:2]
 
+	def handle_exception(err_t, err, err_tb):
+		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
+	sys.excepthook = handle_exception
+
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		# if opts.debug: loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
+
+		log_handler = LogFuncHandler(rdircd.cmd_log)
+		log_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
+		log_handler.setFormatter(logging.Formatter('%(name)s %(levelname)5s :: %(message)s'))
+		logging.root.addHandler(log_handler)
+
 		rdircd_task = loop.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
