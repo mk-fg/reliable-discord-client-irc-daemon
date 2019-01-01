@@ -540,6 +540,7 @@ class IRCProtocol:
 
 
 class DiscordError(Exception): pass
+class DiscordAbort(DiscordError): pass
 class DiscordSessionError(Exception): pass
 
 
@@ -557,13 +558,20 @@ class Discord:
 		await task_cancel_list(self.sessions.values())
 
 	async def fill_in_client_creds(self):
+		# XXX: maybe ask this via irc?
 		def stdin_line_reader(fut):
 			self.loop.remove_reader(sys.stdin.fileno())
 			fut.set_result(sys.stdin.readline())
 		async def read_stdin_line():
 			input_line = asyncio.Future()
-			self.loop.add_reader(sys.stdin.fileno(), stdin_line_reader, input_line)
-			return (await input_line).strip() or ''
+			try:
+				self.loop.add_reader(sys.stdin.fileno(), stdin_line_reader, input_line)
+				input_line = await input_line
+				if not input_line: raise OSError # closed fd
+			except OSError:
+				print(end='\n\n')
+				raise DiscordAbort('Failed to read from stdin') from None
+			return input_line.strip() or ''
 		if not self.conf.discord_client_id:
 			print('\n'.join([ '',
 				'There is no "client-id" specified under "[discord]"',
@@ -909,9 +917,12 @@ class RDIRCD:
 			self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False )
 		self.log.debug('Initializing discord...')
-		async with Discord(self) as discord:
-			self.log.debug('Starting ircd...')
-			await self.tasks.add(ircd.serve_forever())
+		try:
+			async with Discord(self) as discord:
+				self.log.debug('Starting ircd...')
+				await self.tasks.add(ircd.serve_forever())
+		except DiscordAbort as err:
+			self.log.error('Discord init failure - {}', err_fmt(err))
 		self.log.debug('Finished')
 
 	async def run_async(self):
