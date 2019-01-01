@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, logging, re, time, secrets, hashlib, enum
+import os, sys, io, stat, logging, re, time, secrets, hashlib, enum, json
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
@@ -53,6 +53,8 @@ class adict(dict):
 	def __init__(self, *args, **kws):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
+		for k, v in self.items():
+			if type(v) is dict: self[k] = adict(v)
 
 def iter_gather(cls):
 	def _cls_wrapper(func):
@@ -109,6 +111,10 @@ def token_bucket(spec, negative_tokens=False):
 			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
 		val = (yield val) or 1
 
+async def await_wrap(res):
+	if inspect.isawaitable(res): res = await res
+	return res
+
 async def task_cancel_list(task_list):
 	task_list = list(task for task in task_list if task and not task.done())
 	for task in task_list:
@@ -137,6 +143,9 @@ class StacklessContext:
 				if run_after:
 					coro = run_after()
 					if asyncio.iscoroutine(coro): await coro
+			# except TypeError:
+			# 	print('----- coro', coro, file=sys.stderr)
+			# 	raise
 			finally:
 				assert task_id is not None, task_id
 				if self.tasks: self.tasks.pop(task_id, None)
@@ -728,7 +737,7 @@ class DiscordSession:
 			if cache:
 				if not self.conf.auth_gateway: continue
 			else:
-				self.conf.auth_gateway = (await self.req('gateway'))['url']
+				self.conf.auth_gateway = (await self.req('gateway', auth=False))['url']
 				self.conf.update_file_section('auth', 'auth_gateway')
 			parts = adict(urllib.parse.urlsplit(self.conf.auth_gateway)._asdict())
 			query = urllib.parse.parse_qs(parts.query)
@@ -832,20 +841,21 @@ class DiscordSession:
 	_ws_handler = cs.namedtuple('ws_handler', 'op func')
 	def ws_add_handler(self, op=None, func=None):
 		if not func: raise ValueError(func)
-		self.ws_handlers[id(func)] = _ws_handler(op, func)
+		self.ws_handlers[id(func)] = self._ws_handler(op, func)
 
 	async def ws_poller(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
 		# {op=...[, d={...}]}
 		async for msg in self.ws:
 			if self.conf.discord_ws_debug:
-				self.log.debug('ws <<  {} {}', msg.type, getattr(msg, 'data', ''))
+				self.log.debug( 'ws <<  {} {}',
+					aiohttp.WSMsgType(msg.type).name.lower(), getattr(msg, 'data', '') )
 			if msg.type == aiohttp.WSMsgType.text:
 				msg_data, hs_discard = adict(json.loads(msg.data)), set()
 				for k, h in self.ws_handlers.items():
 					# XXX: use op and other checks as ws_handler keys
 					if h.op is not None and msg_data.op != h.op: continue
-					oneshot = await maybe_coro(h.func(msg_data))
+					oneshot = await await_wrap(h.func(msg_data))
 					if oneshot: hs_discard.add(k)
 				for k in hs_discard: del self.ws_handlers[k]
 			elif msg.type == aiohttp.WSMsgType.closed: break
@@ -859,12 +869,13 @@ class DiscordSession:
 		if err:
 			self.log.exception( 'Unhandled ws handler'
 				' failure, aborting: {}', err_fmt(err), exc_info=err )
-		self.tasks.add(self.ws_close)
+		self.tasks.add(self.ws_close())
 
 	def ws_send(self, op, d):
 		msg_data = json.dumps(dict(op=op, d=d))
 		if self.conf.discord_ws_debug: self.log.debug('ws  >> {}', msg_data)
-		self.run_task(self.ws.send_str(msg_data))
+		# XXX: maybe enforce ordering for messages here
+		self.tasks.add(self.ws.send_str(msg_data))
 
 	async def ws_close(self):
 		if self.ws_closed.is_set(): return
@@ -886,15 +897,15 @@ class DiscordSession:
 		# XXX: send c.identify msg + next steps
 
 	async def op_heartbeat_task(self, interval):
-		self.hb_ts_ack = hb_ts = self.loop.time()
+		self.hb_ts_ack = hb_ts = self.loop.time() + interval
 		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
-		while self.ws and not self.ws_closed.is_set():
+		while not self.ws_closed.is_set():
 			self.ws_send(self.c.heartbeat, self.seq)
 			ts = self.loop.time()
 			if self.hb_ts_ack < ts - interval*2:
 				self.log.error('Missing heartbeat ack, reconnecting')
-				self.ws_close() # XXX: some clean close command?
-			delay = ts - hb_ts
+				await self.ws_close() # XXX: some clean close command?
+			delay = hb_ts - ts
 			while hb_ts < ts: hb_ts += interval
 			await asyncio.sleep(delay)
 
