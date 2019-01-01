@@ -25,7 +25,8 @@ Usage
   to go get it, but as I'm probably the only one using this one, don't see much
   reason to bother.
 
-- In OAuth2 tab there, find "Client ID" (big number) and copy it into
+- In General Information tab there, find "Client ID" (long number) and "Client
+  Secret" (alphanumeric) and copy these into "[discord]" section of
   ~/.rdircd.ini file like this one::
 
     [irc]
@@ -33,6 +34,7 @@ Usage
 
     [discord]
     client-id = 157730590492196864
+    client-secret = s1H7hzOI9EwzFHhTT4TChoQjYKf6g350hbMN33OJJoU
 
   That ini file will be updated with [auth] section by the script to store
   OAuth2 credentials, but it should not touch anything else there.

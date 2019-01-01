@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, logging, re, time, secrets, hashlib
+import os, sys, io, stat, logging, re, time, secrets, hashlib, enum
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
 
-# import aiohttp
+import aiohttp
 
 
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
@@ -110,10 +110,41 @@ def token_bucket(spec, negative_tokens=False):
 		val = (yield val) or 1
 
 async def task_cancel_list(task_list):
+	task_list = list(task for task in task_list if task and not task.done())
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): await task
+
+class StacklessContext:
+	'''Like AsyncContextStack, but for tracking tasks that
+		can finish at any point without leaving stack frames.'''
+
+	def __init__(self): self.tasks = dict()
+	async def __aenter__(self): return self
+	async def __aexit__(self, *err):
+		if self.tasks:
+			task_list, self.tasks = self.tasks.values(), None
+			await task_cancel_list(task_list)
+	async def close(self): return self.__aexit__(None, None, None)
+
+	def add_task(self, coro, run_after=None):
+		'Start task eating its own tail, with an optional success-only callback'
+		task_id = None
+		async def _task_wrapper(coro=coro):
+			try:
+				await coro
+				if run_after:
+					coro = run_after()
+					if asyncio.iscoroutine(coro): await coro
+			finally:
+				assert task_id is not None, task_id
+				self.tasks.pop(task_id, None)
+		task = asyncio.create_task(_task_wrapper())
+		task_id = id(task)
+		self.tasks[task_id] = task
+		return task
+	add = add_task
 
 
 
@@ -486,17 +517,21 @@ class IRCProtocol:
 
 
 class DiscordError(Exception): pass
+class DiscordSessionError(Exception): pass
+
 
 class Discord:
 
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
-		self.log = get_logger('rdircd.discord')
+		self.log = get_logger('rdircd.discord.main')
 
 	async def __aenter__(self):
 		await self.fill_in_client_creds()
+		self.sessions = adict()
 		return self
-	async def __aexit__(self, *err): pass
+	async def __aexit__(self, *err):
+		task_cancel_list(self.sessions.values())
 
 	async def fill_in_client_creds(self):
 		def stdin_line_reader(fut):
@@ -512,31 +547,40 @@ class Discord:
 				f'  section of the config file ({self.conf._conf_path}).',
 				'Go to following URL via browser:',
 				'  https://discordapp.com/developers/applications/#top',
-				'Register app there, in OAuth2 tab find'
-				'  "Client ID" (big number) and copy-paste it below.',
+				'Register app there and copy-paste "Client ID" (big number)'
+				' and "Client Secret" (alphanumeric) from the main tab there below.',
 				'Client ID: ' ]), end='')
 			while True:
 				client_id = await read_stdin_line()
 				if client_id.isdigit() and len(client_id) > 10: break
 				print('\n'.join([
-					f'!!! ERROR: Entered client ID looks bogus - {client_id!r}',
+					f'!!! ERROR: Entered Client ID looks bogus - {client_id!r}',
 					'Client ID: ' ]), end='')
+			print('Client Secret: ', end='')
+			while True:
+				client_secret = await read_stdin_line()
+				if len(client_secret) > 20: break
+				print('\n'.join([
+					f'!!! ERROR: Entered Client Secret looks bogus - {client_secret!r}',
+					'Client Secret: ' ]), end='')
 			self.conf.discord_client_id = client_id
-			self.conf.update_file_section('discord', 'client_id')
-			print(f'--- Discord Client ID stored in config file: {self.conf._conf_path}')
+			self.conf.discord_client_secret = client_secret
+			self.conf.update_file_section('discord')
+			print(f'--- Discord Client ID/Secret are stored in config file: {self.conf._conf_path}')
 		for acc in 'main', 'ghost':
 			k = f'auth_{acc}_code'
 			if self.conf.get(k): continue
+			redirect_url = urllib.parse.quote(self.conf.discord_redirect_url)
 			print('\n'.join([ '',
 				f'Filling-in auth code value for **{acc.upper()}** account.',
 				'Go to following URL via browser:',
 				'  ' 'https://discordapp.com/api/oauth2/authorize?'
-					f'client_id={self.conf.discord_client_id}&redirect_uri=https%3A%2F%2Flocalhost'
+					f'client_id={self.conf.discord_client_id}&redirect_uri={redirect_url}'
 					'&response_type=code&scope=messages.read',
 				'Discord will ask whether app should be authorized'
-				'  for access and redirect to some localhost URL after that.',
+				f'  for access and redirect to {self.conf.discord_redirect_url} URL after that.',
 				'Copy-paste that final redirect-to URL below.',
-				f'IMPORTANT: do this after logging into {acc.upper()} account.',
+				f'IMPORTANT: do this after logging into {acc.upper()} account, not the other one.',
 				*([] if acc == 'main' else [f'Leave empty to not use additional {acc} account.']),
 				'Redirect-to URL: ' ]), end='')
 			while True:
@@ -547,7 +591,7 @@ class Discord:
 				try:
 					if not re.search(r'https?://.*?\?.*\bcode=', url):
 						raise ValueError('This does not look like an URL')
-					parts = urllib.parse.urlparse(url)
+					parts = urllib.parse.urlsplit(url)
 					qs = urllib.parse.parse_qs(parts.query)
 					code = qs['code'][-1]
 				except Exception as err:
@@ -565,17 +609,253 @@ class Discord:
 				print(f'--- Additional {acc} account will be disabled')
 				print(f'--- Remove "{acc}_code = nx" line from "[auth]" section to enable it')
 
+	def connect(self):
+		# XXX: connect main as well
+		for t in ['ghost']:
+			self.sessions[t] = loop.create_task(DiscordSession(self, t).run_async())
+
+	def disconnect(self):
+		for s in self.sessions.values(): s.cancel()
+
 
 class DiscordSession:
 
-	api_url = 'https://discordapp.com/api/v6'
+	api_ver = 6
 
-	def __init__(self, discord):
-		self.discord, self.loop = rdircd, rdircd.loop
-		self.log = get_logger('rdircd.discord.session')
+	class c(enum.IntEnum):
+		dispatch = 0
+		heartbeat = 1
+		identify = 2
+		status_update = 3
+		voice_state_update = 4
+		resume = 6
+		reconnect = 7
+		request_guild_members = 8
+		invalid_session = 9
+		hello = 10
+		heartbeat_ack = 11
+		unknown_error = 4000
+		unknown_opcode = 4001
+		decode_error = 4002
+		not_authenticated = 4003
+		authentication_failed = 4004
+		already_authenticated = 4005
+		invalid_seq = 4007
+		rate_limited = 4008
+		session_timeout = 4009
+		invalid_shard = 4010
+		sharding_required = 4011
 
-	async def __aenter__(self): return self
-	async def __aexit__(self, *err): pass
+	def __init__(self, discord, t):
+		self.discord, self.loop, self.conf, self.t = rdircd, rdircd.loop, self.discord.conf, t
+		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
+		self.log = get_logger(f'rdircd.discord.{self.t}')
+
+	def get_auth(self, k, default=ValueError):
+		try: return getattr(self.conf, f'auth_{self.t}_code')
+		except AttributeError as err:
+			if default is ValueError: raise
+			return default
+
+	async def __aenter__(self):
+		if not (
+				self.conf.discord_client_id
+				and self.conf.discord_client_secret
+				and self.get_auth('code') ):
+			raise DiscordSessionError('Missing client id/secret/code auth credentials')
+		self.tasks = StacklessContext()
+		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
+		self.rate_limits, self.seq, self.ws_closed = adict(), None, asyncio.Event()
+		return self
+
+	async def __aexit__(self, *err):
+		if self.ws_ctx:
+			await self.ws_ctx.aclose()
+			self.ws_ctx = None
+		if self.tasks: await self.tasks.close()
+
+	async def run(self): await asyncio.Future()
+	async def run_async(self):
+		async with self: await self.run()
+
+	async def _connect(self):
+		if self.ws_ctx: return
+		self.ws_ctx = ctx = contextlib.AsyncExitStack()
+		self.ws_tasks, self.ws_handlers = StacklessContext(), dict()
+		self.ws_ctx.callback(self.ws_close)
+		self.http = await ctx.enter_async_context(aiohttp.ClientSession())
+		self.ws_closed.clear()
+		for cache in True, False:
+			if cache:
+				if not self.conf.auth_gateway: continue
+			else:
+				self.conf.auth_gateway = (await self.req('gateway'))['url']
+				self.conf.update_file_section('auth', 'auth_gateway')
+			parts = adict(urllib.parse.urlsplit(self.conf.auth_gateway)._asdict())
+			query = urllib.parse.parse_qs(parts.query)
+			query.update(v=str(self.api_ver), encoding='json')
+			parts.query = urllib.parse.urlencode(query)
+			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
+			try:
+				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
+					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
+			except aiohttp.ClientError as err:
+				self.log.error('Gateway connection error: {}', err_fmt(err))
+				if cache: continue # try fetching new gw url
+			else: break
+		else: self.ws = None
+		if not self.ws: # XXX: more specific error/details, handle wrt reconnect
+			self.ws_closed.set()
+			raise DiscordSessionError('Failed to connect to discord')
+		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
+		self.ws_add_handler(self.c.hello, self.op_hello)
+		self.ws_tasks.add(self.ws_poller()).add_done_callback(self.ws_poller_done)
+
+	def connect(self):
+		# XXX: start reconnect logic/task, report back to irc control
+		return self.tasks.add(self._connect())
+	def disconnect(self): return self.tasks.add(self.ws_close())
+
+
+	### Regular HTTP requests and OAuth2 stuff
+
+	async def rate_limit_wrapper(self, route, req_func):
+		ts = time.time()
+		req_limit, req_limit_ts = self.rate_limits.get(route) or (1, None)
+		if req_limit_ts and ts > req_limit_ts: req_limit = 1
+		if req_limit <= 0 and req_limit_ts and req_limit_ts > ts:
+			delay = req_limit_ts - ts
+			self.log.debug('Rate-limiting request on route {!r}: delay={:,.1f}s', route, delay)
+			await asyncio.sleep(delay)
+		res = await req_func()
+		req_limit = res.headers.get('X-RateLimit-Remaining')
+		if req_limit:
+			self.rate_limits[route] = int(req_limit), res.headers.get('X-RateLimit-Reset')
+		return res
+
+	async def req_get_token(self):
+		self.log.debug('Requestiing new api auth token')
+		scopes = {'messages.read'}
+		res = await self.req(
+			'auth', 'post', f'{self.api_url}/oauth2/token',
+			auth=False, data=dict(
+				client_id=self.conf.discord_client_id,
+				client_secret=self.conf.discord_client_secret,
+				grant_type='authorization_code',
+				code=self.get_auth('code'),
+				redirect_uri=self.conf.discord_redirect_url,
+				scope=' '.join(scopes) ))
+		async with res:
+			res.raise_for_status()
+			res = adict((await res.json()) or dict())
+		try:
+			if not all([
+					res.access_token, res.refresh_token,
+					res.token_type == 'Bearer',
+					not scopes.difference(res.scope.split()) ]):
+				raise KeyError
+		except KeyError
+			raise DiscordSessionError(f'Auth token error: {res}') from None
+		setattr(self.conf, f'auth_{self.t}_token', res.access_token)
+		setattr(self.conf, f'auth_{self.t}_token_refresh', res.refresh_token)
+		self.conf.update_file_section('auth')
+
+	async def req( self, url, *args,
+			m='get', route=None, auth=True, raw=False, **kws ):
+		if not re.search(r'^https?:', url):
+			url = urllib.parse.urljoin(self.api_url, url)
+		if route is None: route = url
+		self.log.debug('req  >> {} {}', method, url)
+		for att in 'normal', 'token_refresh':
+			if auth:
+				token = get_auth('token', None)
+				if not token or att == 'token_refresh': self.req_get_token()
+				kws['headers'] = kws.get('headers', dict()).update(Authorization=f'Bearer {token}')
+			req_func = ft.partial(self.http.request, method, url, *args, **kws)
+			res = await self.rate_limit_wrapper(route, req_func)
+			if not auth: break
+			if res.status == 401:
+				res.release()
+				if att != 'normal': raise DiscordSessionError('Auth failed')
+		res.raise_for_status()
+		if not raw: res = await res.json()
+		self.log.debug('req <<  {}', res)
+		return res
+
+
+	### Gateway Websocket wrappers
+
+	_ws_handler = cs.namedtuple('ws_handler', 'op func')
+	def ws_add_handler(self, op=None, func=None):
+		if not func: raise ValueError(func)
+		self.ws_handlers[id(func)] = _ws_handler(op, func)
+
+	async def ws_poller(self):
+		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
+		# {op=...[, d={...}]}
+		async for msg in self.ws:
+			if self.conf.discord_ws_debug:
+				self.log.debug('ws <<  {} {}', msg.type, getattr(msg, 'data', ''))
+			if msg.type == aiohttp.WSMsgType.text:
+				msg_data, hs_discard = adict(json.loads(msg.data)), set()
+				for k, h in self.ws_handlers.items():
+					# XXX: use op and other checks as ws_handler keys
+					if h.op is not None and msg_data.op != h.op: continue
+					oneshot = await maybe_coro(h.func(msg_data))
+					if oneshot: hs_discard.add(k)
+				for k in hs_discard: del self.ws_handlers[k]
+			elif msg.type == aiohttp.WSMsgType.closed: break
+			elif msg.type == aiohttp.WSMsgType.error:
+				self.log.error('ws protocol error, aborting: {}', msg)
+				break
+			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
+
+	def ws_poller_done(self, fut):
+		err = fut.exception()
+		if err:
+			self.log.exception( 'Unhandled ws handler'
+				' failure, aborting: {}', err_fmt(err), exc_info=err )
+		self.tasks.add(self.ws_close)
+
+	def ws_send(self, op, d):
+		msg_data = json.dumps(dict(op=op, d=d))
+		if self.conf.discord_ws_debug: self.log.debug('ws  >> {}', msg_data)
+		self.run_task(self.ws.send_str(msg_data))
+
+	async def ws_close(self):
+		if self.ws_closed.is_set(): return
+		if self.conf.discord_ws_debug: self.log.debug('ws  >> -close-')
+		if self.ws: await self.ws.close()
+		self.ws_closed.set() # XXX: monitor for reconnect, close/wait ws_ctx there
+		await self.ws_tasks.close()
+		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
+
+
+	### Gateway Websocket protocol
+	# XXX: rate limits here?
+
+	def op_track_seq(self, m): self.seq = m.s
+	def op_hello(self, m):
+		interval = m.d.heartbeat_interval / 1e3
+		self.log.debug('Heartbeat interval: {:,.2f}', interval)
+		self.ws_tasks.add(self.op_heartbeat_task(interval))
+		# XXX: send c.identify msg + next steps
+
+	async def op_heartbeat_task(self, interval):
+		self.hb_ts_ack = hb_ts = self.loop.time()
+		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
+		while self.ws and not self.ws_closed.is_set():
+			self.ws_send(self.c.heartbeat, self.seq)
+			ts = self.loop.time()
+			if self.hb_ts_ack < ts - interval*2:
+				self.log.error('Missing heartbeat ack, reconnecting')
+				self.ws_close() # XXX: some clean close command?
+			delay = ts - hb_ts
+			while hb_ts < ts: hb_ts += interval
+			await asyncio.sleep(delay)
+
+	async def op_heartbeat_ack(self, m):
+		self.hb_ts_ack = self.loop.time()
 
 
 
@@ -591,15 +871,14 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.tasks = dict()
 		self.nick_sys, self.chans_sys = 'core', dict(
 			control='rdircd control channel, type "help" for more info',
 			debug='rdircd debug logging channel, read-only' )
+		self.tasks = StacklessContext()
 		return self
 
 	async def __aexit__(self, *err):
-		task_list, self.tasks = self.tasks.values(), None
-		await task_cancel_list(task_list)
+		if self.tasks: await self.tasks.close()
 
 	async def run(self):
 		ircd = await self.loop.create_server(
@@ -609,10 +888,10 @@ class RDIRCD:
 		self.log.debug('Initializing discord...')
 		async with Discord(self) as discord:
 			self.log.debug('Starting ircd...')
-			ircd_task = self.cmd_task(ircd.serve_forever())
+			ircd_task = self.tasks.add(ircd.serve_forever())
 			while True:
-				done, pending = await asyncio.wait( self.tasks.values(),
-					loop=self.loop, return_when=asyncio.FIRST_COMPLETED )
+				done, pending = await asyncio.wait(
+					self.tasks.values(), return_when=asyncio.FIRST_COMPLETED )
 				for task in done:
 					task = self.tasks.pop(id(task), None)
 					if task: task.result()
@@ -638,22 +917,11 @@ class RDIRCD:
 		return stats
 
 
-	def cmd_task(self, coro, run_after=None):
-		if run_after:
-			async def _run_after_coro(coro=coro):
-				await coro
-				coro = run_after()
-				if asyncio.iscoroutine(coro): await coro
-			coro = _run_after_coro()
-		task = asyncio.create_task(coro)
-		self.tasks[id(task)] = task
-		return task
-
 	def cmd_delay(self, delay, func):
 		if delay and not isinstance(delay, (int, float)):
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			else: raise ValueError(delay)
-		if delay: self.cmd_task(asyncio.sleep(delay), func)
+		if delay: self.tasks.add(asyncio.sleep(delay), func)
 		else: func()
 
 	def cmd_conn(self, name=None):
@@ -677,21 +945,26 @@ class RDIRCD:
 				ts_created=self.server_ts.timestamp() ))
 		# XXX: list discord channels/users here as well
 
+	def cmd_control_status(self, conn, chan):
+		for line in [
+				'Status:',
+				'  XXX: show whether stuff is connected and working atm' ]:
+			conn.cmd_msg_synth(self.nick_sys, chan, line)
+
 	def cmd_control(self, conn, text, chan):
 		line = text.strip().split()
-		# self.nick_sys
 		if not line: return
 		cmd, send = line[0],\
 			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
 		if cmd == 'help':
+			self.cmd_control_status(conn, chan)
 			for line in [
-					'Status:',
-					'  XXX: show whether stuff is connected and working atm',
 					'Commands:',
-					'  status - show whether discord is connected and working ',
+					'  status - (alias: st) show whether discord is connected and working',
 					'  connect - (alias: on) connect/login to discord api',
 					'  disconnect - (alias: off) disconnect from discord' ]:
 				send(line)
+		elif cmd in ['status', 'st']: self.cmd_control_status(conn, chan)
 		elif cmd in ['connect', 'on']:
 			send('discord: connecting...')
 			# self.discord.connect()
@@ -708,6 +981,8 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
+	version = '1.0'
+
 	irc_host = '127.0.0.1'
 	irc_port = 6667
 	irc_password = ''
@@ -715,6 +990,14 @@ class RDIRCDConfig:
 	irc_auth_tbf = '30:8'
 
 	discord_client_id = ''
+	discord_client_secret = ''
+	discord_redirect_url = 'https://localhost'
+	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
+	discord_ws_timeout = 20.0
+	discord_ws_heartbeat = 15.0
+	discord_ws_debug = True
+	discord_user_agent = ( f'rdircd/{version}'
+		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 
 	auth_main_code = ''
 	auth_main_token = ''
@@ -722,6 +1005,7 @@ class RDIRCDConfig:
 	auth_ghost_code = ''
 	auth_ghost_token = ''
 	auth_ghost_token_refresh = ''
+	auth_gateway = ''
 
 	# XXX: options for well-timestamped protocol logs
 
