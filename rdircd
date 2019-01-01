@@ -126,7 +126,7 @@ class StacklessContext:
 		if self.tasks:
 			task_list, self.tasks = self.tasks.values(), None
 			await task_cancel_list(task_list)
-	async def close(self): return self.__aexit__(None, None, None)
+	async def close(self): await self.__aexit__(None, None, None)
 
 	def add_task(self, coro, run_after=None):
 		'Start task eating its own tail, with an optional success-only callback'
@@ -220,6 +220,7 @@ class IRCProtocol:
 		return (data_len, data_repr) if prefix else data_repr
 
 	def _parse(self, line):
+		if isinstance(line, bytes): line = line.decode()
 		m = adict(line=line, params=list())
 		for k in '@tags', ':src':
 			pre, k = k[0], k[1:]
@@ -243,15 +244,35 @@ class IRCProtocol:
 		else: raise IRCProtocolLineError(line)
 		return m
 
-	def send(self, line_or_code, *args):
+	def send(self, line_or_code, *args, max_len=450, auto_split=True):
 		line = line_or_code
 		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
-		if not line.endswith(b'\n'): line += b'\r\n'
-		if len(line) >= 500:
-			self.log.warning('Sending line with >500B: {!r}', self._repr(line))
+		line = line.rstrip(b'\r\n')
+		if b'\n' in line or len(line) > max_len:
+			if auto_split:
+				m = self._parse(line)
+				if m.cmd == 'privmsg': return self.send_split_privmsg(m)
+			if len(line) > max_len:
+				self.log.warning('Sending line with >{}B: {!r}', max_len, self._repr(line))
+		line += b'\r\n'
 		self.data_send(line)
+
+	def send_split_privmsg(self, m, max_len=300):
+		dst, line = m.params
+		pre = f'{m.cmd.upper()} {dst}'
+		if m.src: pre = f'{m.src} {pre}'
+		if '\n' in line:
+			for line in line.split('\n'): self.send(pre, f':{line.rstrip()}')
+			return
+		line, ws = '', re.findall(r'(\S+)(\s*)', line)
+		for w, sep in ws:
+			if line.strip() and len(line) + len(w) > max_len:
+				self.send(pre, f':{line.rstrip()}', auto_split=False)
+				line = sep_last
+			sep_last, line = sep, line + w + sep
+		if line.strip(): self.send(pre, f':{line.rstrip()}', auto_split=False)
 
 	def recv(self, line_raw, _cmd_cache=dict()):
 		if isinstance(line_raw, str): line = line_raw
@@ -284,7 +305,10 @@ class IRCProtocol:
 				self.log.error( 'Command/args'
 					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr(line) )
 				return self.send(461, ':Incorrect command parameters')
-			cmd_func(*m.params)
+			try: cmd_func(*m.params)
+			except Exception as err:
+				self.send(400, m.cmd.upper(), f':BUG - Internal Error - {err_fmt(err)}')
+				self.log.exception('Error processing message: {}', m)
 
 	def check_access(self, cmd):
 		if self.st.cap_neg: return cmd in ['cap', 'quit']
@@ -499,9 +523,8 @@ class IRCProtocol:
 		else:
 			conn = self.bridge.cmd_conn(target)
 			if not conn:
-				if not notice: conn.send(401, target, ':No such nick/channel')
-				return
-			conn.send(f':{src} {msg_type} {target} :{text}')
+				if not notice: self.send(401, target, ':No such nick/channel')
+			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
 	def cmd_msg_synth(self, src, target, text):
 		'Synthetic PRIVMSG which avoids any self-reaction loops like notices'
@@ -531,7 +554,7 @@ class Discord:
 		self.sessions = adict()
 		return self
 	async def __aexit__(self, *err):
-		task_cancel_list(self.sessions.values())
+		await task_cancel_list(self.sessions.values())
 
 	async def fill_in_client_creds(self):
 		def stdin_line_reader(fut):
@@ -547,7 +570,7 @@ class Discord:
 				f'  section of the config file ({self.conf._conf_path}).',
 				'Go to following URL via browser:',
 				'  https://discordapp.com/developers/applications/#top',
-				'Register app there and copy-paste "Client ID" (big number)'
+				'Register app there and copy-paste "Client ID" (big number)',
 				' and "Client Secret" (alphanumeric) from the main tab there below.',
 				'Client ID: ' ]), end='')
 			while True:
@@ -577,7 +600,7 @@ class Discord:
 				'  ' 'https://discordapp.com/api/oauth2/authorize?'
 					f'client_id={self.conf.discord_client_id}&redirect_uri={redirect_url}'
 					'&response_type=code&scope=messages.read',
-				'Discord will ask whether app should be authorized'
+				'Discord will ask whether app should be authorized',
 				f'  for access and redirect to {self.conf.discord_redirect_url} URL after that.',
 				'Copy-paste that final redirect-to URL below.',
 				f'IMPORTANT: do this after logging into {acc.upper()} account, not the other one.',
@@ -754,7 +777,7 @@ class DiscordSession:
 					res.token_type == 'Bearer',
 					not scopes.difference(res.scope.split()) ]):
 				raise KeyError
-		except KeyError
+		except KeyError:
 			raise DiscordSessionError(f'Auth token error: {res}') from None
 		setattr(self.conf, f'auth_{self.t}_token', res.access_token)
 		setattr(self.conf, f'auth_{self.t}_token_refresh', res.refresh_token)
@@ -888,14 +911,7 @@ class RDIRCD:
 		self.log.debug('Initializing discord...')
 		async with Discord(self) as discord:
 			self.log.debug('Starting ircd...')
-			ircd_task = self.tasks.add(ircd.serve_forever())
-			while True:
-				done, pending = await asyncio.wait(
-					self.tasks.values(), return_when=asyncio.FIRST_COMPLETED )
-				for task in done:
-					task = self.tasks.pop(id(task), None)
-					if task: task.result()
-				if ircd_task in done: break
+			await self.tasks.add(ircd.serve_forever())
 		self.log.debug('Finished')
 
 	async def run_async(self):
