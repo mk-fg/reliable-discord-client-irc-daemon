@@ -5,6 +5,9 @@ Python3/asyncio daemon to present personal discord client as local irc server,
 with a list of channels corresponding to ones available on all joined "discord
 servers" (group of users/channels with its own theme/auth/rules on discord).
 
+Purpose is to be able to comfortably use discord via simple text-based IRC client,
+and not browser, electron app or anything of the sort.
+
 One additional "reliable" quirk is that the plan is to have it actually connect
 to discord under two separate accounts ("main" and "ghost"), and have these
 monitor same channels to detect when stuff posted by the "main" acc doesn't make it,
@@ -15,44 +18,22 @@ I've used seem to have from time to time.
 Under development and not ready for use yet.
 
 
-Usage
------
+WARNING
+-------
 
-- Go to https://discordapp.com/developers/applications/#top and register your
-  fork or instance of the app.
+While I wouldn't call this app a "bot" exactly - intent here is not to post any
+automated messages or scrape anything - Discord staff might, and Discord
+requires bots to use special second-class API and for every account of such to
+be approved by admins on every connected discord server, making it effectively
+unusable for a random non-admin user.
 
-  Discord client_id can be hardcoded into the app, so that every user don't need
-  to go get it, but as I'm probably the only one using this one, don't see much
-  reason to bother.
+As this app does not present itself as a "bot" and doesn't use bot-specific
+endpoints, if Discord staff would classify it as such, it might result in
+blocking of user account(s).
 
-- In General Information tab there, find "Client ID" (long number) and "Client
-  Secret" (alphanumeric) and copy these into "[discord]" section of
-  ~/.rdircd.ini file like this one::
+See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
 
-    [irc]
-    password = xyzxyz123
-
-    [discord]
-    client-id = 157730590492196864
-    client-secret = s1H7hzOI9EwzFHhTT4TChoQjYKf6g350hbMN33OJJoU
-
-  That ini file will be updated with [auth] section by the script to store
-  OAuth2 credentials, but it should not touch anything else there.
-
-  If whole file or that client-id is missing there,
-  script will prompt for it interactively.
-
-- Run ./rdircd and it will present an URL for browser and a prompt for
-  redirected-to URL after access is granted there - fill that in.
-
-- Connect IRC client to localhost:6667 with the password from ini above.
-
-  Password can be omitted or empty to not bother with it, but be sure to
-  firewall that port from everything in the system then (or maybe do it anyway),
-  as it's definitely not a good idea to give every process on the machine access
-  to that ad-hoc ircd or discord behind it.
-
-- Try: ``/list``, ``/join #control`` and sending "help" there.
+.. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
 
 
 Requirements
@@ -60,3 +41,28 @@ Requirements
 
 * `Python 3.7+ <http://python.org/>`_
 * `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
+
+
+API and Implementation Notes
+----------------------------
+
+Note: only using this API here, only going by public info, can be wrong,
+and would appreciate any updates/suggestions/corrections via open issues.
+
+Last updated: 2019-01-02
+
+- Discord API docs don't seem to cover "full-featured client" use-case,
+  which likely means that such use is not officially supported or endorsed.
+
+  See WARNING section above for what it might potentially imply.
+
+- Auth uses undocumented /api/auth/login endpoint for getting "token" value for
+  email/password, which is not OAuth2 token and is usable for all other endpoints
+  (e.g. POST URLs, Gateway, etc) without any prefix in HTTP Authorization header.
+
+  Found it being used in other clients, and dunno if there's any other way to
+  authorize non-bot on e.g. Gateway websocket - only documented auth is OAuth2,
+  and it doesn't seem to allow that.
+
+  Being apparently undocumented and available since the beginning,
+  guess it might be heavily deprecated by now and go away at any point in the future.

@@ -561,99 +561,18 @@ class Discord:
 		self.log = get_logger('rdircd.discord.main')
 
 	async def __aenter__(self):
-		await self.fill_in_client_creds()
 		self.sessions = adict()
 		for acc in 'main', 'ghost':
-			if self.conf.get(f'auth_{acc}_code') == 'nx': continue
+			if not ( self.conf.get(f'auth_{acc}_email')
+					and self.conf.get(f'auth_{acc}_password') ):
+				self.log.info('Disabling account with no access credentials: {}', acc)
+				continue
 			self.sessions[acc] = s = DiscordSession(self, acc)
 			s.task = self.loop.create_task(s.run_async())
 		return self
 
 	async def __aexit__(self, *err):
 		await task_cancel_list(s.task for s in self.sessions.values())
-
-	async def fill_in_client_creds(self):
-		# XXX: maybe ask this via irc?
-		def stdin_line_reader(fut):
-			self.loop.remove_reader(sys.stdin.fileno())
-			fut.set_result(sys.stdin.readline())
-		async def read_stdin_line():
-			input_line = asyncio.Future()
-			try:
-				self.loop.add_reader(sys.stdin.fileno(), stdin_line_reader, input_line)
-				input_line = await input_line
-				if not input_line: raise OSError # closed fd
-			except OSError:
-				print(end='\n\n')
-				raise DiscordAbort('Failed to read from stdin') from None
-			return input_line.strip() or ''
-		if not self.conf.discord_client_id:
-			print('\n'.join([ '',
-				'There is no "client-id" specified under "[discord]"',
-				f'  section of the config file ({self.conf._conf_path}).',
-				'Go to following URL via browser:',
-				'  https://discordapp.com/developers/applications/#top',
-				'Register app there and copy-paste "Client ID" (big number)',
-				' and "Client Secret" (alphanumeric) from the main tab there below.',
-				'Client ID: ' ]), end='')
-			while True:
-				client_id = await read_stdin_line()
-				if client_id.isdigit() and len(client_id) > 10: break
-				print('\n'.join([
-					f'!!! ERROR: Entered Client ID looks bogus - {client_id!r}',
-					'Client ID: ' ]), end='')
-			print('Client Secret: ', end='')
-			while True:
-				client_secret = await read_stdin_line()
-				if len(client_secret) > 20: break
-				print('\n'.join([
-					f'!!! ERROR: Entered Client Secret looks bogus - {client_secret!r}',
-					'Client Secret: ' ]), end='')
-			self.conf.discord_client_id = client_id
-			self.conf.discord_client_secret = client_secret
-			self.conf.update_file_section('discord')
-			print(f'--- Discord Client ID/Secret are stored in config file: {self.conf._conf_path}')
-		for acc in 'main', 'ghost':
-			k = f'auth_{acc}_code'
-			if self.conf.get(k): continue
-			redirect_url = urllib.parse.quote(self.conf.discord_redirect_url)
-			print('\n'.join([ '',
-				f'Filling-in auth code value for **{acc.upper()}** account.',
-				'Go to following URL via browser:',
-				'  ' 'https://discordapp.com/api/oauth2/authorize?'
-					f'client_id={self.conf.discord_client_id}&redirect_uri={redirect_url}'
-					'&response_type=code&scope=messages.read',
-				'Discord will ask whether app should be authorized',
-				f'  for access and redirect to {self.conf.discord_redirect_url} URL after that.',
-				'Copy-paste that final redirect-to URL below.',
-				f'IMPORTANT: do this after logging into {acc.upper()} account, not the other one.',
-				*([] if acc == 'main' else [f'Leave empty to not use additional {acc} account.']),
-				'Redirect-to URL: ' ]), end='')
-			while True:
-				url = await read_stdin_line()
-				if acc != 'main' and not url:
-					code = 'nx'
-					break
-				try:
-					if not re.search(r'https?://.*?\?.*\bcode=', url):
-						raise ValueError('This does not look like an URL')
-					parts = urllib.parse.urlsplit(url)
-					qs = urllib.parse.parse_qs(parts.query)
-					code = qs['code'][-1]
-				except Exception as err:
-					print('\n'.join([
-						f'!!! ERROR: Entered redirect URL looks bogus - {url!r}',
-						f'!!! ERROR: Specific error - {err_fmt(err)}',
-						'Redirect-to URL: ' ]), end='')
-					continue
-				else: break
-			self.conf.set(k, code)
-			self.conf.update_file_section('auth', k)
-			if code != 'nx':
-				print(f'--- Discord Auth Code stored in config file: {self.conf._conf_path}')
-			else:
-				print(f'--- Additional {acc} account will be disabled')
-				print(f'--- Remove "{acc}_code = nx" line from "[auth]" section to enable it')
 
 	def connect(self):
 		for s in self.sessions.values(): s.connect()
@@ -701,20 +620,22 @@ class DiscordSession:
 			return default
 
 	async def __aenter__(self):
-		if not (
-				self.conf.discord_client_id
-				and self.conf.discord_client_secret
-				and self.get_auth('code') ):
-			raise DiscordSessionError('Missing client id/secret/code auth credentials')
-		self.tasks = StacklessContext()
+		if not (self.get_auth('email') and self.get_auth('password')):
+			raise DiscordSessionError('Missing account auth credentials')
+		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext()
+		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession())
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
 		self.rate_limits, self.seq, self.ws_closed = adict(), None, asyncio.Event()
+		self.auth_token = self.get_auth('token')
 		return self
 
 	async def __aexit__(self, *err):
 		if self.ws_ctx:
 			await self.ws_ctx.aclose()
 			self.ws_ctx = None
+		if self.ctx:
+			await self.ctx.aclose()
+			self.ctx = None
 		if self.tasks: await self.tasks.close()
 
 	async def run(self):
@@ -726,20 +647,112 @@ class DiscordSession:
 	async def run_async(self):
 		async with self: await self.run()
 
-	async def _connect(self):
+	def connect(self):
+		# XXX: start reconnect logic/task, report back to irc control
+		return self.tasks.add(self.ws_connect())
+	def disconnect(self): return self.tasks.add(self.ws_close())
+
+
+	### Regular HTTP requests and OAuth2 stuff
+
+	async def rate_limit_wrapper(self, route, req_func):
+		# XXX: global limits currently only handled via http-429
+		req_limit_defaults = 1, None
+		while True:
+			ts = time.time()
+			req_limit, req_limit_ts = self.rate_limits.get(route) or req_limit_defaults
+			if req_limit_ts and ts > req_limit_ts: req_limit = 1
+			if req_limit <= 0 and req_limit_ts and req_limit_ts > ts:
+				delay = req_limit_ts - ts
+				self.log.debug('Rate-limiting request on route {!r}: delay={:,.1f}s', route, delay)
+				await asyncio.sleep(delay + self.conf.discord_http_delay_padding)
+			res = await req_func()
+			req_limit_headers = list( res.headers.get(k)
+				for k in ['X-RateLimit-Remaining', 'X-RateLimit-Reset'] )
+			if any(req_limit_headers):
+				warn, req_limit_vals = False, list(req_limit_defaults)
+				for n, v in enumerate(req_limit_headers):
+					try: req_limit_vals[n] = float(v)
+					except ValueError as err: warn = False
+				if warn:
+					self.log.warning( 'Failed to parse rate-limit http'
+						' header value(s), assuming default(s): {!r} / {!r}', *req_limit_headers )
+				req_limit, req_limit_ts = self.rate_limits[route] = req_limit_vals
+			if res.status == 429:
+				m = await res.json()
+				delay = m.get('retry_after')
+				if delay:
+					self.log.debug( 'Rate-limiting request on route'
+							' {!r}: explicit-retry-after, delay={:,.1f}s, global={}, msg={!r}',
+						route, delay, m.get('global'), m.get('message') )
+					await asyncio.sleep(float(delay) / 1e3 + self.conf.discord_http_delay_padding)
+					continue
+				elif req_limit <= 0 and req_limit_ts and req_limit_ts > time.time(): continue
+				else:
+					raise DiscordSessionError(
+						'Failed to get API rate-limiting retry delay for http-429 error' )
+			break
+		return res
+
+	async def req_auth_token(self):
+		if isinstance(self.auth_token, asyncio.Event): await self.auth_token
+		elif not self.auth_token:
+			self.auth_token = asyncio.Event()
+			email, pw = (self.get_auth(k) for k in ['email', 'password'])
+			res = await self.req( 'auth/login', m='post',
+				auth=False, json=dict(email=email, password=pw) )
+			if res.get('mfa'):
+				raise DiscordSessionError( 'Multi-factor auth'
+					' requirement detected, but is not supported by rdircd' )
+			setattr(self.conf, f'auth_{self.t}_token', res['token'])
+			self.conf.update_file_section(f'auth_{self.t}', 'token')
+			self.auth_token.set()
+			self.auth_token = self.get_auth('token')
+		return self.auth_token
+
+	async def req( self, url, m='get',
+			route=None, auth=True, raw=False, **kws ):
+		if not re.search(r'^https?:', url):
+			url = urllib.parse.urljoin(self.api_url, url)
+		if route is None: route = url
+		kws.setdefault('headers', dict()).setdefault(
+			'User-Agent', self.conf.discord_user_agent )
+		for att in 'normal', 'token_refresh':
+			if auth:
+				token = await self.req_auth_token()
+				kws.setdefault('headers', dict()).update(Authorization=token)
+			req_func = ft.partial(self.http.request, m, url, **kws)
+			self.log.debug('req  >> {} {}', m, url)
+			res = await self.rate_limit_wrapper(route, req_func)
+			if not auth: break
+			if res.status == 401:
+				res.release()
+				if att != 'normal': raise DiscordSessionError('Auth failed')
+		if res.status >= 400:
+			body = await res.text()
+			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
+		if not raw:
+			res_raw, res = res, await res.json()
+			res_raw.release()
+		self.log.debug('req <<  {}', res)
+		return res
+
+
+	### Gateway Websocket wrappers
+
+	async def ws_connect(self):
 		if self.ws_ctx: return
 		self.ws_ctx = ctx = contextlib.AsyncExitStack()
 		self.ws_tasks, self.ws_handlers = StacklessContext(), dict()
-		self.ws_ctx.push_async_callback(self.ws_close)
-		self.http = await ctx.enter_async_context(aiohttp.ClientSession())
+		ctx.push_async_callback(self.ws_close)
 		self.ws_closed.clear()
 		for cache in True, False:
 			if cache:
-				if not self.conf.auth_gateway: continue
+				if not self.conf.discord_gateway: continue
 			else:
-				self.conf.auth_gateway = (await self.req('gateway', auth=False))['url']
-				self.conf.update_file_section('auth', 'auth_gateway')
-			parts = adict(urllib.parse.urlsplit(self.conf.auth_gateway)._asdict())
+				self.conf.discord_gateway = (await self.req('gateway', auth=False))['url']
+				self.conf.update_file_section('discord', 'gateway')
+			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
 			query = urllib.parse.parse_qs(parts.query)
 			query.update(v=str(self.api_ver), encoding='json')
 			parts.query = urllib.parse.urlencode(query)
@@ -760,88 +773,10 @@ class DiscordSession:
 		self.ws_add_handler(self.c.hello, self.op_hello)
 		self.ws_tasks.add(self.ws_poller()).add_done_callback(self.ws_poller_done)
 
-	def connect(self):
-		# XXX: start reconnect logic/task, report back to irc control
-		return self.tasks.add(self._connect())
-	def disconnect(self): return self.tasks.add(self.ws_close())
-
-
-	### Regular HTTP requests and OAuth2 stuff
-
-	async def rate_limit_wrapper(self, route, req_func):
-		ts = time.time()
-		req_limit, req_limit_ts = self.rate_limits.get(route) or (1, None)
-		if req_limit_ts and ts > req_limit_ts: req_limit = 1
-		if req_limit <= 0 and req_limit_ts and req_limit_ts > ts:
-			delay = req_limit_ts - ts
-			self.log.debug('Rate-limiting request on route {!r}: delay={:,.1f}s', route, delay)
-			await asyncio.sleep(delay)
-		res = await req_func()
-		req_limit = res.headers.get('X-RateLimit-Remaining')
-		if req_limit:
-			self.rate_limits[route] = int(req_limit), res.headers.get('X-RateLimit-Reset')
-		return res
-
-	async def req_get_token(self):
-		self.log.debug('Requestiing new api auth token')
-		scopes = {'messages.read'}
-		# Does not work with invalid_grant, will need to fix that if rest-api is needed
-		res = await self.req( f'{self.api_url}/oauth2/token',
-			m='post', route='auth', auth=False, data=dict(
-				client_id=self.conf.discord_client_id,
-				client_secret=self.conf.discord_client_secret,
-				grant_type='authorization_code',
-				code=self.get_auth('code'),
-				redirect_uri=self.conf.discord_redirect_url,
-				scope=' '.join(scopes) ))
-		async with res:
-			res.raise_for_status()
-			res = adict((await res.json()) or dict())
-		try:
-			if not all([
-					res.access_token, res.refresh_token,
-					res.token_type == 'Bearer',
-					not scopes.difference(res.scope.split()) ]):
-				raise KeyError
-		except KeyError:
-			raise DiscordSessionError(f'Auth token error: {res}') from None
-		setattr(self.conf, f'auth_{self.t}_token', res.access_token)
-		setattr(self.conf, f'auth_{self.t}_token_refresh', res.refresh_token)
-		self.conf.update_file_section('auth')
-
-	async def req( self, url, *args,
-			m='get', route=None, auth=True, raw=False, **kws ):
-		if not re.search(r'^https?:', url):
-			url = urllib.parse.urljoin(self.api_url, url)
-		if route is None: route = url
-		kws.setdefault('headers', dict()).setdefault(
-			'User-Agent', self.conf.discord_user_agent )
-		for att in 'normal', 'token_refresh':
-			if auth:
-				token = self.get_auth('token', None)
-				if not token or att == 'token_refresh': await self.req_get_token()
-				kws.setdefault('headers', dict()).update(Authorization=f'Bearer {token}')
-			req_func = ft.partial(self.http.request, m, url, *args, **kws)
-			self.log.debug('req  >> {} {}', m, url)
-			res = await self.rate_limit_wrapper(route, req_func)
-			if not auth: break
-			if res.status == 401:
-				res.release()
-				if att != 'normal': raise DiscordSessionError('Auth failed')
-		if res.status >= 400:
-			body = await res.text()
-			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
-		if not raw: res = await res.json()
-		self.log.debug('req <<  {}', res)
-		return res
-
-
-	### Gateway Websocket wrappers
-
-	_ws_handler = cs.namedtuple('ws_handler', 'op func')
-	def ws_add_handler(self, op=None, func=None):
+	_ws_handler = cs.namedtuple('ws_handler', 'op t func')
+	def ws_add_handler(self, op=None, func=None, t=None):
 		if not func: raise ValueError(func)
-		self.ws_handlers[id(func)] = self._ws_handler(op, func)
+		self.ws_handlers[id(func)] = self._ws_handler(op, t, func)
 
 	async def ws_poller(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
@@ -852,9 +787,10 @@ class DiscordSession:
 					aiohttp.WSMsgType(msg.type).name.lower(), getattr(msg, 'data', '') )
 			if msg.type == aiohttp.WSMsgType.text:
 				msg_data, hs_discard = adict(json.loads(msg.data)), set()
-				for k, h in self.ws_handlers.items():
+				for k, h in list(self.ws_handlers.items()):
 					# XXX: use op and other checks as ws_handler keys
 					if h.op is not None and msg_data.op != h.op: continue
+					if h.t is not None and msg_data.get('t') != h.t: continue
 					oneshot = await await_wrap(h.func(msg_data))
 					if oneshot: hs_discard.add(k)
 				for k in hs_discard: del self.ws_handlers[k]
@@ -888,13 +824,23 @@ class DiscordSession:
 
 	### Gateway Websocket protocol
 	# XXX: rate limits here?
+	# XXX: handle op=reconnect and such
 
 	def op_track_seq(self, m): self.seq = m.s
-	def op_hello(self, m):
+	async def op_hello(self, m):
 		interval = m.d.heartbeat_interval / 1e3
 		self.log.debug('Heartbeat interval: {:,.2f}', interval)
 		self.ws_tasks.add(self.op_heartbeat_task(interval))
-		# XXX: send c.identify msg + next steps
+		self.ws_add_handler(self.c.invalid_session, self.op_log_warn)
+		self.ws_add_handler(self.c.dispatch, t='READY', func=self.op_ready)
+		token = await self.req_auth_token()
+		# XXX: handling for auth failure events
+		self.ws_send(self.c.identify, dict(
+			properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
+			token=token, compress=False, large_threshold=250 ))
+
+	async def op_log_warn(self, m):
+		self.log.warning('Unhandled event: {}', m)
 
 	async def op_heartbeat_task(self, interval):
 		self.hb_ts_ack = hb_ts = self.loop.time() + interval
@@ -906,11 +852,16 @@ class DiscordSession:
 				self.log.error('Missing heartbeat ack, reconnecting')
 				await self.ws_close() # XXX: some clean close command?
 			delay = hb_ts - ts
-			while hb_ts < ts: hb_ts += interval
+			while hb_ts <= ts: hb_ts += interval
 			await asyncio.sleep(delay)
 
 	async def op_heartbeat_ack(self, m):
 		self.hb_ts_ack = self.loop.time()
+
+	async def op_ready(self, m):
+		# XXX: store/track session_id and resume sessions
+		# XXX: process info here
+		self.log.debug('Discord websocket ready for events')
 
 
 
@@ -1045,49 +996,51 @@ class RDIRCDConfig:
 	irc_auth_tbf = '30:8'
 
 	discord_auto_connect = False
-	discord_client_id = ''
-	discord_client_secret = ''
-	discord_redirect_url = 'https://localhost'
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
 	discord_ws_debug = True
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
+	discord_http_delay_padding = 10.0 # added to retry_after
+	discord_gateway = ''
 
-	auth_main_code = ''
+	auth_main_email = ''
+	auth_main_password = ''
 	auth_main_token = ''
-	auth_main_token_refresh = ''
-	auth_ghost_code = ''
+
+	auth_ghost_email = ''
+	auth_ghost_password = ''
 	auth_ghost_token = ''
-	auth_ghost_token_refresh = ''
-	auth_gateway = ''
 
 	# XXX: options for well-timestamped protocol logs
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth'
+	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost'
 
 	def __repr__(self): return repr(vars(self))
 	def get(self, *k): return getattr(self, '_'.join(k))
 	def set(self, k, v): setattr(self, k, v)
 
-	def pprint(self, title=None):
+	def pprint(self, title=None, empty_vals=False):
 		cat, chk = None, re.compile(
 			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
 		if title: print(f';; {title}')
 		for k in sorted(dir(self)):
 			m = chk.search(k)
 			if not m: continue
-			if m.group(1) != cat:
-				cat = m.group(1)
-				print(f'\n[{cat}]')
 			v = self.get(k)
+			if not empty_vals and not v: continue
+			cat_chk = m.group(1).replace('_', '-')
+			if cat_chk != cat:
+				cat = cat_chk
+				print(f'\n[{cat}]')
 			if isinstance(v, bool): v = ['no', 'yes'][v]
 			k = m.group(2).replace('_', '-')
 			print(f'{k} = {v}')
 
 	def update_from_file(self, config, section='default', prefix=None):
+		section = section.replace('_', '-')
 		for k in dir(self):
 			if prefix:
 				if not k.startswith(prefix): continue
@@ -1106,6 +1059,7 @@ class RDIRCDConfig:
 				except configparser.NoOptionError: pass
 
 	def update_file_section(self, section, keys=None, path=None):
+		section = section.replace('_', '-')
 		if not path: path = self._conf_path
 		if isinstance(path, str): path = pl.Path(path)
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
@@ -1195,7 +1149,7 @@ def main(args=None, conf=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.conf_dump_defaults:
-		conf.pprint('Default configuration options')
+		conf.pprint('Default configuration options', empty_vals=True)
 		return
 
 	conf_file = configparser.ConfigParser(allow_no_value=True)
