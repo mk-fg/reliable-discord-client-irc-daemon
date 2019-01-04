@@ -629,10 +629,11 @@ class DiscordSession:
 		sharding_required = 4011
 
 	class c_chan_type(enum.IntEnum):
-		text = 1
-		private = 2
-		voice = 3
-		private_group = 4
+		text = 0
+		private = 1
+		voice = 2
+		private_group = 3
+		group = 4
 
 	def __init__(self, discord, t):
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
@@ -843,6 +844,11 @@ class DiscordSession:
 					self._repr(getattr(msg, 'data', '')) )
 			if msg.type == aiohttp.WSMsgType.text:
 				msg_data, hs_discard, handled = adict(json.loads(msg.data)), set(), False
+				if self.conf.ws_dump_filter and self.conf.ws_dump_file:
+					chk = self.conf.ws_dump_filter
+					if ( chk.get('op') == msg_data.get('op')
+							and chk.get('t') == msg_data.get('t') ):
+						with open(self.conf.ws_dump_file, 'w') as dst: dst.write(msg.data)
 				for k, h in list(self.ws_handlers.items()):
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
@@ -959,6 +965,8 @@ class DiscordSession:
 				user_name=md.user.username,
 				user_n=md.user.discriminator )
 			# XXX: check "guilds" state for more useful info
+			# XXX: parse emojis, private_channels, read_state
+			# XXX: no user list here, at least for 2k+ discord
 			self.op_guild_update(guild=md.get('guilds'))
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_guild_event)
@@ -1002,22 +1010,20 @@ class DiscordSession:
 		gg = gs.get(gid) if not isinstance(gid, adict) else gid
 		if not gg: return
 		if users is not ...:
-			dict_sync( gg.users,
-				((u.id, adict(id=u.id, name=u.username)) for u in force_list(user)) )
+			dict_sync(gg.users, ((u.id, adict( id=u.id, name=u.username,
+				deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(user)))
 		if chan is not ...:
 			cs = dict()
 			for c in force_list(chan):
 				cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
 				cc.update(
-					id=c.id, name=c.name, t=ct.c_chan_type(c.type),
-					topic=c.get('topic'), msg_last_id=c.get('last_message_id') )
+					id=c.id, name=c.name, t=ct.c_chan_type(c.get('type', 0)),
+					pos=c.get('position', None), topic=c.get('topic'), nsfw=c.get('nsfw'),
+					last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
 				if cc.t in [ct.c_chan_type.private, ct.c_chan_type.private_group]:
 					us = cc.setdefault('users', dict()).update(
 						(u.id, adict(name=u.username))
 						for u in (c.get('recipients') or list()) )
-				elif cc.t == ct.c_chan_type.text: pass
-				elif cc.t == ct.c_chan_type.voice: pass # for /list only
-				else: self.log.warning('Unknown chan type: {}', cc)
 			dict_sync(gg.chans, cs)
 
 	def op_guild_delete(self, gid=None, user=..., chan=...):
@@ -1186,6 +1192,10 @@ class RDIRCDConfig:
 
 	debug_verbose = False
 	debug_str_cut = 0
+
+	ws_dump_filter = None
+	ws_dump_file = 'dump.json'
+	# ws_dump_filter = adict(op=0, t='READY')
 
 	# XXX: options for well-timestamped protocol logs
 
