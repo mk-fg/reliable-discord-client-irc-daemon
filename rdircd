@@ -615,7 +615,6 @@ class DiscordSession:
 		invalid_session = 9
 		hello = 10
 		heartbeat_ack = 11
-		request_sync = 12
 		unknown_error = 4000
 		unknown_opcode = 4001
 		decode_error = 4002
@@ -952,8 +951,7 @@ class DiscordSession:
 
 	def op_ready(self, m):
 		md = m.get('d')
-		if not md: self.state('ready')
-		else:
+		if md:
 			self.st.update(
 				session_id=md.session_id,
 				user_id=md.user.id,
@@ -961,23 +959,11 @@ class DiscordSession:
 				user_n=md.user.discriminator )
 			# XXX: check "guilds" state for more useful info
 			self.op_guild_update(guild=md.get('guilds'))
-			self.ws_add_handler(self.c.dispatch, t='guild_sync', func=self.op_guild_sync)
-			for gg in self.st.guilds.values():
-				self.state('ready.guild-sync')
-				gg.sync = True
-				self.ws_send(self.c.request_sync, gg.id)
+		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_guild_event)
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_fail, replace=True )
 		return True
-
-	def op_guild_sync(self, m):
-		# XXX: check/process presences, voice states, any other info
-		gg = self.st.guilds.get(m.d.id)
-		if gg:
-			self.op_guild_update(gg, user=m.d.get('members'))
-			gg.sync = False
-		if not any(gg.get('sync') for gg in self.st.guilds.values()): self.state('ready')
 
 	def op_guild_event(self, m):
 		mt = (m.get('t') or '').lower()
