@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, logging, re, time, secrets, hashlib, enum, json
+import os, sys, io, stat, logging, re, time, secrets, hashlib, enum, json, random
 import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
-import configparser, tempfile, datetime as dt, collections as cs, pathlib as pl
+import configparser, tempfile, datetime as dt, pathlib as pl
+import collections as cs, collections.abc as cs_abc
 
 import aiohttp
 
@@ -53,8 +54,26 @@ class adict(dict):
 	def __init__(self, *args, **kws):
 		super().__init__(*args, **kws)
 		self.__dict__ = self
-		for k, v in self.items():
-			if type(v) is dict: self[k] = adict(v)
+		self._make(self)
+	def _make(self, v):
+		if v is self: v.update((k, self._make(v)) for k,v in v.items())
+		elif type(v) is dict: v = adict(v)
+		elif isinstance(v, (tuple, list)): v = type(v)(map(self._make, v))
+		return v
+
+def force_list(v):
+	if not v: return list()
+	if not isinstance(v, list): return [v]
+	return v
+
+def dict_sync(d, *du_args, **du_kws):
+	keys_old, du = set(d.keys()), dict()
+	if ( len(du_args) == 1 and
+		isinstance(du_args[0], cs_abc.Generator) ): du_ags = list(du_args[0])
+	if du_args: du.update(*du_args)
+	if du_kws: du.update(**du_kws)
+	d.update(du)
+	return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
 def iter_gather(cls):
 	def _cls_wrapper(func):
@@ -596,6 +615,7 @@ class DiscordSession:
 		invalid_session = 9
 		hello = 10
 		heartbeat_ack = 11
+		request_sync = 12
 		unknown_error = 4000
 		unknown_opcode = 4001
 		decode_error = 4002
@@ -607,6 +627,12 @@ class DiscordSession:
 		session_timeout = 4009
 		invalid_shard = 4010
 		sharding_required = 4011
+
+	class c_chan_type(enum.IntEnum):
+		text = 1
+		private = 2
+		voice = 3
+		private_group = 4
 
 	def __init__(self, discord, t):
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
@@ -625,7 +651,7 @@ class DiscordSession:
 		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext()
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession())
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
-		self.rate_limits, self.seq, self.ws_closed = adict(), None, asyncio.Event()
+		self.rate_limits, self.ws_closed, self.st = adict(), asyncio.Event(), adict()
 		self.auth_token = self.get_auth('token')
 		return self
 
@@ -651,6 +677,20 @@ class DiscordSession:
 		# XXX: start reconnect logic/task, report back to irc control
 		return self.tasks.add(self.ws_connect())
 	def disconnect(self): return self.tasks.add(self.ws_close())
+
+	def state(self, st):
+		st_old, self.st.state = self.st.get('state', 'none'), st
+		if st == st_old: return
+		self.log.info('State: {} -> {}', st_old, st)
+
+	def _repr(self, s, prefix=False, max_len=230, ext=' ...[{s_len}]'):
+		if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
+		if not isinstance(s, str): s = str(s)
+		s_len, s_repr, ext_len = f'{len(s):03,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
+		if len(s_repr) > max_len:
+			s_len = f'{max_len}/{s_len}'
+			s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
+		return (s_len, s_repr) if prefix else s_repr
 
 
 	### Regular HTTP requests and OAuth2 stuff
@@ -742,6 +782,7 @@ class DiscordSession:
 
 	async def ws_connect(self):
 		if self.ws_ctx: return
+		self.state('connecting.init')
 		self.ws_ctx = ctx = contextlib.AsyncExitStack()
 		self.ws_tasks, self.ws_handlers = StacklessContext(), dict()
 		ctx.push_async_callback(self.ws_close)
@@ -749,7 +790,9 @@ class DiscordSession:
 		for cache in True, False:
 			if cache:
 				if not self.conf.discord_gateway: continue
+				self.state('connecting.ws.cached')
 			else:
+				self.state('connecting.ws.get-url')
 				self.conf.discord_gateway = (await self.req('gateway', auth=False))['url']
 				self.conf.update_file_section('discord', 'gateway')
 			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
@@ -757,26 +800,37 @@ class DiscordSession:
 			query.update(v=str(self.api_ver), encoding='json')
 			parts.query = urllib.parse.urlencode(query)
 			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
+			self.state('connecting.ws')
 			try:
 				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
 					headers={'User-Agent': self.conf.discord_user_agent},
 					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
 			except aiohttp.ClientError as err:
+				self.state('connecting.ws.error')
 				self.log.error('Gateway connection error: {}', err_fmt(err))
 				if cache: continue # try fetching new gw url
 			else: break
 		else: self.ws = None
 		if not self.ws: # XXX: more specific error/details, handle wrt reconnect
+			self.state('connecting.ws.fail')
 			self.ws_closed.set()
 			raise DiscordSessionError('Failed to connect to discord')
+		self.state('connected')
 		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
+		self.ws_add_handler(self.c.reconnect, self.op_reconnect)
 		self.ws_add_handler(self.c.hello, self.op_hello)
+		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session_retry)
 		self.ws_tasks.add(self.ws_poller()).add_done_callback(self.ws_poller_done)
 
 	_ws_handler = cs.namedtuple('ws_handler', 'op t func')
-	def ws_add_handler(self, op=None, func=None, t=None):
+	def ws_add_handler(self, op=None, func=None, t=None, replace=False, remove=False):
+		if replace or remove:
+			for k, wsh in list(self.ws_handlers.items()):
+				if wsh.op == op and wsh.t == t: del self.ws_handlers[k]
+			if remove: return
 		if not func: raise ValueError(func)
-		self.ws_handlers[id(func)] = self._ws_handler(op, t, func)
+		wsh = self._ws_handler(op, t, func)
+		self.ws_handlers[wsh] = wsh
 
 	async def ws_poller(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
@@ -784,16 +838,18 @@ class DiscordSession:
 		async for msg in self.ws:
 			if self.conf.discord_ws_debug:
 				self.log.debug( 'ws <<  {} {}',
-					aiohttp.WSMsgType(msg.type).name.lower(), getattr(msg, 'data', '') )
+					aiohttp.WSMsgType(msg.type).name.lower(),
+					self._repr(getattr(msg, 'data', '')) )
 			if msg.type == aiohttp.WSMsgType.text:
-				msg_data, hs_discard = adict(json.loads(msg.data)), set()
+				msg_data, hs_discard, handled = adict(json.loads(msg.data)), set(), False
 				for k, h in list(self.ws_handlers.items()):
-					# XXX: use op and other checks as ws_handler keys
-					if h.op is not None and msg_data.op != h.op: continue
-					if h.t is not None and msg_data.get('t') != h.t: continue
+					if h.op is not None and msg_data.get('op') != h.op: continue
+					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
+					handled = True
 					oneshot = await await_wrap(h.func(msg_data))
 					if oneshot: hs_discard.add(k)
-				for k in hs_discard: del self.ws_handlers[k]
+				for k in hs_discard: self.ws_handlers.pop(k, None)
+				if not handled: self.log.debug('Unhandled ws event: {}', self._repr(msg_data))
 			elif msg.type == aiohttp.WSMsgType.closed: break
 			elif msg.type == aiohttp.WSMsgType.error:
 				self.log.error('ws protocol error, aborting: {}', msg)
@@ -809,12 +865,13 @@ class DiscordSession:
 
 	def ws_send(self, op, d):
 		msg_data = json.dumps(dict(op=op, d=d))
-		if self.conf.discord_ws_debug: self.log.debug('ws  >> {}', msg_data)
+		if self.conf.discord_ws_debug: self.log.debug('ws  >> {}', self._repr(msg_data))
 		# XXX: maybe enforce ordering for messages here
 		self.tasks.add(self.ws.send_str(msg_data))
 
 	async def ws_close(self):
 		if self.ws_closed.is_set(): return
+		self.state('disconnected')
 		if self.conf.discord_ws_debug: self.log.debug('ws  >> -close-')
 		if self.ws: await self.ws.close()
 		self.ws_closed.set() # XXX: monitor for reconnect, close/wait ws_ctx there
@@ -824,44 +881,171 @@ class DiscordSession:
 
 	### Gateway Websocket protocol
 	# XXX: rate limits here?
-	# XXX: handle op=reconnect and such
 
-	def op_track_seq(self, m): self.seq = m.s
+	def op_log_warn(self, m):
+		self.log.warning('Unhandled event: {}', m)
+
+	def op_track_seq(self, m): self.st.seq = m.s
+	def op_reconnect(self, m):
+		self.log.info('Received reconnect event - closing connection')
+		self.tasks.add(self.ws_close)
+
 	async def op_hello(self, m):
+		self.state('hello')
 		interval = m.d.heartbeat_interval / 1e3
 		self.log.debug('Heartbeat interval: {:,.2f}', interval)
 		self.ws_tasks.add(self.op_heartbeat_task(interval))
-		self.ws_add_handler(self.c.invalid_session, self.op_log_warn)
-		self.ws_add_handler(self.c.dispatch, t='READY', func=self.op_ready)
-		token = await self.req_auth_token()
-		# XXX: handling for auth failure events
-		self.ws_send(self.c.identify, dict(
-			properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
-			token=token, compress=False, large_threshold=250 ))
+		await self.op_hello_auth()
+		return True
 
-	async def op_log_warn(self, m):
-		self.log.warning('Unhandled event: {}', m)
+	async def op_hello_auth(self):
+		self.state('hello.auth.token')
+		token = await self.req_auth_token()
+		if not self.st.get('session_id'):
+			self.state('hello.auth.identify')
+			self.ws_add_handler(self.c.dispatch, t='ready', func=self.op_ready)
+			# XXX: handling for auth failure events
+			self.ws_send(self.c.identify, dict(
+				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
+				token=token, compress=False, large_threshold=250 ))
+		else:
+			self.state('hello.auth.resume')
+			self.ws_add_handler(self.c.dispatch, t='resumed', func=self.op_ready)
+			self.ws_send(self.c.resume, dict(
+				token=token, session_id=self.st.session_id, seq=self.st.get('seq') ))
 
 	async def op_heartbeat_task(self, interval):
-		self.hb_ts_ack = hb_ts = self.loop.time() + interval
+		self.st.hb_ts_ack = hb_ts = self.loop.time() + interval
 		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
 		while not self.ws_closed.is_set():
-			self.ws_send(self.c.heartbeat, self.seq)
+			self.ws_send(self.c.heartbeat, self.st.get('seq'))
 			ts = self.loop.time()
-			if self.hb_ts_ack < ts - interval*2:
+			if self.st.hb_ts_ack < ts - interval*2:
+				self.state('heartbeat.fail')
 				self.log.error('Missing heartbeat ack, reconnecting')
-				await self.ws_close() # XXX: some clean close command?
+				await self.ws_close()
 			delay = hb_ts - ts
 			while hb_ts <= ts: hb_ts += interval
 			await asyncio.sleep(delay)
 
-	async def op_heartbeat_ack(self, m):
-		self.hb_ts_ack = self.loop.time()
+	def op_heartbeat_ack(self, m):
+		self.st.hb_ts_ack = self.loop.time()
 
-	async def op_ready(self, m):
-		# XXX: store/track session_id and resume sessions
-		# XXX: process info here
-		self.log.debug('Discord websocket ready for events')
+	async def op_invalid_session_retry(self, m):
+		self.log.info(
+			'Session/auth rejected during handshake'
+			' - updating auth token and retrying after delay' )
+		# "expected to wait a random amount of time -
+		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
+		self.state('session.error.delay')
+		await asyncio.sleep(1 + random.random() * 4)
+		self.auth_token = None
+		self.ws_add_handler( self.c.invalid_session,
+			self.op_invalid_session_fail, replace=True )
+		self.state('session.error')
+		await self.op_hello_auth()
+
+	async def op_invalid_session_fail(self, m):
+		self.log.info('Session/auth rejected unexpectedly - closing connection')
+		self.state('session.fail')
+		await self.ws_close()
+
+	def op_ready(self, m):
+		md = m.get('d')
+		if not md: self.state('ready')
+		else:
+			self.st.update(
+				session_id=md.session_id,
+				user_id=md.user.id,
+				user_name=md.user.username,
+				user_n=md.user.discriminator )
+			# XXX: check "guilds" state for more useful info
+			self.op_guild_update(guild=md.get('guilds'))
+			self.ws_add_handler(self.c.dispatch, t='guild_sync', func=self.op_guild_sync)
+			for gg in self.st.guilds.values():
+				self.state('ready.guild-sync')
+				gg.sync = True
+				self.ws_send(self.c.request_sync, gg.id)
+		self.ws_add_handler(self.c.dispatch, func=self.op_guild_event)
+		self.ws_add_handler( self.c.invalid_session,
+			self.op_invalid_session_fail, replace=True )
+		return True
+
+	def op_guild_sync(self, m):
+		# XXX: check/process presences, voice states, any other info
+		gg = self.st.guilds.get(m.d.id)
+		if gg:
+			self.op_guild_update(gg, user=m.d.get('members'))
+			gg.sync = False
+		if not any(gg.get('sync') for gg in self.st.guilds.values()): self.state('ready')
+
+	def op_guild_event(self, m):
+		mt = (m.get('t') or '').lower()
+		try: o, act = mt.rsplit('_', 1)
+		except ValueError: return
+		try: gid = m.d.guild_id
+		except: gid = None
+		if o == 'guild':
+			if act in ['create', 'update']: self.op_guild_update(gid, guild=m.d)
+			elif act == 'delete': self.op_guild_delete(gid)
+		elif o == 'channel':
+			if act in ['create', 'update']: self.op_guild_update(gid, chan=m.d)
+			elif act == 'delete': self.op_guild_delete(gid, chan=m.d.id)
+		elif o == 'guild_member':
+			if act in ['add', 'update']: self.op_guild_update(gid, user=m.d.user)
+			elif act == 'delete': self.op_guild_delete(gid, user=m.d.user.id)
+		# XXX: actual messages
+		# elif o == 'message':
+		# elif o == 'message_reaction':
+		# elif o == 'relationship':
+		# elif o == 'channel_pins':
+		# elif o == 'presence':
+
+	def op_guild_update(self, gid=None, guild=..., user=..., chan=...):
+		gs = self.st.setdefault('guilds', dict())
+		if guild is not ...:
+			gs_new = dict()
+			for g in force_list(guild):
+				gg = gs_new.setdefault( g.id,
+					gs.get(g.id, adict(id=g.id, chans=dict(), users=dict())) )
+				gg.update(name=g.name)
+				self.op_guild_update(g.id, user=g.get('members'), chan=g.get('channels'))
+				# XXX: check/process presences, voice states, any other info
+			dict_sync(gs, gs_new)
+		gg = gs.get(gid) if not isinstance(gid, adict) else gid
+		if not gg: return
+		if users is not ...:
+			dict_sync( gg.users,
+				((u.id, adict(id=u.id, name=u.username)) for u in force_list(user)) )
+		if chan is not ...:
+			cs = dict()
+			for c in force_list(chan):
+				cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
+				cc.update(
+					id=c.id, name=c.name, t=ct.c_chan_type(c.type),
+					topic=c.get('topic'), msg_last_id=c.get('last_message_id') )
+				if cc.t in [ct.c_chan_type.private, ct.c_chan_type.private_group]:
+					us = cc.setdefault('users', dict()).update(
+						(u.id, adict(name=u.username))
+						for u in (c.get('recipients') or list()) )
+				elif cc.t == ct.c_chan_type.text: pass
+				elif cc.t == ct.c_chan_type.voice: pass # for /list only
+				else: self.log.warning('Unknown chan type: {}', cc)
+			dict_sync(gg.chans, cs)
+
+	def op_guild_delete(self, gid=None, user=..., chan=...):
+		gs = self.st.setdefault('guilds', dict())
+		gg = gs.get(gid)
+		if not gg: return
+		if user is not ...: gg.users.pop(user, None)
+		elif chan is not ...: gg.chans.pop(chan, None)
+		else: gs.pop(gid, None)
+
+	# Not handled:
+	#
+	# - After READY: op=0 t=SESSIONS_REPLACE s=2
+	#   d=[{ status=online, session_id=..., game=null,
+	#     client_info={version=0, os=other, client=web}, activities=[] }]
 
 
 

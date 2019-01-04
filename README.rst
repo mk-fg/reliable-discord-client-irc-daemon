@@ -3,7 +3,8 @@ Reliable Discord-client IRC Daemon (rdircd)
 
 Python3/asyncio daemon to present personal discord client as local irc server,
 with a list of channels corresponding to ones available on all joined "discord
-servers" (group of users/channels with its own theme/auth/rules on discord).
+servers" (group of users/channels with its own theme/auth/rules on discord,
+also referred to as "guilds" in API docs).
 
 Purpose is to be able to comfortably use discord via simple text-based IRC client,
 and not browser, electron app or anything of the sort.
@@ -15,6 +16,8 @@ or any other messages don't get relayed to either of the two,
 which is unfortunately an issue that either discord api or other clients that
 I've used seem to have from time to time.
 
+Or maybe just tracking MESSAGE_ACK events would be enough, if that's a thing.
+
 Under development and not ready for use yet.
 
 
@@ -24,8 +27,8 @@ WARNING
 While I wouldn't call this app a "bot" exactly - intent here is not to post any
 automated messages or scrape anything - Discord staff might, and Discord
 requires bots to use special second-class API and for every account of such to
-be approved by admins on every connected discord server, making it effectively
-unusable for a random non-admin user.
+be approved by admins on every connected discord server/guild, making it
+effectively unusable for a random non-admin user.
 
 As this app does not present itself as a "bot" and doesn't use bot-specific
 endpoints, if Discord staff would classify it as such, it might result in
