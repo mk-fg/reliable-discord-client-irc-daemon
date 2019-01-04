@@ -239,10 +239,11 @@ class IRCProtocol:
 		self.transport.write(data)
 
 
-	def _repr(self, data, prefix=False, max_len=99, ext=' [{data_len}]'):
+	def _repr(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
 		if isinstance(data, str): data = data.encode()
+		if max_len is None: max_len = self.conf.debug_str_cut
 		data_len, data_repr, ext_len = f'{len(data):03,d}', repr(data)[2:-1], len(ext)
-		if len(data_repr) > max_len:
+		if max_len > 0 and len(data_repr) > max_len:
 			data_len = f'{max_len}/{data_len}'
 			data_repr = data_repr[:max_len - ext_len] + ext.format(data_len=data_len)
 		return (data_len, data_repr) if prefix else data_repr
@@ -682,11 +683,12 @@ class DiscordSession:
 		if st == st_old: return
 		self.log.info('State: {} -> {}', st_old, st)
 
-	def _repr(self, s, prefix=False, max_len=230, ext=' ...[{s_len}]'):
+	def _repr(self, s, prefix=False, max_len=None, ext=' ...[{s_len}]'):
 		if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
 		if not isinstance(s, str): s = str(s)
+		if max_len is None: max_len = self.conf.debug_str_cut
 		s_len, s_repr, ext_len = f'{len(s):03,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
-		if len(s_repr) > max_len:
+		if max_len > 0 and len(data_repr) > max_len:
 			s_len = f'{max_len}/{s_len}'
 			s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
 		return (s_len, s_repr) if prefix else s_repr
@@ -903,7 +905,6 @@ class DiscordSession:
 		if not self.st.get('session_id'):
 			self.state('hello.auth.identify')
 			self.ws_add_handler(self.c.dispatch, t='ready', func=self.op_ready)
-			# XXX: handling for auth failure events
 			self.ws_send(self.c.identify, dict(
 				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
 				token=token, compress=False, large_threshold=250 ))
@@ -922,9 +923,9 @@ class DiscordSession:
 			if self.st.hb_ts_ack < ts - interval*2:
 				self.state('heartbeat.fail')
 				self.log.error('Missing heartbeat ack, reconnecting')
-				await self.ws_close()
-			delay = hb_ts - ts
+				return await self.ws_close()
 			while hb_ts <= ts: hb_ts += interval
+			delay = hb_ts - ts
 			await asyncio.sleep(delay)
 
 	def op_heartbeat_ack(self, m):
@@ -1183,10 +1184,13 @@ class RDIRCDConfig:
 	auth_ghost_password = ''
 	auth_ghost_token = ''
 
+	debug_verbose = False
+	debug_str_cut = 0
+
 	# XXX: options for well-timestamped protocol logs
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost'
+	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
 
 	def __repr__(self): return repr(vars(self))
 	def get(self, *k): return getattr(self, '_'.join(k))
@@ -1315,7 +1319,12 @@ def main(args=None, conf=None):
 				enclose the latter in [], for example - [::]:6667.
 			Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.''')
 
-	parser.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group = parser.add_argument_group('Misc / debug opts')
+	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('-t', '--str-cut', type=int, metavar='n',
+		help='Truncate long strings in protocol dumps to specified length.'
+			' Set to <=0 to disable truncation (default).')
+
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.conf_dump_defaults:
@@ -1339,11 +1348,15 @@ def main(args=None, conf=None):
 		conf.pprint('Current configuration options')
 		return
 
+	if opts.debug: conf.debug_verbose = True
+	if opts.str_cut: conf.debug_str_cut = opts.str_cut
+
 	log_fmt = '%(name)s %(levelname)5s :: %(message)s'
-	if opts.debug: log_fmt = '%(asctime)s :: ' + log_fmt
+	if conf.debug_verbose: log_fmt = '%(asctime)s :: ' + log_fmt
 	log_fmt = logging.Formatter(log_fmt)
 	log_handler = logging.StreamHandler(sys.stderr)
-	log_handler.setLevel(logging.DEBUG if opts.debug else logging.WARNING)
+	log_handler.setLevel( logging.DEBUG
+		if conf.debug_verbose else logging.WARNING )
 	log_handler.setFormatter(log_fmt)
 	logging.root.addHandler(log_handler)
 	logging.root.setLevel(0)
@@ -1376,11 +1389,11 @@ def main(args=None, conf=None):
 
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		# if opts.debug: loop.set_debug(True)
+		# if conf.debug_verbose: loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
 
 		log_handler = LogFuncHandler(rdircd.cmd_log)
-		log_handler.setLevel(logging.DEBUG if opts.debug else logging.INFO)
+		log_handler.setLevel(logging.DEBUG if conf.debug_verbose else logging.INFO)
 		log_handler.setFormatter(logging.Formatter('%(name)s %(levelname)5s :: %(message)s'))
 		logging.root.addHandler(log_handler)
 
