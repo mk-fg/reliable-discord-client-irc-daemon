@@ -58,14 +58,14 @@ def force_list(v):
 	if not isinstance(v, list): return [v]
 	return v
 
-def dict_sync(d, *du_args, **du_kws):
+def dict_update(d, *du_args, sync=True):
 	keys_old, du = set(d.keys()), dict()
 	if ( len(du_args) == 1 and
 		isinstance(du_args[0], cs_abc.Generator) ): du_ags = list(du_args[0])
 	if du_args: du.update(*du_args)
 	if du_kws: du.update(**du_kws)
 	d.update(du)
-	return dict((k, d.pop(k)) for k in keys_old.difference(du))
+	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
@@ -1092,7 +1092,7 @@ class DiscordSession:
 			# XXX: check "guilds" state for more useful info
 			# XXX: parse emojis, private_channels, read_state
 			# XXX: no user list here, at least for 2k+ discord
-			self.op_guild_update(guild=md.get('guilds'))
+			self.op_guild_update(guild=md.get('guilds'), sync=True)
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_guild_event)
 		self.ws_add_handler( self.c.invalid_session,
@@ -1121,7 +1121,7 @@ class DiscordSession:
 		# elif o == 'channel_pins':
 		# elif o == 'presence':
 
-	def op_guild_update(self, gid=None, guild=..., user=..., chan=...):
+	def op_guild_update(self, gid=None, guild=..., user=..., chan=..., sync=False):
 		gs = self.st.setdefault('guilds', dict())
 		if guild is not ...:
 			gs_new, gs_meta = dict(), list()
@@ -1133,14 +1133,14 @@ class DiscordSession:
 				gg.update(name=g.name, ts_joined=ts_joined)
 				gs_meta.append((g.id, g.get('members'), g.get('channels')))
 				# XXX: check/process presences, voice states, any other info
-			dict_sync(gs, gs_new)
+			dict_update(gs, gs_new, sync=sync)
 			for gid, users, chans in gs_meta:
-				self.op_guild_update(gid, user=users, chan=chans)
+				self.op_guild_update(gid, user=users, chan=chans, sync=True)
 		gg = gs.get(gid) if not isinstance(gid, adict) else gid
 		if not gg: return
 		if user is not ...:
-			dict_sync(gg.users, ((u.user.id, adict( id=u.user.id, name=u.nick,
-				deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(user)))
+			dict_update(gg.users, ((u.user.id, adict( id=u.user.id, name=u.nick,
+				deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(user)), sync=sync)
 		if chan is not ...:
 			cs, ct = dict(), self.c_chan_type
 			for c in force_list(chan):
@@ -1153,7 +1153,7 @@ class DiscordSession:
 					us = cc.setdefault('users', dict()).update(
 						(u.id, adict(name=u.username))
 						for u in (c.get('recipients') or list()) )
-			dict_sync(gg.chans, cs)
+			dict_update(gg.chans, cs, sync=sync)
 
 	def op_guild_delete(self, gid=None, user=..., chan=...):
 		gs = self.st.setdefault('guilds', dict())
