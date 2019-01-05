@@ -218,10 +218,19 @@ def parse_iso8601( spec, tz_default=TZ_UTC, to_float=True,
 
 
 def iter_gather(cls, cache=False):
+	'''Auto-gathers iterator function result into cls.
+		cache=True will memoize function, allowing *args only,
+			and pass cache_track func as a second argument to all calls.
+		cache_track usage:
+			ct(d) - any shallow changes to adict "d" will drop result cache for this call.
+			ct(d, 'key1 key2 ...'), ct(d, [k1, k2, ...])
+				Any changes to specified keys of "d" will drop result cache for this call.
+				If any of these keys have adict value, shallow changes to it will propagate.'''
 	def _cls_wrapper(func):
 		@ft.wraps(func)
 		def _wrapper(self, *args, **kws):
 			if not cache: return cls(func(self, *args, **kws))
+			if kws: raise ValueError(kws)
 			k = (func.__qualname__, *args)
 			if k not in iter_gather.cache:
 				cache_track = ft.partial(iter_gather_track, k)
@@ -232,13 +241,15 @@ def iter_gather(cls, cache=False):
 	return _cls_wrapper
 
 def iter_gather_cb(cache_k, keys, k, v):
-	if not keys or k in keys: iter_gather.cache.pop(cache_k, None)
+	if keys and k not in keys: return
+	iter_gather.cache.pop(cache_k, None)
 
 def iter_gather_track(cache_k, o, keys=None):
 	if not isinstance(o, adict): raise TypeError(o)
 	if isinstance(keys, str): keys = keys.split()
-	o._cache_cb_add(ft.partial(iter_gather_cb, cache_k, keys))
-	for k in keys or o.keys():
+	o._cache_cb_add( cache_k,
+		ft.partial(iter_gather_cb, cache_k, keys) )
+	for k in keys or list():
 		if isinstance(o.get(k), adict): iter_gather_track(cache_k, o[k])
 
 iter_gather.cache = dict()
@@ -258,13 +269,13 @@ class adict(cs.UserDict):
 		elif isinstance(v, (tuple, list)): v = type(v)(map(self._make, v))
 		return v
 
-	def _cache_cb_add(self, cb):
-		if self._cache_cb is None: self._cache_cb = list()
-		self._cache_cb.append(cb)
+	def _cache_cb_add(self, cb_k, cb):
+		if self._cache_cb is None: self._cache_cb = dict()
+		self._cache_cb[cb_k] = cb
 	def _cache_cb_check(self, k, v=...):
 		if not self._cache_cb: return
-		for cb in self._cache_cb: cb(k, v)
-		self._cache_cb = None
+		for cb in self._cache_cb.values(): cb(k, v)
+		self._cache_cb.clear()
 
 	def __getattr__(self, k):
 		if k not in self.__slots__: return self[k]
