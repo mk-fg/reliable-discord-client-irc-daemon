@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, logging, re, time, secrets, hashlib, enum, json, random
-import contextlib, asyncio, socket, signal, inspect, unicodedata, urllib.parse
+import os, sys, io, stat, logging, re, time, secrets, enum, json
+import contextlib, asyncio, socket, signal, inspect, traceback
+import hashlib, base64, random, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
 
@@ -32,10 +33,12 @@ class LogFuncHandler(logging.Handler):
 		if self.locked: return # to avoid logging-of-logging loops, assuming sync call
 		self.locked = True
 		try: self.func(self.format(record))
-		except Exception: self.handleError(record)
+		# except Exception: self.handleError(record) # too noisy
+		except Exception as err: log_bak.exception('LogFuncHandler failed - {}', err_fmt(err))
 		finally: self.locked = False
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
+log_bak = get_logger('fallback')
 
 def str_part(s, sep, default=None):
 	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
@@ -49,17 +52,6 @@ def sockopt_resolve(prefix, v):
 		if not k.startswith(prefix): continue
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
-
-class adict(dict):
-	def __init__(self, *args, **kws):
-		super().__init__(*args, **kws)
-		self.__dict__ = self
-		self._make(self)
-	def _make(self, v):
-		if v is self: v.update((k, self._make(v)) for k,v in v.items())
-		elif type(v) is dict: v = adict(v)
-		elif isinstance(v, (tuple, list)): v = type(v)(map(self._make, v))
-		return v
 
 def force_list(v):
 	if not v: return list()
@@ -75,14 +67,19 @@ def dict_sync(d, *du_args, **du_kws):
 	d.update(du)
 	return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
-def iter_gather(cls):
-	def _cls_wrapper(func):
-		@ft.wraps(func)
-		def _wrapper(*args, **kws): return cls(func(*args, **kws))
-		return _wrapper
-	return _cls_wrapper
-
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
+
+def str_hash(s, c=None, key='rdircd'):
+	s = base64.urlsafe_b64encode(
+			hashlib.blake2s(str(s).encode(), key=key.encode()).digest() )\
+		.decode().replace('-', '').replace('_', '').replace('=', '')
+	if c is None: return s
+	if len(s) < c: s = str_hash(s, c, key)
+	return s[:c]
+
+def tuple_hash(t, c=None, key='rdircd'):
+	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
+	return str_hash(s, c=c, key=key)
 
 @contextlib.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
@@ -141,6 +138,7 @@ async def task_cancel_list(task_list):
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): await task
 
+
 class StacklessContext:
 	'''Like AsyncContextStack, but for tracking tasks that
 		can finish at any point without leaving stack frames.'''
@@ -175,6 +173,115 @@ class StacklessContext:
 	add = add_task
 
 
+class FixedOffsetTZ(dt.tzinfo):
+	_offset = _name = None
+	@classmethod
+	def from_offset(cls, name=None, delta=None, hh=None, mm=None):
+		self = cls()
+		if delta is None: delta = dt.timedelta(hours=hh or 0, minutes=mm or 0)
+		self._name, self._offset = name, delta
+		return self
+	def utcoffset(self, dt): return self._offset
+	def tzname(self, dt): return self._name
+	def dst(self, dt, ZERO=dt.timedelta(0)): return ZERO
+	def __repr__(self): return '<FixedOffset {!r}>'.format(self._name)
+
+TZ_UTC = FixedOffsetTZ.from_offset('UTC')
+
+def datetime_to_float(dt, _ts0=dt.datetime(1970, 1, 1, tzinfo=TZ_UTC)):
+	return (dt - _ts0).total_seconds()
+
+def parse_iso8601( spec, tz_default=TZ_UTC, to_float=True,
+		_re=re.compile(
+			r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})'
+			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
+	m = _re.search(spec)
+	if not m: raise ValueError(m)
+	if m.group('tz'):
+		tz = m.group('tz')
+		if tz == 'Z': tz = TZ_UTC
+		else:
+			k = {'+':1,'-':-1}[tz[0]]
+			hh, mm = ((int(n) * k) for n in tz[1:].split(':', 1))
+			tz = FixedOffsetTZ.from_offset(hh=hh, mm=mm)
+	else: tz = tz_default
+	ts_list = it.chain(
+		map(int, m.groups()[:5]),
+		[int(m.group('s') or 0), int(m.group('us') or 0)] )
+	# Minutes, seconds, microseconds get discarded here!
+	ts = dt.datetime.strptime(
+		'{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:06d}'.format(*ts_list),
+		'%Y-%m-%d %H:%M:%S.%f' )
+	assert tz
+	ts = ts.replace(tzinfo=tz)
+	return ts if not to_float else datetime_to_float(ts)
+
+
+def iter_gather(cls, cache=False):
+	def _cls_wrapper(func):
+		@ft.wraps(func)
+		def _wrapper(self, *args, **kws):
+			if not cache: return cls(func(self, *args, **kws))
+			k = (func.__qualname__, *args)
+			if k not in iter_gather.cache:
+				cache_track = ft.partial(iter_gather_track, k)
+				args = [cache_track, *args]
+				iter_gather.cache[k] = cls(func(self, *args, **kws))
+			return iter_gather.cache[k]
+		return _wrapper
+	return _cls_wrapper
+
+def iter_gather_cb(cache_k, keys, k, v):
+	if not keys or k in keys: iter_gather.cache.pop(cache_k, None)
+
+def iter_gather_track(cache_k, o, keys=None):
+	if not isinstance(o, adict): raise TypeError(o)
+	if isinstance(keys, str): keys = keys.split()
+	o._cache_cb_add(ft.partial(iter_gather_cb, cache_k, keys))
+	for k in keys or o.keys():
+		if isinstance(o.get(k), adict): iter_gather_track(cache_k, o[k])
+
+iter_gather.cache = dict()
+
+
+class adict(cs.UserDict):
+	__slots__ = 'data', '_cache_cb'
+
+	def __init__(self, *args, **kws):
+		self._cache_cb = None
+		super().__init__(*args, **kws)
+		self._make(self)
+
+	def _make(self, v):
+		if v is self: v.update((k, self._make(v)) for k,v in v.items())
+		elif type(v) is dict: v = adict(v)
+		elif isinstance(v, (tuple, list)): v = type(v)(map(self._make, v))
+		return v
+
+	def _cache_cb_add(self, cb):
+		if self._cache_cb is None: self._cache_cb = list()
+		self._cache_cb.append(cb)
+	def _cache_cb_check(self, k, v=...):
+		if not self._cache_cb: return
+		for cb in self._cache_cb: cb(k, v)
+		self._cache_cb = None
+
+	def __getattr__(self, k):
+		if k not in self.__slots__: return self[k]
+		return self.__getattribute__(k)
+	def __setattr__(self, k, v):
+		if k not in self.__slots__: self[k] = v
+		return super().__setattr__(k, v)
+
+	def __delattr__(self, k, v): del self[k]
+	def __setitem__(self, k, v):
+		super().__setitem__(k, v)
+		self._cache_cb_check(k, v)
+	def __delitem__(self, k):
+		super().__delitem__(k)
+		self._cache_cb_check(k)
+
+
 
 class IRCProtocolError(Exception): pass
 class IRCProtocolArgsError(IRCProtocolError): pass
@@ -193,7 +300,7 @@ class IRCProtocol:
 		def _wrapper():
 			try: return cls(rdircd)
 			except Exception as err:
-				log = get_logger('rdircd.irc')
+				log = get_logger('rdircd.irc.factory')
 				log.exception('Failed to initialize ircd protocol: {}', err_fmt(err))
 				log.critical('Stopping daemon due to unhandled protocol error')
 				loop.stop()
@@ -201,9 +308,9 @@ class IRCProtocol:
 
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
-		self.log = get_logger('rdircd.irc')
+		self.log = get_logger('rdircd.irc.proto')
 		self.transport, self.buff = None, b''
-		self.st = adict(
+		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None, pw_hash=None,
 			host=None, auth=False, cap_neg=False, chans=set() )
 		if self.conf.irc_password:
@@ -214,7 +321,8 @@ class IRCProtocol:
 
 	def connection_made(self, tr):
 		host, port = tr.get_extra_info('peername')[:2]
-		self.log.debug('Connection from {}', host)
+		self.log.debug('Connection from {} {}', host, port)
+		self.log = get_logger('rdircd.irc.{}'.format(tuple_hash([host, port], 3)))
 		self.transport, self.st.host = tr, host
 		self.send('NOTICE * :*** rdircd ready')
 		self.bridge.irc_conn_new(self)
@@ -223,6 +331,7 @@ class IRCProtocol:
 		self.buff += data
 		while b'\n' in self.buff:
 			line, self.buff = self.buff.split(b'\n', 1)
+			if not line.strip(): continue
 			line_len, line_repr = self._repr(line, True)
 			self.log.debug('<<  [{} {}] {}', self.st.nick or '---', line_len, line_repr)
 			if not line.strip(): continue
@@ -285,6 +394,7 @@ class IRCProtocol:
 				if m.cmd == 'privmsg': return self.send_split_privmsg(m)
 			if len(line) > max_len:
 				self.log.warning('Sending line with >{}B: {!r}', max_len, self._repr(line))
+		if b'\n' in line: raise IRCProtocolError(f'Line with newlines: {line!r}')
 		line += b'\r\n'
 		self.data_send(line)
 
@@ -303,7 +413,7 @@ class IRCProtocol:
 			sep_last, line = sep, line + w + sep
 		if line.strip(): self.send(pre, f':{line.rstrip()}', auto_split=False)
 
-	def recv(self, line_raw, _cmd_cache=dict()):
+	def recv(self, line_raw):
 		if isinstance(line_raw, str): line = line_raw
 		else:
 			try: line = line_raw.decode().strip()
@@ -312,7 +422,7 @@ class IRCProtocol:
 		try: m = self._parse(line)
 		except IRCProtocolLineError:
 			return self.log.error('Line protocol error: {!r}', self._repr(line_raw))
-		cmd_cache = _cmd_cache.get(m.cmd)
+		cmd_cache = self._cmd_cache.get(m.cmd)
 		if cmd_cache: cmd_func, cmd_ps_n = cmd_cache
 		else:
 			cmd_func, cmd_ps_n = getattr(self, f'recv_cmd_{m.cmd}', None), 0
@@ -321,7 +431,7 @@ class IRCProtocol:
 				cmd_ps_n = len(args)
 				if cmd_ps_n == 1 and args[0].annotation == 'msg': cmd_ps_n = None
 				else: cmd_ps_n = cmd_ps_n - sum(1 for p in args if p.default is not p.empty), cmd_ps_n
-			_cmd_cache[m.cmd] = cmd_func, cmd_ps_n
+			self._cmd_cache[m.cmd] = cmd_func, cmd_ps_n
 		if not cmd_func:
 			self.log.error('Unhandled cmd: {!r}', self._repr(line_raw))
 			return self.send(421, ':Unknown command')
@@ -594,6 +704,10 @@ class Discord:
 	async def __aexit__(self, *err):
 		await task_cancel_list(s.task for s in self.sessions.values())
 
+	def session_state(self):
+		try: return self.sessions.main.st
+		except KeyError: return adict()
+
 	def connect(self):
 		for s in self.sessions.values(): s.connect()
 	def disconnect(self):
@@ -689,7 +803,7 @@ class DiscordSession:
 		if not isinstance(s, str): s = str(s)
 		if max_len is None: max_len = self.conf.debug_str_cut
 		s_len, s_repr, ext_len = f'{len(s):03,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
-		if max_len > 0 and len(data_repr) > max_len:
+		if max_len > 0 and len(s_repr) > max_len:
 			s_len = f'{max_len}/{s_len}'
 			s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
 		return (s_len, s_repr) if prefix else s_repr
@@ -999,28 +1113,32 @@ class DiscordSession:
 	def op_guild_update(self, gid=None, guild=..., user=..., chan=...):
 		gs = self.st.setdefault('guilds', dict())
 		if guild is not ...:
-			gs_new = dict()
+			gs_new, gs_meta = dict(), list()
 			for g in force_list(guild):
 				gg = gs_new.setdefault( g.id,
 					gs.get(g.id, adict(id=g.id, chans=dict(), users=dict())) )
-				gg.update(name=g.name)
-				self.op_guild_update(g.id, user=g.get('members'), chan=g.get('channels'))
+				ts_joined = g.get('joined_at') or 0
+				if ts_joined: ts_joined = parse_iso8601(ts_joined)
+				gg.update(name=g.name, ts_joined=ts_joined)
+				gs_meta.append((g.id, g.get('members'), g.get('channels')))
 				# XXX: check/process presences, voice states, any other info
 			dict_sync(gs, gs_new)
+			for gid, users, chans in gs_meta:
+				self.op_guild_update(gid, user=users, chan=chans)
 		gg = gs.get(gid) if not isinstance(gid, adict) else gid
 		if not gg: return
-		if users is not ...:
-			dict_sync(gg.users, ((u.id, adict( id=u.id, name=u.username,
+		if user is not ...:
+			dict_sync(gg.users, ((u.user.id, adict( id=u.user.id, name=u.nick,
 				deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(user)))
 		if chan is not ...:
-			cs = dict()
+			cs, ct = dict(), self.c_chan_type
 			for c in force_list(chan):
 				cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
 				cc.update(
-					id=c.id, name=c.name, t=ct.c_chan_type(c.get('type', 0)),
-					pos=c.get('position', None), topic=c.get('topic'), nsfw=c.get('nsfw'),
+					id=c.id, name=c.name, t=ct(c.get('type', 0)),
+					pos=c.get('position', -1)+1, topic=c.get('topic'), nsfw=c.get('nsfw'),
 					last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
-				if cc.t in [ct.c_chan_type.private, ct.c_chan_type.private_group]:
+				if cc.t in [ct.private, ct.private_group]:
 					us = cc.setdefault('users', dict()).update(
 						(u.id, adict(name=u.username))
 						for u in (c.get('recipients') or list()) )
@@ -1055,13 +1173,32 @@ class RDIRCD:
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.nick_sys, self.chans_sys = 'core', dict(
-			control='rdircd control channel, type "help" for more info',
-			debug='rdircd debug logging channel, read-only' )
+			control='rdircd: control channel, type "help" for more info',
+			debug='rdircd: debug logging channel, read-only' )
 		self.tasks = StacklessContext()
+		self.uid_cache, self.name_cache = dict(), dict()
+		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
+		if not self.uid_seed:
+			for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
+				try: self.uid_seed = str_hash(pl.Path(k).read_text().strip())
+				except OSError: continue
+			else: self.uid_seed = f'rdircd.{self.server_host}'
 		return self
 
 	async def __aexit__(self, *err):
 		if self.tasks: await self.tasks.close()
+
+	def uid(self, k, v=None, hash_len=None):
+		if v is None: return self.uid_cache.get(k, (None, None))
+		k = k, v
+		if k not in self.uid_cache:
+			kh = str_hash( '\0'.join(map(str, k)),
+				hash_len or self.uid_len, self.uid_seed )
+			if kh in self.uid_cache:
+				# Hash collisions should not happen here - raise uid_len if they do
+				raise ValueError(k, kh, self.uid_cache[kh])
+			self.uid_cache[k], self.uid_cache[kh] = kh, k
+		return self.uid_cache[k]
 
 	async def run(self):
 		ircd = await self.loop.create_server(
@@ -1071,6 +1208,7 @@ class RDIRCD:
 		self.log.debug('Initializing discord...')
 		try:
 			async with Discord(self) as discord:
+				self.discord = discord
 				self.log.debug('Starting ircd...')
 				ircd_task = self.tasks.add(ircd.serve_forever())
 				if self.conf.discord_auto_connect:
@@ -1098,6 +1236,26 @@ class RDIRCD:
 			if conn.st.auth: stats.auth += 1
 			else: stats.unknown += 1
 		return stats
+	def irc_conn_names(self):
+		for conn in self.irc_conns.values():
+			if conn.st.auth: yield conn.st.nick
+
+	def irc_name(self, name):
+		# Must be deterministic but not create collisions by stripping too much
+		if name not in self.name_cache:
+			name_irc, sub_chars = '', '°×·„∂'
+			name_clean = re.sub(rf'[{sub_chars}]', '', name)
+			if name_clean != name: name = name_clean + '×' + self.uid('name', name)
+			for n, c in enumerate(name):
+				if ord(c) < 32: name_irc += f'°{ord(c):02d}'
+				elif c == ' ': name_irc += '·'
+				elif c == ',': name_irc += '„'
+				elif c == ':': name_irc += '⋮'
+				elif c == '@': name_irc += '∂'
+				elif c == '+': name_irc += '×'
+				else: name_irc += c
+			self.name_cache[name] = name_irc
+		return self.name_cache[name]
 
 
 	def cmd_delay(self, delay, func):
@@ -1110,23 +1268,51 @@ class RDIRCD:
 	def cmd_conn(self, name=None):
 		for conn in self.irc_conns.values():
 			if not name or name == conn.st.nick: return conn
+
 	@iter_gather(list)
 	def cmd_chan_conns(self, name):
 		for conn in self.irc_conns.values():
 			if name in conn.st.chans: yield conn
-	# XXX: def cmd_chan_names_discord(self, name):
-	@iter_gather(list)
+
+	@iter_gather(sorted, cache=True)
+	def cmd_chan_names_discord(self, cache_track, name):
+		if '.' not in name: return
+		gid, name = name.split('.', 1)
+		t, gid = self.uid(gid)
+		if not t: return
+		gg = self.discord.session_state().get('guilds', dict()).get(gid)
+		if not gg: return
+		cache_track(gg, 'users')
+		yield from set( self.irc_name(u.name)
+			for u in gg.users ).difference(self.irc_conn_names())
+
+	@iter_gather(sorted)
 	def cmd_chan_names(self, name):
 		for conn in self.cmd_chan_conns(name): yield conn.st.nick
-		# XXX: cmd_chan_names_discord()
+		yield from self.cmd_chan_names_discord(name)
 
-	@iter_gather(adict)
-	def cmd_chan_map(self):
+	@iter_gather(adict, cache=True)
+	def cmd_chan_map(self, cache_track):
 		for name, topic in self.chans_sys.items():
 			yield (name, adict( name=name, topic=topic,
 				names=self.cmd_chan_names(name),
 				ts_created=self.server_ts.timestamp() ))
-		# XXX: list discord channels/users here as well
+		# XXX: proper list of users for large discords
+		ct = DiscordSession.c_chan_type
+		for gg in sorted(
+				self.discord.session_state().get('guilds', dict()).values(),
+				key=op.itemgetter('ts_joined') ):
+			cache_track(gg, 'name chans users ts_joined')
+			gid_pre = self.uid('guild', gg.id)
+			for cc in sorted(gg.chans.values(), key=lambda cc: cc.get('pos') or 999):
+				if cc.t != ct.text: continue # XXX: private chats
+				cache_track(cc, 'name topic pos nsfw')
+				name = f'{gid_pre}.{self.irc_name(cc.name)}'
+				tags = '[NSFW] ' if cc.nsfw else ''
+				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
+				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
+				yield (name, adict( name=name, topic=topic,
+					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
 
 	def cmd_control_status(self, conn, chan):
 		for line in [
@@ -1171,6 +1357,8 @@ class RDIRCDConfig:
 	irc_password = ''
 	irc_host_af = 0
 	irc_auth_tbf = '30:8'
+	irc_uid_len = 4 # can be increased to fix conflicts
+	irc_uid_seed = ''
 
 	discord_auto_connect = False
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
