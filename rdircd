@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, logging, re, time, secrets, enum, json
+import os, sys, io, stat, re, time, secrets, enum, json
 import contextlib, asyncio, socket, signal, inspect, traceback
 import hashlib, base64, random, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
+import logging, logging.handlers
 
 import aiohttp
 
@@ -17,11 +18,11 @@ class LogMessage:
 	def __str__(self): return self.fmt.format(*self.a, **self.k) if self.a or self.k else self.fmt
 
 class LogStyleAdapter(logging.LoggerAdapter):
-	def __init__(self, logger, extra=None):
-		super(LogStyleAdapter, self).__init__(logger, extra or {})
+	def __init__(self, logger, extra=None): super().__init__(logger, extra or {})
 	def log(self, level, msg, *args, **kws):
 		if not self.isEnabledFor(level): return
-		log_kws = {} if 'exc_info' not in kws else dict(exc_info=kws.pop('exc_info'))
+		log_kws = dict((k, kws.pop(k, None)) for k in ['extra', 'exc_info'])
+		if not isinstance(log_kws['extra'], dict): log_kws['extra'] = dict(extra=log_kws['extra'])
 		msg, kws = self.process(msg, kws)
 		self.logger._log(level, LogMessage(msg, args, kws), (), **log_kws)
 
@@ -36,6 +37,27 @@ class LogFuncHandler(logging.Handler):
 		# except Exception: self.handleError(record) # too noisy
 		except Exception as err: log_bak.exception('LogFuncHandler failed - {}', err_fmt(err))
 		finally: self.locked = False
+
+class LogProtoFormatter(logging.Formatter):
+	last_ts = last_rec = last_reltime = None
+	def format(self, record):
+		if id(record) != self.last_rec:
+			reltime = (record.created - self.last_ts) if self.last_ts else 0
+			self.last_reltime = '{}{:,.3f}'.format('+' if reltime >= 0 else '', reltime)
+			self.last_ts, self.last_rec = record.created, id(record)
+		record.reltime = self.last_reltime
+		record.asctime = time.strftime(
+			'%Y-%m-%dT%H:%M:%S', time.localtime(record.created) )
+		record.asctime += f'.{record.msecs:03.0f}'
+		if record.name.startswith('proto.'): record.name = record.name[6:]
+		try:
+			st, msg = record.extra
+			if isinstance(msg, bytes): msg = json.dumps(msg.decode())
+		except Exception as err:
+			st, msg = 'err', err_fmt(err)
+			log_bak.exception('LogProtoFormatter failed - {}', msg)
+		record.message = f'{st} :: {msg}'
+		return self.formatMessage(record)
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
@@ -63,7 +85,6 @@ def dict_update(d, *du_args, sync=True):
 	if ( len(du_args) == 1 and
 		isinstance(du_args[0], cs_abc.Generator) ): du_ags = list(du_args[0])
 	if du_args: du.update(*du_args)
-	if du_kws: du.update(**du_kws)
 	d.update(du)
 	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
@@ -319,7 +340,7 @@ class IRCProtocol:
 
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
-		self.log = get_logger('rdircd.irc.proto')
+		self.log = get_logger('rdircd.irc.init')
 		self.transport, self.buff = None, b''
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None, pw_hash=None,
@@ -332,8 +353,12 @@ class IRCProtocol:
 
 	def connection_made(self, tr):
 		host, port = tr.get_extra_info('peername')[:2]
-		self.log.debug('Connection from {} {}', host, port)
-		self.log = get_logger('rdircd.irc.{}'.format(tuple_hash([host, port], 3)))
+		conn_id = tuple_hash([host, port], 3)
+		self.log_proto = get_logger(f'proto.irc.{conn_id}')
+		self.log_proto.debug( '--- -conn- {} {} {}',
+			host, port, conn_id, extra=('---', f'conn {host} {port}') )
+		self.log = get_logger(f'rdircd.irc.{conn_id}')
+		self.log.debug('Connection from {} {} [{}]', host, port, conn_id)
 		self.transport, self.st.host = tr, host
 		self.send('NOTICE * :*** rdircd ready')
 		self.bridge.irc_conn_new(self)
@@ -344,18 +369,23 @@ class IRCProtocol:
 			line, self.buff = self.buff.split(b'\n', 1)
 			if not line.strip(): continue
 			line_len, line_repr = self._repr(line, True)
-			self.log.debug('<<  [{} {}] {}', self.st.nick or '---', line_len, line_repr)
+			self.log_proto.debug( '<<  [{} {}] {}',
+				self.st.nick or '---', line_len, line_repr, extra=('<< ', line) )
 			if not line.strip(): continue
 			self.recv(line)
 
 	def eof_received(self): pass
 	def connection_lost(self, err):
-		self.log.debug('Connection lost: {}', err or 'closed cleanly')
+		reason = err or 'closed cleanly'
+		if isinstance(reason, Exception): reason = err_fmt(reason)
+		self.log_proto.debug('--- -close- :: {}', reason, extra=('---', 'close'))
+		self.log.debug('Connection lost: {}', reason)
 		self.bridge.irc_conn_lost(self)
 
 	def data_send(self, data):
 		data_len, data_repr = self._repr(data, True)
-		self.log.debug(' >> [{} {}] {}', self.st.nick or '---', data_len, data_repr)
+		self.log_proto.debug( ' >> [{} {}] {}',
+			self.st.nick or '---', data_len, data_repr, extra=(' >>', data) )
 		self.transport.write(data)
 
 
@@ -764,6 +794,7 @@ class DiscordSession:
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
 		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
 		self.log = get_logger(f'rdircd.discord.{self.t}')
+		self.log_proto = get_logger(f'proto.ws.{self.t}')
 
 	def get_auth(self, k, default=ValueError):
 		try: return getattr(self.conf, f'auth_{self.t}_{k}')
@@ -807,6 +838,8 @@ class DiscordSession:
 	def state(self, st):
 		st_old, self.st.state = self.st.get('state', 'none'), st
 		if st == st_old: return
+		self.log_proto.debug( '--- state: {} -> {}',
+			st_old, st, extra=('---', f'st {st_old} -> {st}') )
 		self.log.info('State: {} -> {}', st_old, st)
 
 	def _repr(self, s, prefix=False, max_len=None, ext=' ...[{s_len}]'):
@@ -927,14 +960,17 @@ class DiscordSession:
 			query.update(v=str(self.api_ver), encoding='json')
 			parts.query = urllib.parse.urlencode(query)
 			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
+			self.log_proto.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
 			self.state('connecting.ws')
 			try:
 				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
 					headers={'User-Agent': self.conf.discord_user_agent},
 					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
 			except aiohttp.ClientError as err:
+				err_str = err_fmt(err)
+				self.log_proto.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
 				self.state('connecting.ws.error')
-				self.log.error('Gateway connection error: {}', err_fmt(err))
+				self.log.error('Gateway connection error: {}', err_str)
 				if cache: continue # try fetching new gw url
 			else: break
 		else: self.ws = None
@@ -963,10 +999,10 @@ class DiscordSession:
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
 		# {op=...[, d={...}]}
 		async for msg in self.ws:
-			if self.conf.discord_ws_debug:
-				self.log.debug( 'ws <<  {} {}',
-					aiohttp.WSMsgType(msg.type).name.lower(),
-					self._repr(getattr(msg, 'data', '')) )
+			msg_type = aiohttp.WSMsgType(msg.type).name.lower()
+			msg_data = getattr(msg, 'data', '')
+			self.log_proto.debug( '<<  {} {}', msg_type,
+				self._repr(msg_data), extra=('<< ', f'{msg_type} {msg_data}') )
 			if msg.type == aiohttp.WSMsgType.text:
 				msg_data, hs_discard, handled = adict(json.loads(msg.data)), set(), False
 				if self.conf.ws_dump_filter and self.conf.ws_dump_file:
@@ -981,9 +1017,14 @@ class DiscordSession:
 					oneshot = await await_wrap(h.func(msg_data))
 					if oneshot: hs_discard.add(k)
 				for k in hs_discard: self.ws_handlers.pop(k, None)
-				if not handled: self.log.debug('Unhandled ws event: {}', self._repr(msg_data))
+				if not handled:
+					err, msg_repr = 'unhandled-text', self._repr(msg_data)
+					self.log_proto.debug( 'xxx {} {}', err,
+						msg_repr, extra=('xxx', f'{err} {msg_data}') )
+					self.log.debug('Unhandled ws event: {}', msg_repr)
 			elif msg.type == aiohttp.WSMsgType.closed: break
 			elif msg.type == aiohttp.WSMsgType.error:
+				self.log_proto.debug('err {}', msg, extra=('err', msg))
 				self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
@@ -997,14 +1038,15 @@ class DiscordSession:
 
 	def ws_send(self, op, d):
 		msg_data = json.dumps(dict(op=op, d=d))
-		if self.conf.discord_ws_debug: self.log.debug('ws  >> {}', self._repr(msg_data))
+		self.log_proto.debug( ' >> text {}',
+			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
 		# XXX: maybe enforce ordering for messages here
 		self.tasks.add(self.ws.send_str(msg_data))
 
 	async def ws_close(self):
 		if self.ws_closed.is_set(): return
+		self.log_proto.debug('--- -close-', extra=('---', 'close'))
 		self.state('disconnected')
-		if self.conf.discord_ws_debug: self.log.debug('ws  >> -close-')
 		if self.ws: await self.ws.close()
 		self.ws_closed.set() # XXX: monitor for reconnect, close/wait ws_ctx there
 		await self.ws_tasks.close()
@@ -1375,7 +1417,6 @@ class RDIRCDConfig:
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
-	discord_ws_debug = True
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -1390,13 +1431,15 @@ class RDIRCDConfig:
 	auth_ghost_token = ''
 
 	debug_verbose = False
-	debug_str_cut = 0
+	debug_str_cut = 90
+	debug_proto_log_shared = True
+	debug_proto_log_file = ''
+	debug_proto_log_file_size = int(1.5e6)
+	debug_proto_log_file_count = 9
 
 	ws_dump_filter = None
 	ws_dump_file = 'dump.json'
 	# ws_dump_filter = adict(op=0, t='READY')
-
-	# XXX: options for well-timestamped protocol logs
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
@@ -1571,6 +1614,22 @@ def main(args=None, conf=None):
 	logging.root.setLevel(0)
 	log = get_logger('main')
 
+	log_proto = logging.getLogger('proto')
+	log_proto.propagate = conf.debug_proto_log_shared
+	if conf.debug_proto_log_file:
+		log_handler = logging.handlers.RotatingFileHandler(
+			conf.debug_proto_log_file,
+			maxBytes=conf.debug_proto_log_file_size,
+			backupCount=conf.debug_proto_log_file_count )
+		log_handler.setLevel(logging.DEBUG)
+		log_handler.setFormatter(LogProtoFormatter(
+			'%(asctime)s :: %(reltime)s :: %(name)s :: %(message)s' ))
+		log_proto.addHandler(log_handler)
+
+	def handle_exception(err_t, err, err_tb):
+		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
+	sys.excepthook = handle_exception
+
 	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
 	else: host, port = str_part(host, ':>', port)
@@ -1591,10 +1650,6 @@ def main(args=None, conf=None):
 	assert ( sock_t == socket.SOCK_STREAM
 		and sock_p == socket.IPPROTO_TCP ), [sock_t, sock_p]
 	conf.irc_host_af, (conf.irc_host, conf.irc_port) = sock_af, sock_addr[:2]
-
-	def handle_exception(err_t, err, err_tb):
-		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
-	sys.excepthook = handle_exception
 
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
