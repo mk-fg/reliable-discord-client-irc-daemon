@@ -391,7 +391,7 @@ class IRCProtocol:
 
 	def _repr(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
 		if isinstance(data, str): data = data.encode()
-		if max_len is None: max_len = self.conf.debug_str_cut
+		if max_len is None: max_len = self.conf.debug_proto_cut
 		data_len, data_repr, ext_len = f'{len(data):03,d}', repr(data)[2:-1], len(ext)
 		if max_len > 0 and len(data_repr) > max_len:
 			data_len = f'{max_len}/{data_len}'
@@ -845,7 +845,7 @@ class DiscordSession:
 	def _repr(self, s, prefix=False, max_len=None, ext=' ...[{s_len}]'):
 		if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
 		if not isinstance(s, str): s = str(s)
-		if max_len is None: max_len = self.conf.debug_str_cut
+		if max_len is None: max_len = self.conf.debug_proto_cut
 		s_len, s_repr, ext_len = f'{len(s):03,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
 		if max_len > 0 and len(s_repr) > max_len:
 			s_len = f'{max_len}/{s_len}'
@@ -1431,7 +1431,7 @@ class RDIRCDConfig:
 	auth_ghost_token = ''
 
 	debug_verbose = False
-	debug_str_cut = 90
+	debug_proto_cut = 90
 	debug_proto_log_shared = True
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
@@ -1573,9 +1573,11 @@ def main(args=None, conf=None):
 
 	group = parser.add_argument_group('Misc / debug opts')
 	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
-	group.add_argument('-t', '--str-cut', type=int, metavar='n',
+	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
 		help='Truncate long strings in protocol dumps to specified length.'
 			' Set to <=0 to disable truncation (default).')
+	group.add_argument('-l', '--proto-log', metavar='file',
+		help='File to dump full non-truncated protocol logs to.')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -1601,7 +1603,8 @@ def main(args=None, conf=None):
 		return
 
 	if opts.debug: conf.debug_verbose = True
-	if opts.str_cut: conf.debug_str_cut = opts.str_cut
+	if opts.proto_cut: conf.debug_proto_cut = opts.proto_cut
+	if opts.proto_log: conf.debug_proto_log_file = opts.proto_log
 
 	log_fmt = '%(name)s %(levelname)5s :: %(message)s'
 	if conf.debug_verbose: log_fmt = '%(asctime)s :: ' + log_fmt
