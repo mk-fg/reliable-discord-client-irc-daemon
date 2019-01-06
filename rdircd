@@ -38,6 +38,12 @@ class LogFuncHandler(logging.Handler):
 		except Exception as err: log_bak.exception('LogFuncHandler failed - {}', err_fmt(err))
 		finally: self.locked = False
 
+class LogEmptyMsgFilter(logging.Filter):
+	def filter(self, record):
+		msg = record.msg
+		return bool(msg if isinstance(msg, str) else msg.fmt)
+log_empty_filter = LogEmptyMsgFilter()
+
 class LogProtoFormatter(logging.Formatter):
 	last_ts = last_rec = last_reltime = None
 	def format(self, record):
@@ -61,6 +67,31 @@ class LogProtoFormatter(logging.Formatter):
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
+
+def monkey_patch_aiohttp_debug():
+	# This is obviously very fragile and will break eventually
+	import aiohttp.http_writer, aiohttp.client_reqrep
+	log = get_logger(f'proto.http.reqres')
+
+	async def write_headers(self, status_line, headers) -> None:
+		buf = aiohttp.http_writer._serialize_headers(status_line, headers)
+		buf_lines = buf.decode().strip().splitlines()
+		if log.isEnabledFor(logging.DEBUG):
+			log.debug('', extra=(' >>', 'req :: headers start'))
+			for line in buf.decode().strip().splitlines(): log.debug('', extra=('  >', f'  {line}'))
+			log.debug('', extra=(' >>', 'req :: headers end'))
+		self._write(buf)
+	aiohttp.http_writer.StreamWriter.write_headers = write_headers
+
+	write_bytes_base = aiohttp.client_reqrep.ClientRequest.write_bytes
+	async def write_bytes(self, writer, conn):
+		if self._continue is not None: await write_bytes_base(self, writer, conn)
+		if log.isEnabledFor(logging.DEBUG) and isinstance(self.body, payload.Payload):
+			log.debug('', extra=(' >>', 'req :: body start'))
+			log.debug('', extra=('  >', buf))
+			log.debug('', extra=(' >>', 'req :: body end'))
+		await write_bytes_base(self, writer, conn)
+	aiohttp.client_reqrep.ClientRequest.write_bytes = write_bytes
 
 def str_part(s, sep, default=None):
 	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
@@ -796,6 +827,7 @@ class DiscordSession:
 		self.log = get_logger(f'rdircd.discord.{self.t}')
 		self.log_ws = get_logger(f'proto.ws.{self.t}')
 		self.log_http = get_logger(f'proto.http.{self.t}')
+		self.log_http_reqres = get_logger(f'proto.http.reqres')
 
 	def get_auth(self, k, default=ValueError):
 		try: return getattr(self.conf, f'auth_{self.t}_{k}')
@@ -932,6 +964,13 @@ class DiscordSession:
 		if res.status >= 400:
 			body = await res.text()
 			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
+		if self.log_http_reqres.isEnabledFor(logging.DEBUG):
+			self.log_http_reqres.debug('', extra=('<< ', 'res :: headers start'))
+			self.log_http_reqres.debug('', extra=( '<  ',
+				f'  {res.status} {res.reason} HTTP/{res.version.major}.{res.version.minor}' ))
+			for k, v in res.headers.items():
+				self.log_http_reqres.debug('', extra=('<  ', f'  {k}: {v}'))
+			self.log_http_reqres.debug('', extra=('<< ', 'res :: headers end'))
 		if not raw:
 			res_raw, res = res, await res.json()
 			res_raw.release()
@@ -1614,6 +1653,7 @@ def main(args=None, conf=None):
 	log_handler.setLevel( logging.DEBUG
 		if conf.debug_verbose else logging.WARNING )
 	log_handler.setFormatter(log_fmt)
+	log_handler.addFilter(log_empty_filter)
 	logging.root.addHandler(log_handler)
 	logging.root.setLevel(0)
 	log = get_logger('main')
@@ -1657,12 +1697,15 @@ def main(args=None, conf=None):
 
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		# if conf.debug_verbose: loop.set_debug(True)
+		if conf.debug_verbose:
+			monkey_patch_aiohttp_debug()
+			# loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
 
 		log_handler = LogFuncHandler(rdircd.cmd_log)
 		log_handler.setLevel(logging.DEBUG if conf.debug_verbose else logging.INFO)
 		log_handler.setFormatter(logging.Formatter('%(name)s %(levelname)5s :: %(message)s'))
+		log_handler.addFilter(log_empty_filter)
 		logging.root.addHandler(log_handler)
 
 		rdircd_task = loop.create_task(rdircd.run_async())
