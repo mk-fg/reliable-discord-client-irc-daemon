@@ -794,7 +794,8 @@ class DiscordSession:
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
 		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
 		self.log = get_logger(f'rdircd.discord.{self.t}')
-		self.log_proto = get_logger(f'proto.ws.{self.t}')
+		self.log_ws = get_logger(f'proto.ws.{self.t}')
+		self.log_http = get_logger(f'proto.http.{self.t}')
 
 	def get_auth(self, k, default=ValueError):
 		try: return getattr(self.conf, f'auth_{self.t}_{k}')
@@ -838,7 +839,7 @@ class DiscordSession:
 	def state(self, st):
 		st_old, self.st.state = self.st.get('state', 'none'), st
 		if st == st_old: return
-		self.log_proto.debug( '--- state: {} -> {}',
+		self.log_ws.debug( '--- state: {} -> {}',
 			st_old, st, extra=('---', f'st {st_old} -> {st}') )
 		self.log.info('State: {} -> {}', st_old, st)
 
@@ -922,7 +923,7 @@ class DiscordSession:
 				token = await self.req_auth_token()
 				kws.setdefault('headers', dict()).update(Authorization=token)
 			req_func = ft.partial(self.http.request, m, url, **kws)
-			self.log.debug('req  >> {} {}', m, url)
+			self.log_http.debug(' >> {} {}', m, url, extra=(' >>', f'{m} {url}'))
 			res = await self.rate_limit_wrapper(route, req_func)
 			if not auth: break
 			if res.status == 401:
@@ -934,7 +935,7 @@ class DiscordSession:
 		if not raw:
 			res_raw, res = res, await res.json()
 			res_raw.release()
-		self.log.debug('req <<  {}', res)
+		self.log_http.debug('<<  {}', self._repr(res), extra=('<< ', res))
 		return res
 
 
@@ -960,7 +961,7 @@ class DiscordSession:
 			query.update(v=str(self.api_ver), encoding='json')
 			parts.query = urllib.parse.urlencode(query)
 			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
-			self.log_proto.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
+			self.log_ws.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
 			self.state('connecting.ws')
 			try:
 				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
@@ -968,7 +969,7 @@ class DiscordSession:
 					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
 			except aiohttp.ClientError as err:
 				err_str = err_fmt(err)
-				self.log_proto.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
+				self.log_ws.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
 				self.state('connecting.ws.error')
 				self.log.error('Gateway connection error: {}', err_str)
 				if cache: continue # try fetching new gw url
@@ -1001,7 +1002,7 @@ class DiscordSession:
 		async for msg in self.ws:
 			msg_type = aiohttp.WSMsgType(msg.type).name.lower()
 			msg_data = getattr(msg, 'data', '')
-			self.log_proto.debug( '<<  {} {}', msg_type,
+			self.log_ws.debug( '<<  {} {}', msg_type,
 				self._repr(msg_data), extra=('<< ', f'{msg_type} {msg_data}') )
 			if msg.type == aiohttp.WSMsgType.text:
 				msg_data, hs_discard, handled = adict(json.loads(msg.data)), set(), False
@@ -1019,12 +1020,12 @@ class DiscordSession:
 				for k in hs_discard: self.ws_handlers.pop(k, None)
 				if not handled:
 					err, msg_repr = 'unhandled-text', self._repr(msg_data)
-					self.log_proto.debug( 'xxx {} {}', err,
+					self.log_ws.debug( 'xxx {} {}', err,
 						msg_repr, extra=('xxx', f'{err} {msg_data}') )
 					self.log.debug('Unhandled ws event: {}', msg_repr)
 			elif msg.type == aiohttp.WSMsgType.closed: break
 			elif msg.type == aiohttp.WSMsgType.error:
-				self.log_proto.debug('err {}', msg, extra=('err', msg))
+				self.log_ws.debug('err {}', msg, extra=('err', msg))
 				self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
@@ -1038,14 +1039,14 @@ class DiscordSession:
 
 	def ws_send(self, op, d):
 		msg_data = json.dumps(dict(op=op, d=d))
-		self.log_proto.debug( ' >> text {}',
+		self.log_ws.debug( ' >> text {}',
 			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
 		# XXX: maybe enforce ordering for messages here
 		self.tasks.add(self.ws.send_str(msg_data))
 
 	async def ws_close(self):
 		if self.ws_closed.is_set(): return
-		self.log_proto.debug('--- -close-', extra=('---', 'close'))
+		self.log_ws.debug('--- -close-', extra=('---', 'close'))
 		self.state('disconnected')
 		if self.ws: await self.ws.close()
 		self.ws_closed.set() # XXX: monitor for reconnect, close/wait ws_ctx there

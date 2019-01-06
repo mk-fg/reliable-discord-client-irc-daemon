@@ -69,3 +69,6 @@ Last updated: 2019-01-02
 
   Being apparently undocumented and available since the beginning,
   guess it might be heavily deprecated by now and go away at any point in the future.
+
+- Some events coming from websocket gateway are undocumented, maybe due to lag
+  of docs behind implementation, or due to them not being deemed that useful to bots, idk.
