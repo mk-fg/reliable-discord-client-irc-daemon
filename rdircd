@@ -107,15 +107,14 @@ def sockopt_resolve(prefix, v):
 	return v
 
 def force_list(v):
-	if not v: return list()
-	if not isinstance(v, list): return [v]
+	if not v: v = list()
+	elif isinstance(v, cs_abc.ValuesView): v = list(v)
+	elif not isinstance(v, list): v = [v]
 	return v
 
-def dict_update(d, *du_args, sync=True):
+def dict_update(d, du_iter=None, sync=True):
 	keys_old, du = set(d.keys()), dict()
-	if ( len(du_args) == 1 and
-		isinstance(du_args[0], cs_abc.Generator) ): du_ags = list(du_args[0])
-	if du_args: du.update(*du_args)
+	if du_iter: du.update(du_iter)
 	d.update(du)
 	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
@@ -719,7 +718,6 @@ class IRCProtocol:
 		self.cmd_msg(self.st.nick, target, text, notice=True, skip_self=True)
 
 	def cmd_msg(self, src, target, text, notice=False, skip_self=False, msg_type=None):
-		# XXX: auto-split long text here
 		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if target.startswith('#'):
 			chan = target
@@ -738,7 +736,8 @@ class IRCProtocol:
 			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
 	def cmd_msg_synth(self, src, target, text):
-		'Synthetic PRIVMSG which avoids any self-reaction loops like notices'
+		'''Synthetic PRIVMSG which avoids any self-reaction loops like notices
+			Channel target must be prefixed by #.'''
 		return self.cmd_msg(src, target, text, notice=True, msg_type='PRIVMSG')
 
 	# XXX: more server info commands
@@ -785,6 +784,10 @@ class Discord:
 	def disconnect(self):
 		for s in self.sessions.values(): s.disconnect()
 
+	def cmd_msg(self, acc, cc, nick, line, tags):
+		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
+		self.bridge.discord_msg(acc, cc.did, nick, line, tags)
+
 
 class DiscordSession:
 
@@ -813,13 +816,26 @@ class DiscordSession:
 		session_timeout = 4009
 		invalid_shard = 4010
 		sharding_required = 4011
+		oneshot = 10_000
 
 	class c_chan_type(enum.IntEnum):
 		text = 0
 		private = 1
 		voice = 2
 		private_group = 3
-		group = 4
+		group = 4 # header for a group of channels
+
+	class c_msg_type(enum.IntEnum):
+		default = 0
+		recipient_add = 1
+		recipient_remove = 2
+		call = 3
+		channel_name_change = 4
+		channel_icon_change = 5
+		channel_pinned_message = 6
+		guild_member_join = 7
+
+	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role all other')
 
 	def __init__(self, discord, t):
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
@@ -841,7 +857,10 @@ class DiscordSession:
 		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext()
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession())
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
-		self.rate_limits, self.ws_closed, self.st = adict(), asyncio.Event(), adict()
+		self.rate_limits, self.ws_closed = adict(), asyncio.Event()
+		self.st = adict(guilds={1: adict(
+			id=1, name='me', ts_joined=0, kh='me', chans=dict(), users=dict() )})
+		self.st.me = self.st.guilds[1]
 		self.auth_token = self.get_auth('token')
 		return self
 
@@ -1054,8 +1073,8 @@ class DiscordSession:
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
 					handled = True
-					oneshot = await await_wrap(h.func(msg_data))
-					if oneshot: hs_discard.add(k)
+					status = await await_wrap(h.func(msg_data))
+					if status is self.c.oneshot: hs_discard.add(k)
 				for k in hs_discard: self.ws_handlers.pop(k, None)
 				if not handled:
 					err, msg_repr = 'unhandled-text', self._repr(msg_data)
@@ -1110,7 +1129,7 @@ class DiscordSession:
 		self.log.debug('Heartbeat interval: {:,.2f}', interval)
 		self.ws_tasks.add(self.op_heartbeat_task(interval))
 		await self.op_hello_auth()
-		return True
+		return self.c.oneshot
 
 	async def op_hello_auth(self):
 		self.state('hello.auth.token')
@@ -1171,79 +1190,138 @@ class DiscordSession:
 				user_id=md.user.id,
 				user_name=md.user.username,
 				user_n=md.user.discriminator )
-			# XXX: check "guilds" state for more useful info
-			# XXX: parse emojis, private_channels, read_state
-			# XXX: no user list here, at least for 2k+ discord
-			self.op_guild_update(guild=md.get('guilds'), sync=True)
+			self.op_ev_guilds(md.get('guilds'), sync=True)
+			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
 		self.state('ready')
-		self.ws_add_handler(self.c.dispatch, func=self.op_guild_event)
+		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_fail, replace=True )
-		return True
+		return self.c.oneshot
 
-	def op_guild_event(self, m):
+	def op_ev(self, m):
 		mt = (m.get('t') or '').lower()
 		try: o, act = mt.rsplit('_', 1)
-		except ValueError: return
+		except ValueError: o = act = None
 		try: gid = m.d.guild_id
 		except: gid = None
 		if o == 'guild':
-			if act in ['create', 'update']: self.op_guild_update(gid, guild=m.d)
-			elif act == 'delete': self.op_guild_delete(gid)
+			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
+			elif act == 'delete': return self.op_ev_delete(gid)
 		elif o == 'channel':
-			if act in ['create', 'update']: self.op_guild_update(gid, chan=m.d)
-			elif act == 'delete': self.op_guild_delete(gid, chan=m.d.id)
-		elif o == 'guild_member':
-			if act in ['add', 'update']: self.op_guild_update(gid, user=m.d.user)
-			elif act == 'delete': self.op_guild_delete(gid, user=m.d.user.id)
-		# XXX: actual messages
-		# elif o == 'message':
+			if act in ['create', 'update']: return self.op_ev_chans(gid, m.d)
+			elif act == 'delete': return self.op_ev_delete(gid, chan=m.d.id)
+		elif o == 'guild_member': return
+			# if act in ['add', 'update']: return self.op_ev_users(gid, m.d.user)
+			# elif act == 'delete': return self.op_ev_delete(gid, user=m.d.user.id)
+		elif o == 'message':
+			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
+			elif act == 'delete_bulk':
+				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
+				return
+		elif mt == 'typing_start': pass # no need for these
 		# elif o == 'message_reaction':
 		# elif o == 'relationship':
 		# elif o == 'channel_pins':
 		# elif o == 'presence':
+		self.log.debug('Unhandled event: {}', self._repr(m))
 
-	def op_guild_update(self, gid=None, guild=..., user=..., chan=..., sync=False):
-		gs = self.st.setdefault('guilds', dict())
-		if guild is not ...:
-			gs_new, gs_meta = dict(), list()
-			for g in force_list(guild):
-				gg = gs_new.setdefault( g.id,
-					gs.get(g.id, adict(id=g.id, chans=dict(), users=dict())) )
-				ts_joined = g.get('joined_at') or 0
-				if ts_joined: ts_joined = parse_iso8601(ts_joined)
-				gg.update(name=g.name, ts_joined=ts_joined)
-				gs_meta.append((g.id, g.get('members'), g.get('channels')))
-				# XXX: check/process presences, voice states, any other info
-			dict_update(gs, gs_new, sync=sync)
-			for gid, users, chans in gs_meta:
-				self.op_guild_update(gid, user=users, chan=chans, sync=True)
-		gg = gs.get(gid) if not isinstance(gid, adict) else gid
-		if not gg: return
-		if user is not ...:
-			dict_update(gg.users, ((u.user.id, adict( id=u.user.id, name=u.nick,
-				deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(user)), sync=sync)
-		if chan is not ...:
-			cs, ct = dict(), self.c_chan_type
-			for c in force_list(chan):
-				cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
-				cc.update(
-					id=c.id, name=c.name, t=ct(c.get('type', 0)),
-					pos=c.get('position', -1)+1, topic=c.get('topic'), nsfw=c.get('nsfw'),
-					last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
-				if cc.t in [ct.private, ct.private_group]:
-					us = cc.setdefault('users', dict()).update(
-						(u.id, adict(name=u.username))
-						for u in (c.get('recipients') or list()) )
-			dict_update(gg.chans, cs, sync=sync)
-
-	def op_guild_delete(self, gid=None, user=..., chan=...):
-		gs = self.st.setdefault('guilds', dict())
-		gg = gs.get(gid)
+	def op_ev_delete(self, gid=None, user=..., chan=...):
+		gg = self.st.guilds.get(gid)
 		if not gg: return
 		if user is not ...: gg.users.pop(user, None)
 		elif chan is not ...: gg.chans.pop(chan, None)
-		else: gs.pop(gid, None)
+		else: self.st.guilds.pop(gid, None)
+
+	def op_ev_guilds(self, guilds, sync=False):
+		# XXX: parse emojis, read_state
+		gs_new, gs_meta = {1: self.st.me}, list()
+		for g in force_list(guilds):
+			if g.id == self.st.me.id or g.name == self.st.me.name:
+				self.log.error('Skipping guild due to id/name conflict with "me" guild: {}', g)
+				continue
+			gg = gs_new.setdefault( g.id,
+				self.st.guilds.get(g.id, adict(id=g.id, chans=dict(), users=dict())) )
+			ts_joined = g.get('joined_at') or 0
+			if ts_joined: ts_joined = parse_iso8601(ts_joined)
+			gg.update(name=g.name, ts_joined=ts_joined)
+			gs_meta.append(
+				(g.id, *(g.get(k) for k in 'members channels'.split())) )
+		dict_update(self.st.guilds, gs_new, sync=sync)
+		for gid, users, chans in gs_meta:
+			# self.op_ev_users(gid, users, sync=True)
+			self.op_ev_chans(gid, chans, sync=True)
+
+	def op_ev_chans(self, gid, chans, sync=False):
+		gg = self.st.guilds.get(gid)
+		if not gg: return
+		cs, ct = dict(), self.c_chan_type
+		for c in force_list(chans):
+			if c.type in [ct.voice, ct.group]: continue
+			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
+			name, topic = c.get('name'), c.get('topic')
+			if c.type in [ct.private, ct.private_group]:
+				dict_update( cc.setdefault('users', dict()),
+					( (u.id, adict(name=u.username))
+						for u in (c.get('recipients') or list()) ), sync=True )
+				user_names = list(u.name for u in cc.users.values())
+				name = self.op_ev_chans_priv_name(user_names)
+				if not topic: topic = 'private chat - ' + ', '.join(user_names)
+			cc.update(
+				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', name=name, t=ct(c.get('type', 0)),
+				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
+				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
+		dict_update(gg.chans, cs, sync=sync)
+
+	def op_ev_chans_priv_name(self, user_names, max_len=32):
+		n = max_len
+		while True:
+			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
+			if n <= 1 or len(name) <= max_len: return name[:max_len]
+			n -= 1
+
+	# XXX: request userlist and maintain nicks[username, discriminator, server] mapping
+	# def op_ev_users(self, gid, users, sync=False):
+	# 	dict_update(gg.users, ((u.user.id, adict(
+	# 		id=u.user.id, name=u.user.username,
+	# 		deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(users)), sync=sync)
+
+	def op_msg(self, m, act):
+		cc, gg, mt = None, self.st.guilds.get(m.get('guild_id', 1)), self.c_msg_type
+		if gg: cc = gg.chans.get(m.channel_id)
+		if not cc:
+			return self.log.warning( 'Dropped msg event with unknown guild/channel'
+				' id: msg_id={} guild_id={} channel_id={}', m.guild_id, m.id, m.channel_id )
+		if act == 'delete':
+			# XXX: fetch or otherwise indicate which message it was, at least if it's a recent one
+			# XXX: check "ids" for bulk delete, shorten/batch msgs in that case
+			return self.discord.cmd_msg(self.t, cc, None, 'message {m.id} was deleted')
+		line = (m.get('content') or '').strip()
+		line, tags = self.op_msg_parse_tags(line, m.get('mentions'), gg.chans.values())
+		for att in m.get('attachments') or list():
+			url = att.get('url')
+			if not url:
+				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
+				continue
+			line += f'\n{self.conf.irc_prefix_attachment}{url}'
+		if not line:
+			if m.type == mt.guild_member_join: pass # can be used to track names
+			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
+			return
+		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
+		self.discord.cmd_msg(self.t, cc, m.author.username, line.strip(), tags)
+
+	def op_msg_parse_tags(self, line, users, chans):
+		# XXX: mentions for roles and @everyone
+		users = dict((m.id, m.username) for m in force_list(users))
+		chans = dict((c.id, c.name) for c in force_list(chans))
+		tags, mt = dict(), self.c_msg_tags
+		for m in re.finditer(r'<([@#])(\d+)>', line):
+			k_src, t, k = m.group(0), m.group(1), m.group(2)
+			if t == '@': v = mt.user, users.get(k, f'#{k}')
+			elif t == '#': v = mt.chan, chans[k].did if k in chans else f'#{k}'
+			else: v = mt.other, f'{t}{k}'
+			tags[k_src] = v
+		return line, tags
 
 	# Not handled:
 	#
@@ -1269,7 +1347,7 @@ class RDIRCD:
 			control='rdircd: control channel, type "help" for more info',
 			debug='rdircd: debug logging channel, read-only' )
 		self.tasks = StacklessContext()
-		self.uid_cache, self.name_cache = dict(), dict()
+		self.cache = adict(uid=dict(), d2i=dict(), i2d=dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
 		if not self.uid_seed:
 			for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
@@ -1281,17 +1359,18 @@ class RDIRCD:
 	async def __aexit__(self, *err):
 		if self.tasks: await self.tasks.close()
 
-	def uid(self, k, v=None, hash_len=None):
-		if v is None: return self.uid_cache.get(k, (None, None))
+	def uid(self, k, v=None, kh=None, hash_len=None):
+		if v is None: return self.cache.uid.get(k, (None, None))
 		k = k, v
-		if k not in self.uid_cache:
-			kh = str_hash( '\0'.join(map(str, k)),
-				hash_len or self.uid_len, self.uid_seed )
-			if kh in self.uid_cache:
+		if k not in self.cache.uid:
+			if kh is None:
+				kh = str_hash( '\0'.join(map(str, k)),
+					hash_len or self.uid_len, self.uid_seed )
+			if kh in self.cache.uid:
 				# Hash collisions should not happen here - raise uid_len if they do
-				raise ValueError(k, kh, self.uid_cache[kh])
-			self.uid_cache[k], self.uid_cache[kh] = kh, k
-		return self.uid_cache[k]
+				raise ValueError(k, kh, self.cache.uid[kh])
+			self.cache.uid[k], self.cache.uid[kh] = kh, k
+		return self.cache.uid[k]
 
 	async def run(self):
 		ircd = await self.loop.create_server(
@@ -1335,7 +1414,7 @@ class RDIRCD:
 
 	def irc_name(self, name):
 		# Must be deterministic but not create collisions by stripping too much
-		if name not in self.name_cache:
+		if name not in self.cache.d2i:
 			name_irc, sub_chars = '', '°×·„∂'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
 			if name_clean != name: name = name_clean + '×' + self.uid('name', name)
@@ -1347,8 +1426,8 @@ class RDIRCD:
 				elif c == '@': name_irc += '∂'
 				elif c == '+': name_irc += '×'
 				else: name_irc += c
-			self.name_cache[name] = name_irc
-		return self.name_cache[name]
+			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
+		return self.cache.d2i[name]
 
 
 	def cmd_delay(self, delay, func):
@@ -1359,7 +1438,7 @@ class RDIRCD:
 		else: func()
 
 	def cmd_conn(self, name=None):
-		for conn in self.irc_conns.values():
+		for conn in self.irc_conns.values(): # XXX: single-user
 			if not name or name == conn.st.nick: return conn
 
 	@iter_gather(list)
@@ -1371,13 +1450,16 @@ class RDIRCD:
 	def cmd_chan_names_discord(self, cache_track, name):
 		if '.' not in name: return
 		gid, name = name.split('.', 1)
-		t, gid = self.uid(gid)
+		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
 		if not t: return
 		gg = self.discord.session_state().get('guilds', dict()).get(gid)
 		if not gg: return
 		cache_track(gg, 'users')
-		yield from set( self.irc_name(u.name)
-			for u in gg.users ).difference(self.irc_conn_names())
+		names = set(self.irc_name(u.name) for u in gg.users.values())
+		for cc in gg.chans.values():
+			if cc.name != chan_name or 'users' not in cc: continue
+			names.update(self.irc_name(u.name) for u in cc.users.values())
+		yield from names.difference(self.irc_conn_names())
 
 	@iter_gather(sorted)
 	def cmd_chan_names(self, name):
@@ -1390,21 +1472,23 @@ class RDIRCD:
 			yield (name, adict( name=name, topic=topic,
 				names=self.cmd_chan_names(name),
 				ts_created=self.server_ts.timestamp() ))
-		# XXX: proper list of users for large discords
 		ct = DiscordSession.c_chan_type
 		for gg in sorted(
 				self.discord.session_state().get('guilds', dict()).values(),
 				key=op.itemgetter('ts_joined') ):
 			cache_track(gg, 'name chans users ts_joined')
-			gid_pre = self.uid('guild', gg.id)
-			for cc in sorted(gg.chans.values(), key=lambda cc: cc.get('pos') or 999):
-				if cc.t != ct.text: continue # XXX: private chats
+			gid_pre = self.uid('guild', gg.id, kh=gg.get('kh'))
+			for cc in sorted(
+					gg.chans.values(),
+					key=lambda cc: (cc.get('pos') or 999, cc.name) ):
 				cache_track(cc, 'name topic pos nsfw')
 				name = f'{gid_pre}.{self.irc_name(cc.name)}'
 				tags = '[NSFW] ' if cc.nsfw else ''
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
-				yield (name, adict( name=name, topic=topic,
+				self.cache.d2i[cc.did] = name
+				yield (name, adict(
+					name=name, topic=topic, did=cc.did,
 					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
 
 	def cmd_control_status(self, conn, chan):
@@ -1440,6 +1524,20 @@ class RDIRCD:
 		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
+	def discord_msg(self, acc, did, nick, line, tags=None):
+		name = self.cache.d2i.get(did)
+		if not name: return
+		if tags:
+			mt = DiscordSession.c_msg_tags
+			for k, (tt, v) in tags.items():
+				if tt == mt.user: v = '@' + self.irc_name(v)
+				elif tt == mt.chan: v = '#' + self.cache.d2i.get(v, v)
+				line = line.replace(k, v)
+		if nick: nick = self.irc_nick(nick)
+		for conn in self.cmd_chan_conns(name):
+			conn.cmd_msg_synth(nick or self.nick_sys, f'#{name}', line)
+
+
 
 class RDIRCDConfig:
 
@@ -1452,6 +1550,8 @@ class RDIRCDConfig:
 	irc_auth_tbf = '30:8'
 	irc_uid_len = 4 # can be increased to fix conflicts
 	irc_uid_seed = ''
+	irc_prefix_edit = '[edit] '
+	irc_prefix_attachment = '[att] '
 
 	discord_auto_connect = False
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
