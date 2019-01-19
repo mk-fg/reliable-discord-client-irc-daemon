@@ -68,10 +68,9 @@ class LogProtoFormatter(logging.Formatter):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
 
-def monkey_patch_aiohttp_debug():
+def monkey_patch_aiohttp_debug(log):
 	# This is obviously very fragile and will break eventually
 	import aiohttp.http_writer, aiohttp.client_reqrep
-	log = get_logger(f'proto.http.reqres')
 
 	async def write_headers(self, status_line, headers) -> None:
 		buf = aiohttp.http_writer._serialize_headers(status_line, headers)
@@ -247,7 +246,7 @@ def parse_iso8601( spec, tz_default=TZ_UTC, to_float=True,
 			r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
 	m = _re.search(spec)
-	if not m: raise ValueError(m)
+	if not m: raise ValueError(spec)
 	if m.group('tz'):
 		tz = m.group('tz')
 		if tz == 'Z': tz = TZ_UTC
@@ -266,6 +265,15 @@ def parse_iso8601( spec, tz_default=TZ_UTC, to_float=True,
 	assert tz
 	ts = ts.replace(tzinfo=tz)
 	return ts if not to_float else datetime_to_float(ts)
+
+def ts_iso8601(ts, ms=3, to_str=True):
+	if not isinstance(ts, dt.datetime):
+		ts = dt.datetime.utcfromtimestamp(ts)
+	ts = ts.replace(tzinfo=TZ_UTC)
+	if not to_str: return ts
+	ts_ext = f'{ts.microsecond:06d}'[:ms]
+	if ts_ext: ts_ext = f'.{ts_ext}'
+	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 
 def iter_gather(cls, cache=False):
@@ -1338,7 +1346,7 @@ class RDIRCD:
 		self.log = get_logger('rdircd.bridge')
 
 	async def __aenter__(self):
-		self.server_ver = '1.0.0'
+		self.server_ver = '1.27' # git-version: py-str
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
@@ -1581,12 +1589,27 @@ class RDIRCDConfig:
 	ws_dump_file = 'dump.json'
 	# ws_dump_filter = adict(op=0, t='READY')
 
+	state_tracked, state = True, None
+	_state_section = _state_offsets = _state_file = None
+
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
+
+	def __init__(self):
+		self.state, self._state_offsets = dict(), dict()
 
 	def __repr__(self): return repr(vars(self))
 	def get(self, *k): return getattr(self, '_'.join(k))
 	def set(self, k, v): setattr(self, k, v)
+
+	def read(self, func, section, k):
+		k = k.replace('-', '_')
+		for k_conf in k, k.replace('_', '-'):
+			try:
+				self.set(k, func(section, k_conf))
+				return True
+			except configparser.NoSectionError: pass
+			except configparser.NoOptionError: pass
 
 	def pprint(self, title=None, empty_vals=False):
 		cat, chk = None, re.compile(
@@ -1605,7 +1628,17 @@ class RDIRCDConfig:
 			k = m.group(2).replace('_', '-')
 			print(f'{k} = {v}')
 
-	def update_from_file(self, config, section='default', prefix=None):
+	def update_from_file(self, conf_file):
+		for k in self._conf_sections:
+			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
+		self.read(conf_file.getboolean, 'state', 'state_tracked')
+		self._state_section = conf_file.has_section('state')
+		if self.state_tracked and self._state_section:
+			for k, v in conf_file['state'].items():
+				if k == 'tracked': continue
+				self.state[k] = parse_iso8601(v)
+
+	def update_from_file_section(self, config, section='default', prefix=None):
 		section = section.replace('_', '-')
 		for k in dir(self):
 			if prefix:
@@ -1619,10 +1652,7 @@ class RDIRCDConfig:
 			elif isinstance(v, int): get_val = lambda *a: int(re.sub(r'[ _]', '', config.get(*a)))
 			elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
 			else: continue # values with other types cannot be specified in config
-			for k_conf in {k, k.replace('_', '-')}:
-				try: self.set(conf_k, get_val(section, k_conf))
-				except configparser.NoSectionError: pass
-				except configparser.NoOptionError: pass
+			self.read(get_val, section, k)
 
 	def update_file_section(self, section, keys=None, path=None):
 		section = section.replace('_', '-')
@@ -1632,9 +1662,13 @@ class RDIRCDConfig:
 		sec_prefix = section.lower().replace('-', '_') + '_'
 		if not keys: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
 		if isinstance(keys, str): keys = keys.split()
+		if isinstance(keys, dict): keys = list(keys.items())
 		for n, k in enumerate(keys):
+			if isinstance(k, tuple): k, v = k
+			else: v = ...
 			if not k.startswith(sec_prefix): k = sec_prefix + k
-			k, v = k[len(sec_prefix):].replace('_', '-'), self.get(k)
+			k = k[len(sec_prefix):].replace('_', '-')
+			if v is ...: v = self.get(k)
 			if isinstance(v, bool): v = ['no', 'yes'][v]
 			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*=')
 		keys = dict((k, (v, rx)) for k, v, rx in keys)
@@ -1663,6 +1697,51 @@ class RDIRCDConfig:
 			for k, (v, rx) in keys.items():
 				if v is None: continue
 				dst.write(f'{k} = {v}\n')
+		self._state_file = self._state_offsets.clear()
+
+	def find_value_offsets(self, section):
+		section = section.replace('_', '-')
+		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
+		if not self._state_file: self._state_file = open(self._conf_path, 'rb')
+		src = self._state_file
+		src.seek(0)
+		offsets, parse = dict(), False
+		val_re = re.compile(b'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
+		for n, line in enumerate(iter(src.readline, b'')):
+			m = sec_re.search(line.decode().strip())
+			if m:
+				k = str_norm(m.group(1))
+				if k == sec_k: parse = True
+				else: parse = False
+				continue
+			if parse:
+				m = val_re.search(line)
+				if not m: continue
+				k, v = m.group(1), m.group(2)
+				pos = src.tell() - len(line) + m.start(2)
+				offsets[k] = pos
+				# src.seek(pos)
+				# v_chk = src.read(len(v))
+				# assert v_chk == v, [pos, v_chk, v]
+				# src.readline()
+		return offsets
+
+	def state_set(self, t, k, ts, sync=False):
+		if not self.state_tracked: return
+		if not self._conf_state_section: self.update_file_section('state', 'tracked')
+		k = f'{t}.{k}'
+		if k not in self.state: self.update_file_section('state', {k: v})
+		else:
+			v_last, v = self.state[k].encode(), ts_iso8601(ts).encode()
+			if len(v_last) != len(v): raise ValueError(v_last, v)
+			if not self._state_offsets:
+				self._state_offsets = self.find_value_offsets('state')
+			if not self._state_file: self._state_file = open(self._conf_path, 'rb')
+			self._state_file.seek(self._state_offsets[k])
+			self._state_file.write(v)
+			self._state_file.flush()
+			if sync: os.fdatasync(self._state_file.fileno())
+		self.state[k] = ts
 
 
 
@@ -1702,6 +1781,10 @@ def main(args=None, conf=None):
 	group.add_argument('--conf-dump-defaults', action='store_true',
 		help='Print all default settings, which would be used'
 			' if no configuration file(s) were overriding these, and exit.')
+	group.add_argument('--conf-dump-state', action='store_true',
+		help='Print "state" section from the config file,'
+			' with keys corresponding to app startups and iso8601'
+			' time values of last received message for that run.')
 
 	group = parser.add_argument_group('Interfaces')
 	group.add_argument('-i', '--irc-bind', metavar='host(:port)',
@@ -1734,12 +1817,15 @@ def main(args=None, conf=None):
 		if not os.access(p, mode):
 			parser.error(f'Specified config file missing or inaccessible: {p}')
 	conf_file.read(conf_user_paths)
-	for k in conf._conf_sections:
-		conf.update_from_file(conf_file, section=k, prefix=f'{k}_')
+	conf.update_from_file(conf_file)
 	conf._conf_path = conf_user_paths[-1]
 
 	if opts.conf_dump:
 		conf.pprint('Current configuration options')
+		return
+	if opts.conf_dump_state:
+		print('state_timestamps:')
+		for k, v in conf.state.items(): print(f'  {k}: {ts_iso8601(v)}')
 		return
 
 	if opts.debug: conf.debug_verbose = True
@@ -1798,7 +1884,7 @@ def main(args=None, conf=None):
 	log.debug('Starting eventloop...')
 	with contextlib.closing(asyncio.get_event_loop()) as loop:
 		if conf.debug_verbose:
-			monkey_patch_aiohttp_debug()
+			monkey_patch_aiohttp_debug(get_logger('proto.http.reqres'))
 			# loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
 
