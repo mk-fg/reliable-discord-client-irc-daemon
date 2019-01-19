@@ -241,12 +241,14 @@ TZ_UTC = FixedOffsetTZ.from_offset('UTC')
 def datetime_to_float(dt, _ts0=dt.datetime(1970, 1, 1, tzinfo=TZ_UTC)):
 	return (dt - _ts0).total_seconds()
 
-def parse_iso8601( spec, tz_default=TZ_UTC, to_float=True,
+def parse_iso8601( spec,
+		tz_default=TZ_UTC, to_float=True, validate=False,
 		_re=re.compile(
 			r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
 	m = _re.search(spec)
 	if not m: raise ValueError(spec)
+	if validate: return
 	if m.group('tz'):
 		tz = m.group('tz')
 		if tz == 'Z': tz = TZ_UTC
@@ -270,6 +272,7 @@ def ts_iso8601(ts, ms=3, to_str=True):
 	if not isinstance(ts, dt.datetime):
 		ts = dt.datetime.utcfromtimestamp(ts)
 	ts = ts.replace(tzinfo=TZ_UTC)
+	if not 2019 <= ts.year <= 2030: raise ValueError(ts)
 	if not to_str: return ts
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ts_ext: ts_ext = f'.{ts_ext}'
@@ -783,6 +786,11 @@ class Discord:
 	async def __aexit__(self, *err):
 		await task_cancel_list(s.task for s in self.sessions.values())
 
+	def flake_parse(self, flake):
+		if not flake: return None
+		try: return (int(flake) >> 22)/1e3 + 1420070400
+		except ValueError: return None
+
 	def session_state(self):
 		try: return self.sessions.main.st
 		except KeyError: return adict()
@@ -792,9 +800,10 @@ class Discord:
 	def disconnect(self):
 		for s in self.sessions.values(): s.disconnect()
 
-	def cmd_msg(self, acc, cc, nick, line, tags):
+	def cmd_msg(self, acc, cc, nick, line, tags=None, flake=None):
 		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
-		self.bridge.discord_msg(acc, cc.did, nick, line, tags)
+		self.bridge.discord_msg( acc, cc.did,
+			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
 
 
 class DiscordSession:
@@ -988,6 +997,7 @@ class DiscordSession:
 			if res.status == 401:
 				res.release()
 				if att != 'normal': raise DiscordSessionError('Auth failed')
+			break
 		if res.status >= 400:
 			body = await res.text()
 			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
@@ -1001,7 +1011,9 @@ class DiscordSession:
 		if not raw:
 			res_raw, res = res, await res.json()
 			res_raw.release()
-		self.log_http.debug('<<  {}', self._repr(res), extra=('<< ', res))
+		res_repr = str(res)
+		if '\n' in res_repr: res_repr = (res_repr.strip() + ' ').splitlines()[0]
+		self.log_http.debug('<<  {}', self._repr(res_repr), extra=('<< ', res_repr))
 		return res
 
 
@@ -1302,7 +1314,8 @@ class DiscordSession:
 		if act == 'delete':
 			# XXX: fetch or otherwise indicate which message it was, at least if it's a recent one
 			# XXX: check "ids" for bulk delete, shorten/batch msgs in that case
-			return self.discord.cmd_msg(self.t, cc, None, 'message {m.id} was deleted')
+			return self.discord.cmd_msg( self.t, cc,
+				None, 'message {m.id} was deleted', flake=m.id )
 		line = (m.get('content') or '').strip()
 		line, tags = self.op_msg_parse_tags(line, m.get('mentions'), gg.chans.values())
 		for att in m.get('attachments') or list():
@@ -1316,7 +1329,8 @@ class DiscordSession:
 			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
 			return
 		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
-		self.discord.cmd_msg(self.t, cc, m.author.username, line.strip(), tags)
+		self.discord.cmd_msg( self.t, cc,
+			m.author.username, line.strip(), tags, flake=m.id )
 
 	def op_msg_parse_tags(self, line, users, chans):
 		# XXX: mentions for roles and @everyone
@@ -1346,7 +1360,7 @@ class RDIRCD:
 		self.log = get_logger('rdircd.bridge')
 
 	async def __aenter__(self):
-		self.server_ver = '1.27' # git-version: py-str
+		self.server_ver = '1.28' # git-version: py-str
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
@@ -1362,6 +1376,9 @@ class RDIRCD:
 				try: self.uid_seed = str_hash(pl.Path(k).read_text().strip())
 				except OSError: continue
 			else: self.uid_seed = f'rdircd.{self.server_host}'
+		boot_id = pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+		self.uid_start = '.'.join( str_hash(v, c)
+			for c, v in zip([3, 3, 6], [self.uid_seed, boot_id, os.urandom(6)]) )
 		return self
 
 	async def __aexit__(self, *err):
@@ -1532,7 +1549,8 @@ class RDIRCD:
 		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
-	def discord_msg(self, acc, did, nick, line, tags=None):
+	def discord_msg(self, acc, did, nick, line, tags=None, ts=None):
+		if ts: self.conf.state_set(self.uid_start, ts)
 		name = self.cache.d2i.get(did)
 		if not name: return
 		if tags:
@@ -1597,16 +1615,17 @@ class RDIRCDConfig:
 
 	def __init__(self):
 		self.state, self._state_offsets = dict(), dict()
+		self.log = get_logger('rdircd.state')
 
 	def __repr__(self): return repr(vars(self))
 	def get(self, *k): return getattr(self, '_'.join(k))
 	def set(self, k, v): setattr(self, k, v)
 
-	def read(self, func, section, k):
-		k = k.replace('-', '_')
-		for k_conf in k, k.replace('_', '-'):
+	def read(self, func, section, k, conf_k=None):
+		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
+		for k in k, k.replace('-', '_'), k.replace('_', '-'):
 			try:
-				self.set(k, func(section, k_conf))
+				self.set(conf_k, func(section, k))
 				return True
 			except configparser.NoSectionError: pass
 			except configparser.NoOptionError: pass
@@ -1631,7 +1650,7 @@ class RDIRCDConfig:
 	def update_from_file(self, conf_file):
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
-		self.read(conf_file.getboolean, 'state', 'state_tracked')
+		self.read(conf_file.getboolean, 'state', 'tracked')
 		self._state_section = conf_file.has_section('state')
 		if self.state_tracked and self._state_section:
 			for k, v in conf_file['state'].items():
@@ -1652,7 +1671,7 @@ class RDIRCDConfig:
 			elif isinstance(v, int): get_val = lambda *a: int(re.sub(r'[ _]', '', config.get(*a)))
 			elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
 			else: continue # values with other types cannot be specified in config
-			self.read(get_val, section, k)
+			self.read(get_val, section, k, conf_k)
 
 	def update_file_section(self, section, keys=None, path=None):
 		section = section.replace('_', '-')
@@ -1666,9 +1685,10 @@ class RDIRCDConfig:
 		for n, k in enumerate(keys):
 			if isinstance(k, tuple): k, v = k
 			else: v = ...
+			k = k.replace('_', '-')
 			if not k.startswith(sec_prefix): k = sec_prefix + k
-			k = k[len(sec_prefix):].replace('_', '-')
 			if v is ...: v = self.get(k)
+			k = k[len(sec_prefix):]
 			if isinstance(v, bool): v = ['no', 'yes'][v]
 			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*=')
 		keys = dict((k, (v, rx)) for k, v, rx in keys)
@@ -1702,7 +1722,7 @@ class RDIRCDConfig:
 	def find_value_offsets(self, section):
 		section = section.replace('_', '-')
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
-		if not self._state_file: self._state_file = open(self._conf_path, 'rb')
+		if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
 		src = self._state_file
 		src.seek(0)
 		offsets, parse = dict(), False
@@ -1719,29 +1739,35 @@ class RDIRCDConfig:
 				if not m: continue
 				k, v = m.group(1), m.group(2)
 				pos = src.tell() - len(line) + m.start(2)
-				offsets[k] = pos
+				offsets[k.decode()] = pos
 				# src.seek(pos)
 				# v_chk = src.read(len(v))
 				# assert v_chk == v, [pos, v_chk, v]
 				# src.readline()
 		return offsets
 
-	def state_set(self, t, k, ts, sync=False):
+	def state_set(self, k, ts, t='last-event', sync=False):
 		if not self.state_tracked: return
-		if not self._conf_state_section: self.update_file_section('state', 'tracked')
-		k = f'{t}.{k}'
+		if not self._state_section: self.update_file_section('state', 'tracked')
+		k, v = f'{t}.{k}', ts_iso8601(ts)
 		if k not in self.state: self.update_file_section('state', {k: v})
 		else:
-			v_last, v = self.state[k].encode(), ts_iso8601(ts).encode()
-			if len(v_last) != len(v): raise ValueError(v_last, v)
+			if self.state[k] > ts:
+				self.log.warning( 'State timestamp'
+					' jumped backwards: {} -> {}', self.state[k], ts )
 			if not self._state_offsets:
 				self._state_offsets = self.find_value_offsets('state')
-			if not self._state_file: self._state_file = open(self._conf_path, 'rb')
-			self._state_file.seek(self._state_offsets[k])
+			if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
+			n, v = self._state_offsets[k], v.encode()
+			self._state_file.seek(n)
+			parse_iso8601(self._state_file.read(len(v)).decode(), validate=True)
+			self._state_file.seek(n)
 			self._state_file.write(v)
 			self._state_file.flush()
 			if sync: os.fdatasync(self._state_file.fileno())
 		self.state[k] = ts
+
+	def state_get(self, k, t='last-event'): return self.state.get(f'{t}.{k}')
 
 
 
@@ -1825,7 +1851,8 @@ def main(args=None, conf=None):
 		return
 	if opts.conf_dump_state:
 		print('state_timestamps:')
-		for k, v in conf.state.items(): print(f'  {k}: {ts_iso8601(v)}')
+		for v, k in sorted((v,k) for k,v in conf.state.items()):
+			print(f'  {k}: {ts_iso8601(v)}')
 		return
 
 	if opts.debug: conf.debug_verbose = True
