@@ -272,7 +272,7 @@ def ts_iso8601(ts, ms=3, to_str=True):
 	if not isinstance(ts, dt.datetime):
 		ts = dt.datetime.utcfromtimestamp(ts)
 	ts = ts.replace(tzinfo=TZ_UTC)
-	if not 2019 <= ts.year <= 2030: raise ValueError(ts)
+	if ts.year > 2030: raise ValueError(ts) # sanity check
 	if not to_str: return ts
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ts_ext: ts_ext = f'.{ts_ext}'
@@ -1360,7 +1360,7 @@ class RDIRCD:
 		self.log = get_logger('rdircd.bridge')
 
 	async def __aenter__(self):
-		self.server_ver = '1.28' # git-version: py-str
+		self.server_ver = '1.30' # git-version: py-str
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
@@ -1614,7 +1614,7 @@ class RDIRCDConfig:
 	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
 
 	def __init__(self):
-		self.state, self._state_offsets = dict(), dict()
+		self.state = dict()
 		self.log = get_logger('rdircd.state')
 
 	def __repr__(self): return repr(vars(self))
@@ -1647,7 +1647,11 @@ class RDIRCDConfig:
 			k = m.group(2).replace('_', '-')
 			print(f'{k} = {v}')
 
-	def update_from_file(self, conf_file):
+	def read_from_file(self, *conf_paths):
+		conf_file = configparser.ConfigParser(allow_no_value=True)
+		conf_file.optionxform = lambda k: k
+		conf_file.read(conf_paths)
+		self._conf_path = conf_paths[-1]
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 		self.read(conf_file.getboolean, 'state', 'tracked')
@@ -1717,17 +1721,25 @@ class RDIRCDConfig:
 			for k, (v, rx) in keys.items():
 				if v is None: continue
 				dst.write(f'{k} = {v}\n')
-		self._state_file = self._state_offsets.clear()
+		self._state_source_flush()
 
-	def find_value_offsets(self, section):
+	def _state_source_flush(self):
+		self._state_file = self._state_offsets = None
+
+	def _state_source_get(self):
+		if self._state_offsets is None: self._state_offsets = self._state_offsets_read()
+		if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
+		return self._state_file, self._state_offsets
+
+	def _state_offsets_read(self, section='state'):
 		section = section.replace('_', '-')
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
-		if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
-		src = self._state_file
+		if self._state_file: src = self._state_file
+		else: src = self._state_file = open(self._conf_path, 'rb+')
 		src.seek(0)
 		offsets, parse = dict(), False
 		val_re = re.compile(b'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
-		for n, line in enumerate(iter(src.readline, b'')):
+		for line in iter(src.readline, b''):
 			m = sec_re.search(line.decode().strip())
 			if m:
 				k = str_norm(m.group(1))
@@ -1746,28 +1758,44 @@ class RDIRCDConfig:
 				# src.readline()
 		return offsets
 
+	def state_get(self, k, t='last-event'): return self.state.get(f'{t}.{k}')
+
 	def state_set(self, k, ts, t='last-event', sync=False):
 		if not self.state_tracked: return
 		if not self._state_section: self.update_file_section('state', 'tracked')
 		k, v = f'{t}.{k}', ts_iso8601(ts)
-		if k not in self.state: self.update_file_section('state', {k: v})
-		else:
-			if self.state[k] > ts:
-				self.log.warning( 'State timestamp'
-					' jumped backwards: {} -> {}', self.state[k], ts )
-			if not self._state_offsets:
-				self._state_offsets = self.find_value_offsets('state')
-			if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
-			n, v = self._state_offsets[k], v.encode()
-			self._state_file.seek(n)
-			parse_iso8601(self._state_file.read(len(v)).decode(), validate=True)
-			self._state_file.seek(n)
-			self._state_file.write(v)
-			self._state_file.flush()
-			if sync: os.fdatasync(self._state_file.fileno())
+		if k not in self.state:
+			self.update_file_section('state', {k: v})
+			self.state[k] = ts
+			return self.state_cleanup()
+		if self.state[k] > ts:
+			self.log.warning( 'State timestamp'
+				' jumped backwards: {} -> {}', self.state[k], ts )
+		src, offsets = self._state_source_get()
+		n, v = offsets[k], v.encode()
+		src.seek(n)
+		parse_iso8601(src.read(len(v)).decode(), validate=True)
+		src.seek(n)
+		src.write(v)
+		src.flush()
+		if sync: os.fdatasync(src.fileno())
 		self.state[k] = ts
 
-	def state_get(self, k, t='last-event'): return self.state.get(f'{t}.{k}')
+	def state_cleanup(self, keep_max=10):
+		keys = sorted((v,k) for k,v in self.state.items())
+		if len(keys) <= keep_max: return
+		src, offsets = self._state_source_get()
+		offsets = sorted( ((offsets[k], k) for v,k in
+			keys[:len(keys) - keep_max]), reverse=True )
+		with src, safe_replacement(src.name, 'wb') as dst:
+			src.seek(0)
+			for line in iter(src.readline, b''):
+				if offsets and offsets[-1][0] < src.tell():
+					n, k = offsets.pop()
+					del self.state[k]
+					continue
+				dst.write(line)
+		self._state_source_flush()
 
 
 
@@ -1834,7 +1862,6 @@ def main(args=None, conf=None):
 		conf.pprint('Default configuration options', empty_vals=True)
 		return
 
-	conf_file = configparser.ConfigParser(allow_no_value=True)
 	conf_user_paths = list(map(
 		os.path.expanduser, opts.conf or [conf._conf_path] ))
 	for n, p in enumerate(conf_user_paths):
@@ -1842,9 +1869,7 @@ def main(args=None, conf=None):
 		if n == len(conf_user_paths) - 1: mode |= os.W_OK
 		if not os.access(p, mode):
 			parser.error(f'Specified config file missing or inaccessible: {p}')
-	conf_file.read(conf_user_paths)
-	conf.update_from_file(conf_file)
-	conf._conf_path = conf_user_paths[-1]
+	conf.read_from_file(*conf_user_paths)
 
 	if opts.conf_dump:
 		conf.pprint('Current configuration options')
