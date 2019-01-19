@@ -1360,7 +1360,7 @@ class RDIRCD:
 		self.log = get_logger('rdircd.bridge')
 
 	async def __aenter__(self):
-		self.server_ver = '1.30' # git-version: py-str
+		self.server_ver = self.conf.version
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
@@ -1567,7 +1567,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.0'
+	version = '1.31' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1608,7 +1608,7 @@ class RDIRCDConfig:
 	# ws_dump_filter = adict(op=0, t='READY')
 
 	state_tracked, state = True, None
-	_state_section = _state_offsets = _state_file = None
+	_state_section = _state_offsets = _state_file = _state_file_ts = None
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
@@ -1723,19 +1723,25 @@ class RDIRCDConfig:
 				dst.write(f'{k} = {v}\n')
 		self._state_source_flush()
 
+	### Timestamps in [state] section are updated in-place,
+	###  overwriting short timestamp values without tmp files.
+	### File should be safe to edit manually regardless, due to ctime checks.
+
 	def _state_source_flush(self):
 		self._state_file = self._state_offsets = None
 
 	def _state_source_get(self):
-		if self._state_offsets is None: self._state_offsets = self._state_offsets_read()
+		if self._state_file and self._state_file_ts:
+			try: ts = os.stat(self._state_file.name).st_ctime
+			except OSError: ts = None
+			if ts != self._state_file_ts: self._state_source_flush()
 		if not self._state_file: self._state_file = open(self._conf_path, 'rb+')
+		if self._state_offsets is None: self._state_offsets = self._state_offsets_read()
 		return self._state_file, self._state_offsets
 
 	def _state_offsets_read(self, section='state'):
-		section = section.replace('_', '-')
+		section, src = section.replace('_', '-'), self._state_file
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
-		if self._state_file: src = self._state_file
-		else: src = self._state_file = open(self._conf_path, 'rb+')
 		src.seek(0)
 		offsets, parse = dict(), False
 		val_re = re.compile(b'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
@@ -1779,7 +1785,7 @@ class RDIRCDConfig:
 		src.write(v)
 		src.flush()
 		if sync: os.fdatasync(src.fileno())
-		self.state[k] = ts
+		self.state[k], self._state_file_ts = ts, os.fstat(src).st_ctime
 
 	def state_cleanup(self, keep_max=10):
 		keys = sorted((v,k) for k,v in self.state.items())
@@ -1826,8 +1832,8 @@ def main(args=None, conf=None):
 		metavar='file', action='append',
 		help=f'''
 			Path to configuration file to use.
-			It will get updated with OAuth2 credentials
-				(only adding or changing [auth] section), so has to be writable.
+			It will get updated with OAuth2 credentials ([auth] section)
+				and some state info ([state] section), so has to be writable.
 			Default: {conf._conf_path}''')
 	group.add_argument('--conf-dump', action='store_true',
 		help='Print all configuration settings, which will be used with'
