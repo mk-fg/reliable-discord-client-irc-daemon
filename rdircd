@@ -102,12 +102,6 @@ def monkey_patch_aiohttp_debug(log):
 		await write_bytes_base(self, writer, conn)
 	aiohttp.client_reqrep.ClientRequest.write_bytes = write_bytes
 
-def str_part(s, sep, default=None):
-	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
-	c = sep.strip('<>')
-	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
-	else: return (s, default) if c not in s else s.rsplit(c, 1)
-
 def sockopt_resolve(prefix, v):
 	prefix = prefix.upper()
 	for k in dir(socket):
@@ -115,19 +109,22 @@ def sockopt_resolve(prefix, v):
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
 
-def force_list(v):
-	if not v: v = list()
-	elif isinstance(v, cs_abc.ValuesView): v = list(v)
-	elif not isinstance(v, list): v = [v]
-	return v
-
-def dict_update(d, du_iter=None, sync=True):
-	keys_old, du = set(d.keys()), dict()
-	if du_iter: du.update(du_iter)
-	d.update(du)
-	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
-
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
+
+def str_part(s, sep, default=None):
+	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
+	c = sep.strip('<>')
+	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	else: return (s, default) if c not in s else s.rsplit(c, 1)
+
+def str_repr(s, prefix=False, max_len=50, ext=' ...[{s_len}]'):
+	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
+	if not isinstance(s, str): s = str(s)
+	s_len, s_repr, ext_len = f'{len(s):,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
+	if max_len > 0 and len(s_repr) > max_len:
+		s_len = f'{max_len}/{s_len}'
+		s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
+	return (s_len, s_repr) if prefix else s_repr
 
 def str_hash(s, c=None, key='rdircd'):
 	s = base64.urlsafe_b64encode(
@@ -140,6 +137,18 @@ def str_hash(s, c=None, key='rdircd'):
 def tuple_hash(t, c=None, key='rdircd'):
 	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
 	return str_hash(s, c=c, key=key)
+
+def force_list(v):
+	if not v: v = list()
+	elif isinstance(v, cs_abc.ValuesView): v = list(v)
+	elif not isinstance(v, list): v = [v]
+	return v
+
+def dict_update(d, du_iter=None, sync=True):
+	keys_old, du = set(d.keys()), dict()
+	if du_iter: du.update(du_iter)
+	d.update(du)
+	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
 @contextlib.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
@@ -192,7 +201,7 @@ async def await_wrap(res):
 	return res
 
 async def task_cancel_list(task_list):
-	task_list = list(task for task in task_list if task and not task.done())
+	task_list = list(task for task in task_list if task)
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
@@ -203,7 +212,7 @@ class StacklessContext:
 	'''Like AsyncContextStack, but for tracking tasks that
 		can finish at any point without leaving stack frames.'''
 
-	def __init__(self): self.tasks = dict()
+	def __init__(self, log): self.tasks, self.log = dict(), log
 	async def __aenter__(self): return self
 	async def __aexit__(self, *err):
 		if self.tasks:
@@ -219,10 +228,10 @@ class StacklessContext:
 				await coro
 				if run_after:
 					coro = run_after()
-					if asyncio.iscoroutine(coro): await coro
-			# except TypeError:
-			# 	print('----- coro', coro, file=sys.stderr)
-			# 	raise
+					if asyncio.isawaitable(coro): await coro
+			except asyncio.CancelledError: pass
+			except Exception as err:
+				self.log.exception('Background task failed: {} - {}', coro, err_fmt(err))
 			finally:
 				assert task_id is not None, task_id
 				if self.tasks: self.tasks.pop(task_id, None)
@@ -448,9 +457,10 @@ class IRCProtocol:
 
 
 	def _repr(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
+		'Binary-friendly version of str_repr().'
 		if isinstance(data, str): data = data.encode()
 		if max_len is None: max_len = self.conf.debug_proto_cut
-		data_len, data_repr, ext_len = f'{len(data):03,d}', repr(data)[2:-1], len(ext)
+		data_len, data_repr, ext_len = f'{len(data):,d}', repr(data)[2:-1], len(ext)
 		if max_len > 0 and len(data_repr) > max_len:
 			data_len = f'{max_len}/{data_len}'
 			data_repr = data_repr[:max_len - ext_len] + ext.format(data_len=data_len)
@@ -770,7 +780,8 @@ class IRCProtocol:
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice:
 				if c.name == 'control': self.bridge.cmd_control(self, text, chan)
-				if c.name == 'debug': self.bridge.cmd_debug(self, text, chan)
+				elif c.name == 'debug': self.bridge.cmd_debug(self, text, chan)
+				else: self.bridge.irc_msg(self, chan, text)
 		else:
 			conn = self.bridge.cmd_conn(target)
 			if not conn:
@@ -804,6 +815,7 @@ class Discord:
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
 		self.log = get_logger('rdircd.discord.main')
+		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
 		self.sessions = adict()
@@ -814,6 +826,8 @@ class Discord:
 				continue
 			self.sessions[acc] = s = DiscordSession(self, acc)
 			s.task = self.loop.create_task(s.run_async())
+		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
+		self.flake_n, self.msg_confirms = 0, dict()
 		return self
 
 	async def __aexit__(self, *err):
@@ -829,18 +843,14 @@ class Discord:
 		try: return (int(flake) >> 22)/1e3 + 1420070400
 		except ValueError: return None
 	def flake_build(self, ts):
-		return int((ts - 1420070400) * 1e3) << 22
+		flake = self.flake_n | self.flake_id | int((ts - 1420070400) * 1e3) << 22
+		self.flake_n = (self.flake_n + 1) % 0xfff
+		return str(flake)
 
 	@property
 	def st(self):
 		try: return self.sessions.main.st
 		except KeyError: return adict()
-
-	def cmd_msg(self, acc, cc, nick, line, tags=None, flake=None):
-		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
-		if acc != 'main': return # XXX: buffer and cross-ref
-		self.bridge.discord_msg( cc.did,
-			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		ss = self.sessions.get('main')
@@ -852,10 +862,48 @@ class Discord:
 				params=dict(after=flake, limit=hwm) )
 			for m in map(adict, msg_batch or list()):
 				line, tags = ss.op_msg_parse(m, gg)
+				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
 				msg_list.append(adict( nick=m.author.username,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 			if len(msg_list) < lwm: break
 		return sorted(msg_list, key=op.itemgetter('ts'))
+
+	def cmd_msg_recv(self, acc, cc, nick,
+			line, tags=None, flake=None, nonce=None ):
+		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
+		if acc != 'main': return # XXX: buffer and cross-ref
+		if nonce and flake:
+			fut = self.msg_confirms.pop(nonce, None)
+			if fut: return fut.set_result(flake)
+		self.bridge.discord_msg( cc.did,
+			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
+
+	async def cmd_msg_send(self, cc, line):
+		ss = self.sessions.get('main')
+		if not ss: raise IRCBridgeSignal('no-discord-conn')
+		try:
+			nonce = self.flake_build(time.time())
+			fut = self.msg_confirms[nonce] = asyncio.Future()
+			res = await ss.req(
+				f'channels/{cc.id}/messages',
+				m='post', json=dict(content=line, nonce=nonce) )
+			try: flake_res = res['id']
+			except: raise DiscordError(f'Invalid response: {res}')
+			try:
+				flake_gw = await asyncio.wait_for( fut,
+					self.conf.discord_msg_confirm_timeout )
+			except asyncio.TimeoutError:
+				self.msg_confirms.pop(nonce, None)
+				raise IRCBridgeSignal('msg-confirm-timed-out')
+			if flake_gw != flake_res:
+				self.log.warning( 'Same-nonce sent/received'
+					' msg-id mismatch: {} != {}', flake_gw, flake_res )
+			self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
+		except Exception as err:
+			if isinstance(err, IRCBridgeSignal): raise
+			err_str = err_fmt(err)
+			self.log.exception('Failed sending discord msg: {}', err_str)
+			raise IRCBridgeSignal(err_str)
 
 
 
@@ -914,6 +962,7 @@ class DiscordSession:
 		self.log_ws = get_logger(f'proto.ws.{self.t}')
 		self.log_http = get_logger(f'proto.http.{self.t}')
 		self.log_http_reqres = get_logger(f'proto.http.reqres')
+		self._repr = ft.partial(str_repr, max_len=self.conf.debug_proto_cut)
 
 	def get_auth(self, k, default=ValueError):
 		try: return getattr(self.conf, f'auth_{self.t}_{k}')
@@ -924,7 +973,7 @@ class DiscordSession:
 	async def __aenter__(self):
 		if not (self.get_auth('email') and self.get_auth('password')):
 			raise DiscordSessionError('Missing account auth credentials')
-		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext()
+		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext(self.log)
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession())
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
 		self.rate_limits, self.ws_closed = adict(), asyncio.Event()
@@ -935,12 +984,8 @@ class DiscordSession:
 		return self
 
 	async def __aexit__(self, *err):
-		if self.ws_ctx:
-			await self.ws_ctx.aclose()
-			self.ws_ctx = None
-		if self.ctx:
-			await self.ctx.aclose()
-			self.ctx = None
+		if self.ws_ctx: await self.ws_ctx.aclose()
+		if self.ctx: await self.ctx.aclose()
 		if self.tasks: await self.tasks.close()
 
 	async def run(self):
@@ -963,16 +1008,6 @@ class DiscordSession:
 		self.log_ws.debug( '--- state: {} -> {}',
 			st_old, st, extra=('---', f'st {st_old} -> {st}') )
 		self.log.info('State: {} -> {}', st_old, st)
-
-	def _repr(self, s, prefix=False, max_len=None, ext=' ...[{s_len}]'):
-		if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
-		if not isinstance(s, str): s = str(s)
-		if max_len is None: max_len = self.conf.debug_proto_cut
-		s_len, s_repr, ext_len = f'{len(s):03,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
-		if max_len > 0 and len(s_repr) > max_len:
-			s_len = f'{max_len}/{s_len}'
-			s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
-		return (s_len, s_repr) if prefix else s_repr
 
 
 	### Regular HTTP requests and OAuth2 stuff
@@ -1076,7 +1111,7 @@ class DiscordSession:
 		if self.ws_ctx: return
 		self.state('connecting.init')
 		self.ws_ctx = ctx = contextlib.AsyncExitStack()
-		self.ws_tasks, self.ws_handlers = StacklessContext(), dict()
+		self.ws_tasks, self.ws_handlers = StacklessContext(self.log), dict()
 		ctx.push_async_callback(self.ws_close)
 		self.ws_closed.clear()
 		for cache in True, False:
@@ -1367,7 +1402,7 @@ class DiscordSession:
 		if act == 'delete':
 			# XXX: fetch or otherwise indicate which message it was, at least if it's a recent one
 			# XXX: check "ids" for bulk delete, shorten/batch msgs in that case
-			return self.discord.cmd_msg( self.t, cc,
+			return self.discord.cmd_msg_recv( self.t, cc,
 				None, 'message {m.id} was deleted', flake=m.id )
 		author = m.get('author')
 		if not author:
@@ -1377,8 +1412,8 @@ class DiscordSession:
 		line, tags = self.op_msg_parse(m, gg)
 		if not line: return # "m.type = joins/parts" can be used to track names here
 		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
-		self.discord.cmd_msg( self.t, cc,
-			author.username, line.strip(), tags, flake=m.id )
+		self.discord.cmd_msg_recv( self.t, cc,
+			author.username, line.strip(), tags, flake=m.id, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
 		line = (m.get('content') or '').strip()
@@ -1420,6 +1455,7 @@ class RDIRCD:
 	def __init__(self, loop, conf):
 		self.loop, self.conf = loop, conf
 		self.log = get_logger('rdircd.bridge')
+		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
 		self.server_ver = self.conf.version
@@ -1430,7 +1466,7 @@ class RDIRCD:
 		self.nick_sys, self.chans_sys = 'core', dict(
 			control='rdircd: control channel, type "help" for more info',
 			debug='rdircd: debug logging channel, type "help" for more info' )
-		self.tasks = StacklessContext()
+		self.tasks = StacklessContext(self.log)
 		self.cache = adict(uid=dict(), d2i=dict(), i2d=dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
 		if not self.uid_seed:
@@ -1441,9 +1477,12 @@ class RDIRCD:
 		boot_id = pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 		self.uid_start = '.'.join( str_hash(v, c)
 			for c, v in zip([3, 3, 6], [self.uid_seed, boot_id, os.urandom(6)]) )
+		self.irc_msg_queue = asyncio.Queue()
+		self.cmd_delay(self.irc_msg_queue_proc)
 		return self
 
 	async def __aexit__(self, *err):
+		if self.irc_msg_queue: self.irc_msg_queue.put_nowait(StopIteration)
 		if self.tasks: await self.tasks.close()
 
 	def uid(self, k, v=None, kh=None, hash_len=None):
@@ -1584,6 +1623,27 @@ class RDIRCD:
 		except IRCBridgeSignal as err:
 			notice_cmd(f'topic-cmd-error: {err}')
 			raise
+
+	def irc_msg(self, conn, chan, line):
+		if not line.strip(): return
+		if not self.irc_msg_queue:
+			conn.cmd_msg_synth( self.nick_sys, chan,
+				f'ERR {{irc-msg-queue-failed}}: {line}', notice=True, direct=True )
+		else: self.irc_msg_queue.put_nowait(adict(conn=conn, chan=chan, line=line))
+
+	async def irc_msg_queue_proc(self):
+		try:
+			while True:
+				m = await self.irc_msg_queue.get()
+				if m is StopIteration: break
+				info = self.irc_chan_info(m.chan)
+				try:
+					if not (info and info.cc): raise IRCBridgeSignal('no-matching-chan')
+					await self.discord.cmd_msg_send(info.cc, m.line)
+				except IRCBridgeSignal as err:
+					m.conn.cmd_msg_synth( self.nick_sys, m.chan,
+						f'ERR {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
+		finally: self.irc_msg_queue = None
 
 
 	def cmd_delay(self, delay, func=None):
@@ -1756,6 +1816,7 @@ class RDIRCDConfig:
 
 	discord_auto_connect = False
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
+	discord_msg_confirm_timeout = 10.0
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
 	discord_user_agent = ( f'rdircd/{version}'
@@ -1772,6 +1833,7 @@ class RDIRCDConfig:
 	auth_ghost_token = ''
 
 	debug_verbose = False
+	debug_msg_cut = 50
 	debug_proto_cut = 90
 	debug_proto_log_shared = True
 	debug_proto_log_file = ''
