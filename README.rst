@@ -1,7 +1,7 @@
 Reliable Discord-client IRC Daemon (rdircd)
 ===========================================
 
-Python3/asyncio daemon to present personal discord client as local irc server,
+Python3/asyncio daemon to present personal Discord_ client as local irc server,
 with a list of channels corresponding to ones available on all joined "discord
 servers" (group of users/channels with its own theme/auth/rules on discord,
 also referred to as "guilds" in API docs).
@@ -20,6 +20,8 @@ Or maybe just tracking MESSAGE_ACK events would be enough, if that's a thing.
 
 Under development and not ready for use yet.
 
+.. _Discord: http://discord.gg/
+
 
 WARNING
 -------
@@ -37,6 +39,68 @@ blocking of user account(s).
 See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
 
 .. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
+
+
+Usage
+-----
+
+Install script dependencies (see Requirements section below)::
+
+  % pip3 install --user aiohttp
+
+Create configuration file with discord and ircd auth credentials in ~/.rdircd.ini
+(see all the --conf\* opts wrt these)::
+
+  [irc]
+  password = hunter2
+
+  [auth-main]
+  email = discord-reg@email.com
+  password = discord-password
+
+Note: IRC password can be omitted, but be sure to firewall that port from
+everything in the system then (or maybe do it anyway).
+
+Start rdircd: ``./rdircd --debug``
+
+Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
+or -i/--irc-bind option for using diff host/port).
+
+Run ``/list`` to see channels for all joined discord servers/guilds::
+
+  Channel          Users Topic
+  -------          ----- -----
+  #control            0  rdircd: control channel, type "help" for more info
+  #debug              0  rdircd: debug logging channel, read-only
+  #me.SomeUser        1  me: private chat - SomeUser
+  #me.some-other-user 1  me: private chat - some-other-user
+  #jvPp.announcements 0  Server-A: Please keep this channel unmuted
+  #jvPp.info          0  Server-A:
+  #jvPp.rules         0  Server-A:
+  #jvPp.welcome       0  Server-A: Mute unless you like notification spam
+  ...
+  #aXsd.intro         0  Server-B: Server info and welcomes.
+  #aXsd.offtopic      0  Server-B: Anything goes. Civility is expected.
+
+Notes on information here:
+
+- Short base64 channel prefix is a persistent id of the discord guild that it belongs to.
+- Full guild name (e.g. "Server-A") is used as a prefix for every channel topic.
+- "#me." is a prefix of discord @me guild, where all private channels are.
+- #control and #debug are special channels, send "help" there for more info.
+- Public IRC channel users are transient and only listed/counted if they sent
+  something to a channel, as discord has no concept of "joining" for publics.
+
+``/j #aXsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
+
+Run ``/t`` (/topic) command to show more info on channel-specific commands,
+e.g. ``/t log`` to fetch and replay backlog since last rdircd shutdown time,
+``/t log list`` to list all the activity timestamps that rdircd tracks,
+or ``/t log 2019-01-08`` to fetch/dump channel log since specific date/time
+(in iso8601 format).
+
+Discord-global commands are available in #control channel,
+send "help" here for information on all of these.
 
 
 Requirements

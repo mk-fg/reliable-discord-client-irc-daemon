@@ -1663,6 +1663,7 @@ class RDIRCD:
 	def cmd_log(self, line):
 		conn = self.cmd_conn()
 		if not conn: return
+		# XXX: handle "help" in #debug for basic info on it
 		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
