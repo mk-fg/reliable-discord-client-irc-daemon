@@ -65,6 +65,10 @@ class LogProtoFormatter(logging.Formatter):
 		record.message = f'{st} :: {msg}'
 		return self.formatMessage(record)
 
+class LogFileHandler(logging.handlers.RotatingFileHandler):
+	def set_file(self, path):
+		self.stream, self.baseFilename = None, os.path.abspath(os.fspath(path))
+
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
 
@@ -758,8 +762,9 @@ class IRCProtocol:
 			for conn in self.bridge.cmd_chan_conns(c.name):
 				if skip_self and conn is self: continue
 				conn.send(f':{src} {msg_type} {chan} :{text}')
-			if not notice and c.name == 'control':
-				self.bridge.cmd_control(self, text, chan)
+			if not notice:
+				if c.name == 'control': self.bridge.cmd_control(self, text, chan)
+				if c.name == 'debug': self.bridge.cmd_debug(self, text, chan)
 		else:
 			conn = self.bridge.cmd_conn(target)
 			if not conn:
@@ -1418,7 +1423,7 @@ class RDIRCD:
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.nick_sys, self.chans_sys = 'core', dict(
 			control='rdircd: control channel, type "help" for more info',
-			debug='rdircd: debug logging channel, read-only' )
+			debug='rdircd: debug logging channel, type "help" for more info' )
 		self.tasks = StacklessContext()
 		self.cache = adict(uid=dict(), d2i=dict(), i2d=dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
@@ -1575,7 +1580,6 @@ class RDIRCD:
 			raise
 
 
-
 	def cmd_delay(self, delay, func=None):
 		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
@@ -1633,32 +1637,78 @@ class RDIRCD:
 					name=name, topic=topic, did=cc.did,
 					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
 
-	def cmd_control_status(self, conn, chan):
-		for line in [
-				'Status:',
-				'  XXX: show whether stuff is connected and working atm' ]:
-			conn.cmd_msg_synth(self.nick_sys, chan, line)
+	def cmd_control_status(self, send):
+		send('\n'.join([ 'Status:',
+			'  XXX: show whether stuff is connected and working atm' ]))
 
 	def cmd_control(self, conn, text, chan):
-		line = text.strip().split()
+		line = text.strip().lower().split()
 		if not line: return
 		cmd, send = line[0],\
 			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
-		if cmd == 'help':
-			self.cmd_control_status(conn, chan)
-			for line in [
-					'Commands:',
-					'  status - (alias: st) show whether discord is connected and working',
-					'  connect - (alias: on) connect/login to discord api',
-					'  disconnect - (alias: off) disconnect from discord' ]:
-				send(line)
-		elif cmd in ['status', 'st']: self.cmd_control_status(conn, chan)
+		if cmd in ['h', 'help']:
+			self.cmd_control_status(send)
+			send('\n'.join([
+				'Commands:',
+				'  status - (alias: st) show whether discord is connected and working',
+				'  connect - (alias: on) connect/login to discord api',
+				'  disconnect - (alias: off) disconnect from discord' ]))
+		elif cmd in ['status', 'st']: self.cmd_control_status(send)
 		elif cmd in ['connect', 'on']:
 			send('discord: connecting...')
 			self.discord.connect()
 		elif cmd in ['disconnect', 'off']:
 			send('discord: disconnecting...')
 			self.discord.disconnect()
+
+	def cmd_debug(self, conn, text, chan):
+		line = text.strip().lower().split()
+		if not line: return
+		send = ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
+		if line[0] in ['h', 'help']:
+			level = proto_log_info = '???'
+			if self.conf._debug_chan:
+				level = logging.getLevelName(self.conf._debug_chan.level).lower()
+			if self.conf._debug_proto:
+				proto_log_info = logging.getLevelName(self.conf._debug_proto.level).lower()
+				proto_log_info = ( 'disabled' if proto_log_info == 'warning'
+					else f'enabled, file={self.conf._debug_proto.baseFilename}' )
+			return send('\n'.join(f'-- {line}' for line in [
+				'This channel is for logging output, with level=info by default,',
+				' unless --debug is specified on command line, or [debug] verbose=yes in ini.',
+				f'Status:',
+				f'  logging level: {level}',
+				f'   protocol log: {proto_log_info}',
+				'Recognized commands here:',
+				'  level info - (alias: i) set level=info (default) logging in this channel',
+				'  level debug - (alias: d) enable level=debug logging in this channel (verbose)',
+				'  level warning - (alias: w) only dump warnings and errors here',
+				'  proto {file} - enable irc/discord procool logging to specified file',
+				'  proto off - disable irc/discord procool logging' ]))
+		if len(line) == 1:
+			with contextlib.suppress(KeyError):
+				line = dict(i='level info', d='level debug', w='level warning')[line[0]].split()
+		cmd, arg = line[0], line[-1]
+		if cmd == 'level' and len(line) == 2:
+			level = getattr(logging, arg.upper(), None)
+			if level is not None and self.conf._debug_chan:
+				self.conf._debug_chan.setLevel(level)
+			else: arg = 'unavailable'
+			send(f'-- logging level: {arg}')
+		elif cmd == 'proto':
+			if arg == 'off':
+				if self.conf._debug_proto:
+					self.conf._debug_proto.setLevel(logging.WARNING)
+				else: arg = 'unavailable'
+				send(f'-- protocol log: {arg}')
+			elif len(line) >= 2:
+				path = text.strip().split(None, 1)[-1]
+				if self.conf._debug_proto:
+					self.conf._debug_proto.set_file(path)
+					self.conf._debug_proto.setLevel(logging.DEBUG)
+					arg = f'file={path}'
+				else: arg = 'unavailable'
+				send(f'-- protocol log: {arg}')
 
 	def cmd_log(self, line):
 		conn = self.cmd_conn()
@@ -1721,6 +1771,7 @@ class RDIRCDConfig:
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
+	_debug_chan = _debug_proto = None
 
 	ws_dump_filter = None
 	ws_dump_file = 'dump.json'
@@ -2023,15 +2074,15 @@ def main(args=None, conf=None):
 
 	log_proto = logging.getLogger('proto')
 	log_proto.propagate = conf.debug_proto_log_shared
-	if conf.debug_proto_log_file:
-		log_handler = logging.handlers.RotatingFileHandler(
-			conf.debug_proto_log_file,
-			maxBytes=conf.debug_proto_log_file_size,
-			backupCount=conf.debug_proto_log_file_count )
-		log_handler.setLevel(logging.DEBUG)
-		log_handler.setFormatter(LogProtoFormatter(
-			'%(asctime)s :: %(reltime)s :: %(name)s :: %(message)s' ))
-		log_proto.addHandler(log_handler)
+	log_handler = conf._debug_proto = LogFileHandler(
+		conf.debug_proto_log_file or '/dev/null',
+		maxBytes=conf.debug_proto_log_file_size,
+		backupCount=conf.debug_proto_log_file_count )
+	log_handler.setLevel( logging.DEBUG
+		if conf.debug_proto_log_file else logging.WARNING )
+	log_handler.setFormatter(LogProtoFormatter(
+		'%(asctime)s :: %(reltime)s :: %(name)s :: %(message)s' ))
+	log_proto.addHandler(log_handler)
 
 	def handle_exception(err_t, err, err_tb):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
@@ -2065,7 +2116,7 @@ def main(args=None, conf=None):
 			# loop.set_debug(True)
 		rdircd = RDIRCD(loop, conf)
 
-		log_handler = LogFuncHandler(rdircd.cmd_log)
+		log_handler = conf._debug_chan = LogFuncHandler(rdircd.cmd_log)
 		log_handler.setLevel(logging.DEBUG if conf.debug_verbose else logging.INFO)
 		log_handler.setFormatter(logging.Formatter('%(name)s %(levelname)5s :: %(message)s'))
 		log_handler.addFilter(log_empty_filter)
