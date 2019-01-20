@@ -1643,6 +1643,13 @@ class RDIRCD:
 				except IRCBridgeSignal as err:
 					m.conn.cmd_msg_synth( self.nick_sys, m.chan,
 						f'ERR {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
+					while True: # flush queue to ensure ordering
+						try: m = self.irc_msg_queue.get_nowait()
+						except asyncio.QueueEmpty: break
+						if m is StopIteration: break
+						m.conn.cmd_msg_synth( self.nick_sys, m.chan,
+							f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
+					if m is StopIteration: break
 		finally: self.irc_msg_queue = None
 
 

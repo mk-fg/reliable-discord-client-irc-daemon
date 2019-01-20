@@ -9,16 +9,10 @@ also referred to as "guilds" in API docs).
 Purpose is to be able to comfortably use discord via simple text-based IRC client,
 and not browser, electron app or anything of the sort.
 
-One additional "reliable" quirk is that the plan is to have it actually connect
-to discord under two separate accounts ("main" and "ghost"), and have these
-monitor same channels to detect when stuff posted by the "main" acc doesn't make it,
-or any other messages don't get relayed to either of the two,
-which is unfortunately an issue that either discord api or other clients that
-I've used seem to have from time to time.
-
-Or maybe just tracking MESSAGE_ACK events would be enough, if that's a thing.
-
-Under development and not ready for use yet.
+It's also "reliable" in that it tries hard to confirm message delivery,
+notify about any issues in that regard and enforce strict
+all-in-same-order-or-nothing posting, which - somewhat surprisingly - other
+discord clients seem to be quite sloppy about.
 
 .. _Discord: http://discord.gg/
 
@@ -61,7 +55,7 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
 Note: IRC password can be omitted, but be sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
-Start rdircd: ``./rdircd --debug``
+Start rdircd daemon: ``./rdircd --debug``
 
 Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
 or -i/--irc-bind option for using diff host/port).
@@ -133,6 +127,16 @@ Last updated: 2019-01-02
 
   Being apparently undocumented and available since the beginning,
   guess it might be heavily deprecated by now and go away at any point in the future.
+
+- Sent message delivery confirmation is done by matching unique "nonce" value in
+  MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
+
+  All messages are sent out in strict sequence (via one queue), with synchronous
+  waiting on confirmation, aborting whole queue if first one fails to be delivered,
+  with notices for each failed/discarded msg.
+
+  This is done to ensure that all messages either arrive in the same strict
+  order they've been sent or not posted at all.
 
 - Some events coming from websocket gateway are undocumented, maybe due to lag
   of docs behind implementation, or due to them not being deemed that useful to bots, idk.
