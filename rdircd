@@ -818,25 +818,24 @@ class Discord:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
-		self.sessions = adict()
-		for acc in 'main', 'ghost':
-			if not ( self.conf.get(f'auth_{acc}_email')
-					and self.conf.get(f'auth_{acc}_password') ):
-				self.log.info('Disabling account with no access credentials: {}', acc)
-				continue
-			self.sessions[acc] = s = DiscordSession(self, acc)
+		self.session = None
+		if not ( self.conf.get(f'auth_main_email')
+				and self.conf.get(f'auth_main_password') ):
+			self.log.error('Disabling discord due to missing access credentials')
+		else:
+			s = self.session = DiscordSession(self, 'main')
 			s.task = self.loop.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
 		return self
 
 	async def __aexit__(self, *err):
-		await task_cancel_list(s.task for s in self.sessions.values())
+		await task_cancel_list([self.session.task])
 
 	def connect(self):
-		for s in self.sessions.values(): s.connect()
+		self.session.connect()
 	def disconnect(self):
-		for s in self.sessions.values(): s.disconnect()
+		self.session.disconnect()
 
 	def flake_parse(self, flake):
 		if not flake: return None
@@ -849,19 +848,18 @@ class Discord:
 
 	@property
 	def st(self):
-		try: return self.sessions.main.st
+		try: return self.session.st
 		except KeyError: return adict()
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
-		ss = self.sessions.get('main')
-		if not ss: return list()
+		if not self.session: return list()
 		msg_list, flake = list(), self.flake_build(ts)
 		while True:
-			msg_batch = await ss.req(
+			msg_batch = await self.session.req(
 				f'channels/{cc.id}/messages',
 				params=dict(after=flake, limit=hwm) )
 			for m in map(adict, msg_batch or list()):
-				line, tags = ss.op_msg_parse(m, gg)
+				line, tags = self.session.op_msg_parse(m, gg)
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
 				msg_list.append(adict( nick=m.author.username,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
@@ -871,7 +869,7 @@ class Discord:
 	def cmd_msg_recv(self, acc, cc, nick,
 			line, tags=None, flake=None, nonce=None ):
 		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
-		if acc != 'main': return # XXX: buffer and cross-ref
+		if acc != 'main': return
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut: return fut.set_result(flake)
@@ -879,12 +877,11 @@ class Discord:
 			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
 
 	async def cmd_msg_send(self, cc, line):
-		ss = self.sessions.get('main')
-		if not ss: raise IRCBridgeSignal('no-discord-conn')
+		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 		try:
 			nonce = self.flake_build(time.time())
 			fut = self.msg_confirms[nonce] = asyncio.Future()
-			res = await ss.req(
+			res = await self.session.req(
 				f'channels/{cc.id}/messages',
 				m='post', json=dict(content=line, nonce=nonce) )
 			try: flake_res = res['id']
@@ -1207,7 +1204,6 @@ class DiscordSession:
 		msg_data = json.dumps(dict(op=op, d=d))
 		self.log_ws.debug( ' >> text {}',
 			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
-		# XXX: maybe enforce ordering for messages here
 		self.tasks.add(self.ws.send_str(msg_data))
 
 	async def ws_close(self):
@@ -1625,6 +1621,7 @@ class RDIRCD:
 			raise
 
 	def irc_msg(self, conn, chan, line):
+		# XXX: add mention/channel tags to messages
 		if not line.strip(): return
 		if not self.irc_msg_queue:
 			conn.cmd_msg_synth( self.nick_sys, chan,
@@ -1786,7 +1783,6 @@ class RDIRCD:
 	def cmd_log(self, line):
 		conn = self.cmd_conn()
 		if not conn: return
-		# XXX: handle "help" in #debug for basic info on it
 		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
@@ -1835,10 +1831,6 @@ class RDIRCDConfig:
 	auth_main_password = ''
 	auth_main_token = ''
 
-	auth_ghost_email = ''
-	auth_ghost_password = ''
-	auth_ghost_token = ''
-
 	debug_verbose = False
 	debug_msg_cut = 50
 	debug_proto_cut = 90
@@ -1856,7 +1848,7 @@ class RDIRCDConfig:
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth_main', 'auth_ghost', 'debug'
+	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
 
 	def __init__(self):
 		self.state = dict()
