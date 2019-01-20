@@ -76,23 +76,29 @@ def monkey_patch_aiohttp_debug(log):
 	# This is obviously very fragile and will break eventually
 	import aiohttp.http_writer, aiohttp.client_reqrep
 
+	@contextlib.contextmanager
+	def log_req(part):
+		if not log.isEnabledFor(logging.DEBUG): return
+		try:
+			log.debug('', extra=(' >>', f'req :: {part} start'))
+			yield
+			log.debug('', extra=(' >>', f'req :: {part} end'))
+		except Exception as err:
+			err = err_fmt(err)
+			log.exception( 'Protocol logging failed: {}',
+				err, extra=('xxx', f'req :: {part} FAIL :: {err}') )
+
 	async def write_headers(self, status_line, headers) -> None:
 		buf = aiohttp.http_writer._serialize_headers(status_line, headers)
-		buf_lines = buf.decode().strip().splitlines()
-		if log.isEnabledFor(logging.DEBUG):
-			log.debug('', extra=(' >>', 'req :: headers start'))
+		with log_req('headers'):
 			for line in buf.decode().strip().splitlines(): log.debug('', extra=('  >', f'  {line}'))
-			log.debug('', extra=(' >>', 'req :: headers end'))
 		self._write(buf)
 	aiohttp.http_writer.StreamWriter.write_headers = write_headers
 
 	write_bytes_base = aiohttp.client_reqrep.ClientRequest.write_bytes
 	async def write_bytes(self, writer, conn):
-		if self._continue is not None: await write_bytes_base(self, writer, conn)
-		if log.isEnabledFor(logging.DEBUG) and isinstance(self.body, payload.Payload):
-			log.debug('', extra=(' >>', 'req :: body start'))
-			log.debug('', extra=('  >', buf))
-			log.debug('', extra=(' >>', 'req :: body end'))
+		if isinstance(self.body, aiohttp.payload.Payload):
+			with log_req('body'): log.debug('', extra=('  >', self.body._value))
 		await write_bytes_base(self, writer, conn)
 	aiohttp.client_reqrep.ClientRequest.write_bytes = write_bytes
 
