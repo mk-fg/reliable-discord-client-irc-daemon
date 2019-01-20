@@ -358,6 +358,7 @@ class adict(cs.UserDict):
 
 class IRCProtocolError(Exception): pass
 class IRCProtocolArgsError(IRCProtocolError): pass
+class IRCBridgeSignal(Exception): pass
 
 class IRCProtocol:
 
@@ -382,7 +383,7 @@ class IRCProtocol:
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
 		self.log = get_logger('rdircd.irc.init')
-		self.transport, self.buff = None, b''
+		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None, pw_hash=None,
 			host=None, auth=False, cap_neg=False, chans=set() )
@@ -403,6 +404,7 @@ class IRCProtocol:
 		self.transport, self.st.host = tr, host
 		self.send('NOTICE * :*** rdircd ready')
 		self.bridge.irc_conn_new(self)
+		self.bridge.cmd_delay(self.recv_queue_proc)
 
 	def data_received(self, data):
 		self.buff += data
@@ -413,7 +415,8 @@ class IRCProtocol:
 			self.log_proto.debug( '<<  [{} {}] {}',
 				self.st.nick or '---', line_len, line_repr, extra=('<< ', line) )
 			if not line.strip(): continue
-			self.recv(line)
+			if self.recv_queue: self.recv_queue.put_nowait(line)
+			else: self.log.error('Data after recv queue stopped: {!r}', line)
 
 	def eof_received(self): pass
 	def connection_lost(self, err):
@@ -421,6 +424,7 @@ class IRCProtocol:
 		if isinstance(reason, Exception): reason = err_fmt(reason)
 		self.log_proto.debug('--- -close- :: {}', reason, extra=('---', 'close'))
 		self.log.debug('Connection lost: {}', reason)
+		if self.recv_queue: self.recv_queue.put_nowait(StopIteration)
 		self.bridge.irc_conn_lost(self)
 
 	def data_send(self, data):
@@ -473,14 +477,14 @@ class IRCProtocol:
 		if b'\n' in line or len(line) > max_len:
 			if auto_split:
 				m = self._parse(line)
-				if m.cmd == 'privmsg': return self.send_split_privmsg(m)
+				if m.cmd in ['privmsg', 'notice']: return self.send_split_msg(m)
 			if len(line) > max_len:
 				self.log.warning('Sending line with >{}B: {!r}', max_len, self._repr(line))
 		if b'\n' in line: raise IRCProtocolError(f'Line with newlines: {line!r}')
 		line += b'\r\n'
 		self.data_send(line)
 
-	def send_split_privmsg(self, m, max_len=300):
+	def send_split_msg(self, m, max_len=300):
 		dst, line = m.params
 		pre = f'{m.cmd.upper()} {dst}'
 		if m.src: pre = f'{m.src} {pre}'
@@ -495,7 +499,17 @@ class IRCProtocol:
 			sep_last, line = sep, line + w + sep
 		if line.strip(): self.send(pre, f':{line.rstrip()}', auto_split=False)
 
-	def recv(self, line_raw):
+	async def recv_queue_proc(self):
+		try:
+			while True:
+				line = await self.recv_queue.get()
+				if line is StopIteration: break
+				try: await self.recv(line)
+				except Exception as err:
+					self.log.exception(f'Failed to parse line: {line}')
+		finally: self.recv_queue = None
+
+	async def recv(self, line_raw):
 		if isinstance(line_raw, str): line = line_raw
 		else:
 			try: line = line_raw.decode().strip()
@@ -519,14 +533,14 @@ class IRCProtocol:
 			return self.send(421, ':Unknown command')
 		if not self.check_access(m.cmd):
 			return self.log.error('Out-of-order cmd: {!r}', self._repr(line_raw))
-		if cmd_ps_n is None: cmd_func(m)
+		if cmd_ps_n is None: await await_wrap(cmd_func(m))
 		else:
 			(a, b), n = cmd_ps_n, len(m.params)
 			if not a <= n <= b:
 				self.log.error( 'Command/args'
 					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr(line) )
 				return self.send(461, ':Incorrect command parameters')
-			try: cmd_func(*m.params)
+			try: await await_wrap(cmd_func(*m.params))
 			except Exception as err:
 				self.send(400, m.cmd.upper(), f':BUG - Internal Error - {err_fmt(err)}')
 				self.log.exception('Error processing message: {}', m)
@@ -657,9 +671,12 @@ class IRCProtocol:
 				self.st.chans.remove(c.name)
 				self.send(f'PART {chan}')
 
-	def recv_cmd_topic(self, chan, topic=None):
-		if not topic: self.send_topic(chan)
-		else: self.send(482, chan, ':You are not channel operator')
+	async def recv_cmd_topic(self, chan, topic=None):
+		if not topic:
+			self.send_topic(chan)
+			return await self.bridge.irc_topic_cmd(self, chan)
+		try: await self.bridge.irc_topic_cmd(self, chan, topic)
+		except IRCBridgeSignal as err: self.send(482, chan, f':{err}')
 
 	def send_topic(self, chan, c=None):
 		if not c: c = self.req_chan_info(chan)
@@ -746,10 +763,12 @@ class IRCProtocol:
 				if not notice: self.send(401, target, ':No such nick/channel')
 			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
-	def cmd_msg_synth(self, src, target, text):
+	def cmd_msg_synth(self, src, target, text, notice=False, direct=False):
 		'''Synthetic PRIVMSG which avoids any self-reaction loops like notices
 			Channel target must be prefixed by #.'''
-		return self.cmd_msg(src, target, text, notice=True, msg_type='PRIVMSG')
+		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
+		if direct: return self.send(f':{src} {msg_type} {target} :{text}')
+		self.cmd_msg(src, target, text, notice=True, msg_type=msg_type)
 
 	# XXX: more server info commands
 	# def recv_cmd_admin(self):
@@ -786,24 +805,29 @@ class Discord:
 	async def __aexit__(self, *err):
 		await task_cancel_list(s.task for s in self.sessions.values())
 
-	def flake_parse(self, flake):
-		if not flake: return None
-		try: return (int(flake) >> 22)/1e3 + 1420070400
-		except ValueError: return None
-
-	def session_state(self):
-		try: return self.sessions.main.st
-		except KeyError: return adict()
-
 	def connect(self):
 		for s in self.sessions.values(): s.connect()
 	def disconnect(self):
 		for s in self.sessions.values(): s.disconnect()
 
+	def flake_parse(self, flake):
+		if not flake: return None
+		try: return (int(flake) >> 22)/1e3 + 1420070400
+		except ValueError: return None
+
+	@property
+	def st(self):
+		try: return self.sessions.main.st
+		except KeyError: return adict()
+
 	def cmd_msg(self, acc, cc, nick, line, tags=None, flake=None):
 		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
-		self.bridge.discord_msg( acc, cc.did,
+		if acc != 'main': return # XXX: buffer and cross-ref
+		self.bridge.discord_msg( cc.did,
 			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
+
+	def cmd_history(self, cc, ts): return list() # XXX: fetch with pagination
+
 
 
 class DiscordSession:
@@ -1454,13 +1478,84 @@ class RDIRCD:
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
 		return self.cache.d2i[name]
 
+	def irc_chan_info(self, name):
+		if name.startswith('#'): name = name[1:]
+		if '.' not in name: return
+		gid, name = name.split('.', 1)
+		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
+		if t != 'guild': return
+		gg = self.discord.st.get('guilds', dict()).get(gid)
+		if not gg: return
+		for cc in gg.chans.values():
+			if cc.name == chan_name: break
+		else: cc = None
+		return adict(gg=gg, cc=cc)
 
-	def cmd_delay(self, delay, func):
+	async def irc_topic_cmd(self, conn, chan, line=''):
+		notice_cmd = ft.partial( conn.cmd_msg_synth,
+			self.nick_sys, chan, notice=True, direct=True )
+		if not line.strip():
+			return notice_cmd('\n'.join([ '--- Topic-commands:',
+				'  set {topic...} - set topic, as usual irc /topic command would do.',
+				'  log [state] - replay history since "state" point (default: last rdircd stop).',
+				'    "state" value can be either a number, state-id, or iso8601 timestamp.',
+				'    Where number indicates last Nth state recorded in the config (0 - current).',
+				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
+				'      starting from last rdircd shutdown time, recorded under [state] in the ini.',
+				'  log list - list recorded state ids/timestamps, most recent one last.', '---' ]) )
+		cmd = line.split(None, 1)
+		try:
+			if cmd[0] == 'set':
+				raise IRCBridgeSignal('Changing topic is not implemented')
+			elif cmd[0] == 'log':
+				state = ('1' if len(cmd) == 1 else cmd[1]) if len(cmd) <= 2 else None
+				state_list = sorted((v,k) for k,v in self.conf.state.items())
+				if state == 'list':
+					if not state_list: notice_cmd('No state timestamps recorded yet.')
+					else:
+						notice_cmd('Recorded state timestamps:')
+						for n, (v, k) in enumerate(state_list):
+							n = len(state_list) - n - 1
+							notice_cmd(f'  [{n}] {k} = {ts_iso8601(v)}')
+					return
+				ts = None
+				if state.isdigit():
+					n = -1 - int(state)
+					if not self.conf.state_get(self.uid_start): n += 1
+					if not n: return
+					try: ts, k = state_list[n]
+					except IndexError: raise IRCBridgeSignal(f'No state with index {state}')
+				elif state in conf.state:
+					try: ts = self.conf.state[state]
+					except KeyError: raise IRCBridgeSignal(f'No state {state!r}')
+				else:
+					try: ts = parse_iso8601(state)
+					except ValueError: pass
+				if ts:
+					info = self.irc_chan_info(chan)
+					if not (info and info.cc): raise IRCBridgeSignal(f'Not a discord channel: {chan}')
+					notice_cmd(f'--- Replaying new messages since {ts_iso8601(ts)}')
+					msg_list = await self.discord.cmd_history(info.cc, ts)
+					if not msg_list: return notice_cmd('--- no new messages')
+					for nick, line, tags, ts in msg_list:
+						# XXX: add timestamp-prefixes
+						self.discord_msg(cc.did, nick, line, tags, conn=conn)
+					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
+				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
+			else: raise IRCBridgeSignal(f'Unrecognized channel-topic cmd: {line}')
+		except IRCBridgeSignal as err:
+			notice_cmd(f'topic-cmd-error: {err}')
+			raise
+
+
+
+	def cmd_delay(self, delay, func=None):
+		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			else: raise ValueError(delay)
 		if delay: self.tasks.add(asyncio.sleep(delay), func)
-		else: func()
+		else: self.tasks.add(await_wrap(func()))
 
 	def cmd_conn(self, name=None):
 		for conn in self.irc_conns.values(): # XXX: single-user
@@ -1473,17 +1568,12 @@ class RDIRCD:
 
 	@iter_gather(sorted, cache=True)
 	def cmd_chan_names_discord(self, cache_track, name):
-		if '.' not in name: return
-		gid, name = name.split('.', 1)
-		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
-		if not t: return
-		gg = self.discord.session_state().get('guilds', dict()).get(gid)
-		if not gg: return
-		cache_track(gg, 'users')
-		names = set(self.irc_name(u.name) for u in gg.users.values())
-		for cc in gg.chans.values():
-			if cc.name != chan_name or 'users' not in cc: continue
-			names.update(self.irc_name(u.name) for u in cc.users.values())
+		info = self.irc_chan_info(name)
+		if not info: return
+		cache_track(info.gg, 'users')
+		names = set(self.irc_name(u.name) for u in info.gg.users.values())
+		if info.cc and 'users' in info.cc:
+			names.update(self.irc_name(u.name) for u in info.cc.users.values())
 		yield from names.difference(self.irc_conn_names())
 
 	@iter_gather(sorted)
@@ -1499,7 +1589,7 @@ class RDIRCD:
 				ts_created=self.server_ts.timestamp() ))
 		ct = DiscordSession.c_chan_type
 		for gg in sorted(
-				self.discord.session_state().get('guilds', dict()).values(),
+				self.discord.st.get('guilds', dict()).values(),
 				key=op.itemgetter('ts_joined') ):
 			cache_track(gg, 'name chans users ts_joined')
 			gid_pre = self.uid('guild', gg.id, kh=gg.get('kh'))
@@ -1549,7 +1639,7 @@ class RDIRCD:
 		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
 
 
-	def discord_msg(self, acc, did, nick, line, tags=None, ts=None):
+	def discord_msg(self, did, nick, line, tags=None, ts=None, conn=None):
 		if ts: self.conf.state_set(self.uid_start, ts)
 		name = self.cache.d2i.get(did)
 		if not name: return
@@ -1559,8 +1649,9 @@ class RDIRCD:
 				if tt == mt.user: v = '@' + self.irc_name(v)
 				elif tt == mt.chan: v = '#' + self.cache.d2i.get(v, v)
 				line = line.replace(k, v)
-		if nick: nick = self.irc_nick(nick)
-		for conn in self.cmd_chan_conns(name):
+		if nick: nick = self.irc_name(nick)
+		conn_list = [conn] if conn else self.cmd_chan_conns(name)
+		for conn in conn_list:
 			conn.cmd_msg_synth(nick or self.nick_sys, f'#{name}', line)
 
 
@@ -1764,9 +1855,9 @@ class RDIRCDConfig:
 				# src.readline()
 		return offsets
 
-	def state_get(self, k, t='last-event'): return self.state.get(f'{t}.{k}')
+	def state_get(self, k, t='last-msg'): return self.state.get(f'{t}.{k}')
 
-	def state_set(self, k, ts, t='last-event', sync=False):
+	def state_set(self, k, ts, t='last-msg', sync=False):
 		if not self.state_tracked: return
 		if not self._state_section: self.update_file_section('state', 'tracked')
 		k, v = f'{t}.{k}', ts_iso8601(ts)
@@ -1785,7 +1876,7 @@ class RDIRCDConfig:
 		src.write(v)
 		src.flush()
 		if sync: os.fdatasync(src.fileno())
-		self.state[k], self._state_file_ts = ts, os.fstat(src).st_ctime
+		self.state[k], self._state_file_ts = ts, os.fstat(src.fileno()).st_ctime
 
 	def state_cleanup(self, keep_max=10):
 		keys = sorted((v,k) for k,v in self.state.items())
