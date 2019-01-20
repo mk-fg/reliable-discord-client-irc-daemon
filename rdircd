@@ -244,7 +244,7 @@ def datetime_to_float(dt, _ts0=dt.datetime(1970, 1, 1, tzinfo=TZ_UTC)):
 def parse_iso8601( spec,
 		tz_default=TZ_UTC, to_float=True, validate=False,
 		_re=re.compile(
-			r'(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})'
+			r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
 	m = _re.search(spec)
 	if not m: raise ValueError(spec)
@@ -257,8 +257,9 @@ def parse_iso8601( spec,
 			hh, mm = ((int(n) * k) for n in tz[1:].split(':', 1))
 			tz = FixedOffsetTZ.from_offset(hh=hh, mm=mm)
 	else: tz = tz_default
-	ts_list = it.chain(
-		map(int, m.groups()[:5]),
+	ts_list = list(m.groups()[:5])
+	if not ts_list[3]: ts_list[3] = ts_list[4] = 0
+	ts_list = it.chain( map(int, ts_list),
 		[int(m.group('s') or 0), int(m.group('us') or 0)] )
 	# Minutes, seconds, microseconds get discarded here!
 	ts = dt.datetime.strptime(
@@ -268,15 +269,17 @@ def parse_iso8601( spec,
 	ts = ts.replace(tzinfo=tz)
 	return ts if not to_float else datetime_to_float(ts)
 
-def ts_iso8601(ts, ms=3, to_str=True):
+def ts_iso8601(ts, ms=3, to_str=True, human=False):
 	if not isinstance(ts, dt.datetime):
-		ts = dt.datetime.utcfromtimestamp(ts)
-	ts = ts.replace(tzinfo=TZ_UTC)
+		ts = ( dt.datetime.utcfromtimestamp(ts)
+			if not human else dt.datetime.fromtimestamp(ts) )
+	if not human: ts = ts.replace(tzinfo=TZ_UTC)
 	if ts.year > 2030: raise ValueError(ts) # sanity check
 	if not to_str: return ts
+	if human: return ts.strftime(f'%Y-%m-%d %H:%M:%S')
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ts_ext: ts_ext = f'.{ts_ext}'
-	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
+	return ts.strftime(f'%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 
 def iter_gather(cls, cache=False):
@@ -814,6 +817,8 @@ class Discord:
 		if not flake: return None
 		try: return (int(flake) >> 22)/1e3 + 1420070400
 		except ValueError: return None
+	def flake_build(self, ts):
+		return int((ts - 1420070400) * 1e3) << 22
 
 	@property
 	def st(self):
@@ -826,7 +831,20 @@ class Discord:
 		self.bridge.discord_msg( cc.did,
 			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
 
-	def cmd_history(self, cc, ts): return list() # XXX: fetch with pagination
+	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
+		ss = self.sessions.get('main')
+		if not ss: return list()
+		msg_list, flake = list(), self.flake_build(ts)
+		while True:
+			msg_batch = await ss.req(
+				f'channels/{cc.id}/messages',
+				params=dict(after=flake, limit=hwm) )
+			for m in map(adict, msg_batch or list()):
+				line, tags = ss.op_msg_parse(m, gg)
+				msg_list.append(adict( nick=m.author.username,
+					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
+			if len(msg_list) < lwm: break
+		return sorted(msg_list, key=op.itemgetter('ts'))
 
 
 
@@ -1330,7 +1348,7 @@ class DiscordSession:
 	# 		deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(users)), sync=sync)
 
 	def op_msg(self, m, act):
-		cc, gg, mt = None, self.st.guilds.get(m.get('guild_id', 1)), self.c_msg_type
+		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
 		if gg: cc = gg.chans.get(m.channel_id)
 		if not cc:
 			return self.log.warning( 'Dropped msg event with unknown guild/channel'
@@ -1340,6 +1358,18 @@ class DiscordSession:
 			# XXX: check "ids" for bulk delete, shorten/batch msgs in that case
 			return self.discord.cmd_msg( self.t, cc,
 				None, 'message {m.id} was deleted', flake=m.id )
+		author = m.get('author')
+		if not author:
+			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
+			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
+			return
+		line, tags = self.op_msg_parse(m, gg)
+		if not line: return # "m.type = joins/parts" can be used to track names here
+		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
+		self.discord.cmd_msg( self.t, cc,
+			author.username, line.strip(), tags, flake=m.id )
+
+	def op_msg_parse(self, m, gg):
 		line = (m.get('content') or '').strip()
 		line, tags = self.op_msg_parse_tags(line, m.get('mentions'), gg.chans.values())
 		for att in m.get('attachments') or list():
@@ -1349,22 +1379,19 @@ class DiscordSession:
 				continue
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		if not line:
-			if m.type == mt.guild_member_join: pass # can be used to track names
-			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
-			return
-		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
-		self.discord.cmd_msg( self.t, cc,
-			m.author.username, line.strip(), tags, flake=m.id )
+			if m.get('type') == self.c_msg_type.guild_member_join: pass
+			else: self.log.warning('Unhandled empty msg type: {}', self._repr(m))
+		return line, tags
 
 	def op_msg_parse_tags(self, line, users, chans):
 		# XXX: mentions for roles and @everyone
 		users = dict((m.id, m.username) for m in force_list(users))
-		chans = dict((c.id, c.name) for c in force_list(chans))
+		chans = dict((c.id, c.did) for c in force_list(chans))
 		tags, mt = dict(), self.c_msg_tags
 		for m in re.finditer(r'<([@#])(\d+)>', line):
 			k_src, t, k = m.group(0), m.group(1), m.group(2)
 			if t == '@': v = mt.user, users.get(k, f'#{k}')
-			elif t == '#': v = mt.chan, chans[k].did if k in chans else f'#{k}'
+			elif t == '#': v = mt.chan, chans.get(k, f'#{k}')
 			else: v = mt.other, f'{t}{k}'
 			tags[k_src] = v
 		return line, tags
@@ -1525,7 +1552,7 @@ class RDIRCD:
 					if not n: return
 					try: ts, k = state_list[n]
 					except IndexError: raise IRCBridgeSignal(f'No state with index {state}')
-				elif state in conf.state:
+				elif state in self.conf.state:
 					try: ts = self.conf.state[state]
 					except KeyError: raise IRCBridgeSignal(f'No state {state!r}')
 				else:
@@ -1535,11 +1562,11 @@ class RDIRCD:
 					info = self.irc_chan_info(chan)
 					if not (info and info.cc): raise IRCBridgeSignal(f'Not a discord channel: {chan}')
 					notice_cmd(f'--- Replaying new messages since {ts_iso8601(ts)}')
-					msg_list = await self.discord.cmd_history(info.cc, ts)
+					msg_list = await self.discord.cmd_history(info.gg, info.cc, ts)
 					if not msg_list: return notice_cmd('--- no new messages')
-					for nick, line, tags, ts in msg_list:
-						# XXX: add timestamp-prefixes
-						self.discord_msg(cc.did, nick, line, tags, conn=conn)
+					for m in msg_list:
+						line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
+						self.discord_msg(info.cc.did, m.nick, line, m.tags, conn=conn)
 					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
 				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
 			else: raise IRCBridgeSignal(f'Unrecognized channel-topic cmd: {line}')
