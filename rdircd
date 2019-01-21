@@ -69,6 +69,12 @@ class LogFileHandler(logging.handlers.RotatingFileHandler):
 	def set_file(self, path):
 		self.stream, self.baseFilename = None, os.path.abspath(os.fspath(path))
 
+class LogLevelCounter(logging.Handler):
+	def __init__(self, *args, **kws):
+		super().__init__(*args, **kws)
+		self.counts = cs.Counter()
+	def emit(self, record): self.counts[record.levelname.lower()] += 1
+
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
 
@@ -830,12 +836,12 @@ class Discord:
 		return self
 
 	async def __aexit__(self, *err):
-		await task_cancel_list([self.session.task])
+		if self.session: await task_cancel_list([self.session.task])
 
 	def connect(self):
-		self.session.connect()
+		if self.session: self.session.connect()
 	def disconnect(self):
-		self.session.disconnect()
+		if self.session: self.session.disconnect()
 
 	def flake_parse(self, flake):
 		if not flake: return None
@@ -1523,7 +1529,8 @@ class RDIRCD:
 	def irc_conn_lost(self, irc): self.irc_conns.pop(id(irc), None)
 	def irc_conn_stats(self):
 		stats = adict(
-			servers=1, chans=0, # XXX: number of servers/chans from discord
+			servers=len(self.discord.st.get('guilds', dict())) or 1,
+			chans=len(self.cmd_chan_map()),
 			total=0, total_max=self.irc_conns_max, unknown=0, auth=0, op=0 )
 		for conn in self.irc_conns.values():
 			stats.total += 1
@@ -1659,7 +1666,7 @@ class RDIRCD:
 		else: self.tasks.add(await_wrap(func()))
 
 	def cmd_conn(self, name=None):
-		for conn in self.irc_conns.values(): # XXX: single-user
+		for conn in self.irc_conns.values():
 			if not name or name == conn.st.nick: return conn
 
 	@iter_gather(list)
@@ -1708,8 +1715,14 @@ class RDIRCD:
 					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
 
 	def cmd_control_status(self, send):
+		sess_state = self.discord.st.get('state', 'none')
+		counts = self.conf._debug_counts
+		counts = ' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
+			sorted(((n, k.lower()) for n, k in logging._levelToName.items()), reverse=True)
+			if counts[k] > 0 )
 		send('\n'.join([ 'Status:',
-			'  XXX: show whether stuff is connected and working atm' ]))
+			f'  discord-state: {sess_state}',
+			f'  log-msg-counts: {counts}' ]))
 
 	def cmd_control(self, conn, text, chan):
 		line = text.strip().lower().split()
@@ -1721,7 +1734,7 @@ class RDIRCD:
 			send('\n'.join([
 				'Commands:',
 				'  status - (alias: st) show whether discord is connected and working',
-				'  connect - (alias: on) connect/login to discord api',
+				'  connect - (alias: on) connect/login to discord',
 				'  disconnect - (alias: off) disconnect from discord' ]))
 		elif cmd in ['status', 'st']: self.cmd_control_status(send)
 		elif cmd in ['connect', 'on']:
@@ -1805,7 +1818,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.31' # git-version: py-str
+	version = '1.39' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1838,7 +1851,10 @@ class RDIRCDConfig:
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
-	_debug_chan = _debug_proto = None
+	debug_log_file = ''
+	debug_log_file_size = int(1.5e6)
+	debug_log_file_count = 9
+	_debug_chan = _debug_proto = _debug_counts = None
 
 	ws_dump_filter = None
 	ws_dump_file = 'dump.json'
@@ -2092,12 +2108,19 @@ def main(args=None, conf=None):
 			Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.''')
 
 	group = parser.add_argument_group('Misc / debug opts')
-	group.add_argument('-d', '--debug', action='store_true', help='Verbose operation mode.')
+	group.add_argument('-d', '--debug',
+		action='store_true', help='Verbose operation mode.')
 	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
 		help='Truncate long strings in protocol dumps to specified length.'
 			' Set to <=0 to disable truncation (default).')
-	group.add_argument('-l', '--proto-log', metavar='file',
-		help='File to dump full non-truncated protocol logs to.')
+	group.add_argument('-p', '--proto-log', metavar='file',
+		help='''
+			File to dump full non-truncated protocol logs to.
+			Max file size and rotation options can be configured via --conf file.''')
+	group.add_argument('-l', '--debug-log', metavar='file',
+		help='''
+			Separate file for debug-level logging, regardless of levels set elsewhere.
+			Max file size and rotation options can be configured via --conf file.''')
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -2124,12 +2147,13 @@ def main(args=None, conf=None):
 		return
 
 	if opts.debug: conf.debug_verbose = True
+	if opts.debug_log: conf.debug_log_file = opts.debug_log
 	if opts.proto_cut: conf.debug_proto_cut = opts.proto_cut
 	if opts.proto_log: conf.debug_proto_log_file = opts.proto_log
 
-	log_fmt = '%(name)s %(levelname)5s :: %(message)s'
-	if conf.debug_verbose: log_fmt = '%(asctime)s :: ' + log_fmt
-	log_fmt = logging.Formatter(log_fmt)
+	log_fmt = '{name} {levelname:5} :: {message}'
+	if conf.debug_verbose: log_fmt = '{asctime} :: ' + log_fmt
+	log_fmt = logging.Formatter(log_fmt, style='{')
 	log_handler = logging.StreamHandler(sys.stderr)
 	log_handler.setLevel( logging.DEBUG
 		if conf.debug_verbose else logging.WARNING )
@@ -2138,6 +2162,21 @@ def main(args=None, conf=None):
 	logging.root.addHandler(log_handler)
 	logging.root.setLevel(0)
 	log = get_logger('main')
+
+	log_handler = LogLevelCounter()
+	logging.root.addHandler(log_handler)
+	conf._debug_counts = log_handler.counts
+
+	if conf.debug_log_file:
+		log_handler = LogFileHandler(
+			conf.debug_log_file,
+			maxBytes=conf.debug_log_file_size,
+			backupCount=conf.debug_log_file_count )
+		log_handler.setLevel(logging.DEBUG)
+		log_handler.setFormatter(logging.Formatter(
+			'{asctime}.{msecs:03d} :: {name} {levelname:5} :: {message}',
+			datefmt='%Y-%m-%dT%H:%M:%S', style='{' ))
+		logging.root.addHandler(log_handler)
 
 	log_proto = logging.getLogger('proto')
 	log_proto.propagate = conf.debug_proto_log_shared
@@ -2185,7 +2224,8 @@ def main(args=None, conf=None):
 
 		log_handler = conf._debug_chan = LogFuncHandler(rdircd.cmd_log)
 		log_handler.setLevel(logging.DEBUG if conf.debug_verbose else logging.INFO)
-		log_handler.setFormatter(logging.Formatter('%(name)s %(levelname)5s :: %(message)s'))
+		log_handler.setFormatter(logging.Formatter(
+			'{name} {levelname:5} :: {message}', style='{' ))
 		log_handler.addFilter(log_empty_filter)
 		logging.root.addHandler(log_handler)
 
