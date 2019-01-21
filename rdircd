@@ -212,7 +212,7 @@ async def await_wrap(res):
 
 async def task_cancel(task_list):
 	'Cancel and await a task or a list of such, which can have empty values mixed-in.'
-	if not isinstance(task_list, cs_abc.Iterable): task_list = [task_list]
+	if inspect.isawaitable(task_list): task_list = [task_list]
 	task_list = list(filter(None, task_list))
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
@@ -590,6 +590,13 @@ class IRCProtocol:
 		if not res: self.send(462, ':You may not reregister')
 		return res
 
+	# chan_spec=#some-channel, chan_name=some-channel
+	_csc = lambda c: c.startswith('#')
+	chan_spec_check = staticmethod(_csc)
+	chan_spec = staticmethod(lambda name,_csc=_csc: name if _csc(name) else f'#{name}')
+	chan_name = staticmethod(lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:])
+
+
 	def recv_cmd_ping(self, server, server_dst=None):
 		self.send(f'PONG {self.bridge.server_host}')
 
@@ -675,30 +682,28 @@ class IRCProtocol:
 		self.send('ERROR :Closing connection (client quit)')
 		self.transport.close()
 
-	def req_chan_info(self, chan, cm=None):
-		if not chan.startswith('#'):
-			self.send(403, chan, ':No such channel')
-			return
+	def req_chan_info(self, chan, cm=None, check=True):
+		if not self.chan_spec_check(chan):
+			return self.send(403, chan, ':No such channel')
 		if not cm: cm = self.bridge.cmd_chan_map()
-		c = cm.get(chan[1:])
-		if not c: self.send(403, chan, ':No such channel')
-		return c
+		c = cm.get(self.chan_name(chan))
+		if c: return c
+		if check: self.send(403, chan, ':No such channel')
 
 	def recv_cmd_join(self, chan, key=None):
 		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans))
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
-			c = self.req_chan_info(chan, cm=chan_map)
-			if not c: continue
+			c = self.req_chan_info(chan, cm=chan_map, check=False)
 			self.send(f':{self.st.nick} JOIN {chan}')
 			self.send_topic(chan, c=c)
 			self.send_names(chan, own=True, c=c)
-			self.st.chans.add(c.name)
+			self.st.chans.add(c.name if c else self.chan_name(chan))
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
-			c = self.req_chan_info(chan, cm=chan_map)
+			c = self.req_chan_info(chan, cm=chan_map, check=False)
 			if not c: continue
 			if c.name not in self.st.chans:
 				self.send(442, chan, ':You are not on that channel')
@@ -707,16 +712,17 @@ class IRCProtocol:
 				self.send(f'PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
+		if not self.chan_spec_check(chan):
+			return self.send(403, chan, ':No such channel')
 		if not topic:
 			self.send_topic(chan)
 			return await self.bridge.irc_topic_cmd(self, chan)
 		try: await self.bridge.irc_topic_cmd(self, chan, topic)
 		except IRCBridgeSignal as err: self.send(482, chan, f':{err}')
 
-	def send_topic(self, chan, c=None):
-		if not c: c = self.req_chan_info(chan)
-		if not c: return
-		if not c.topic: self.send(331, chan, ':No topic is set')
+	def send_topic(self, chan, c=...):
+		if c is ...: c = self.req_chan_info(chan)
+		if not (c and c.topic): self.send(331, chan, ':No topic is set')
 		else:
 			self.send(332, chan, f':{c.topic}')
 			topic_src = c.get('topic_src')
@@ -726,11 +732,10 @@ class IRCProtocol:
 		chan_list = chan.split(',')
 		for chan in chan_list: self.send_names(chan)
 
-	def send_names(self, chan, own=False, c=None, msg_len_max=200):
-		if not c: c = self.req_chan_info(chan)
-		if not c: return
-		name_line = list()
-		for name in it.chain(c.names, [None]):
+	def send_names(self, chan, own=False, c=..., msg_len_max=200):
+		if c is ...: c = self.req_chan_info(chan)
+		name_line, names = list(), filter(None, c.names) if c else list()
+		for name in it.chain(names, [None]):
 			if name:
 				if name == self.st.nick: own = False
 				name_line.append(name)
@@ -742,23 +747,26 @@ class IRCProtocol:
 		self.send(366, chan, ':End of /NAMES list')
 
 	def recv_cmd_mode(self, target, mode=None, mode_args=None):
-		if target.startswith('#'):
+		if self.chan_spec_check(target):
 			chan = target
-			c = self.req_chan_info(chan)
-			if not c: return
+			c = self.req_chan_info(chan, check=False)
 			self.send(324, chan, '+cnrt')
-			self.send(329, chan, int(c.ts_created))
+			if c: chan_ts = int(c.ts_created)
+			else:
+				if self.chan_name(chan) not in self.st.chans:
+					return self.send(403, chan, ':No such channel')
+				chan_ts = int(time.time())
+			self.send(329, chan, chan_ts)
 		else:
 			if target != self.st.nick:
-				self.send(502, ':No access to modes of other users')
-				return
+				return self.send(502, ':No access to modes of other users')
 			self.send(221, ':+w')
 
 	def recv_cmd_list(self, chan=None, cond=None):
 		# XXX: searching for new channels (ELIST=C) might be nice to have
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
-			self.send(322, f'#{c.name}', len(c.names), f':{c.topic}')
+			self.send(322, self.chan_spec(c.name), len(c.names), f':{c.topic}')
 		self.send(321, ':End of /LIST')
 
 	def recv_cmd_motd(self, target=None): self.send_motd()
@@ -782,7 +790,7 @@ class IRCProtocol:
 
 	def cmd_msg(self, src, target, text, notice=False, skip_self=False, msg_type=None):
 		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
-		if target.startswith('#'):
+		if self.chan_spec_check(target):
 			chan = target
 			if not notice: c = self.req_chan_info(chan)
 			else: c = self.bridge.cmd_chan_map().get(chan[1:])
@@ -790,10 +798,7 @@ class IRCProtocol:
 			for conn in self.bridge.cmd_chan_conns(c.name):
 				if skip_self and conn is self: continue
 				conn.send(f':{src} {msg_type} {chan} :{text}')
-			if not notice:
-				if c.name == 'control': self.bridge.cmd_control(self, text, chan)
-				elif c.name == 'debug': self.bridge.cmd_debug(self, text, chan)
-				else: self.bridge.irc_msg(self, chan, text)
+			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
 			conn = self.bridge.cmd_conn(target)
 			if not conn:
@@ -802,7 +807,7 @@ class IRCProtocol:
 
 	def cmd_msg_synth(self, src, target, text, notice=False, direct=False):
 		'''Synthetic PRIVMSG which avoids any self-reaction loops like notices
-			Channel target must be prefixed by #.'''
+			Channel target must be prefixed by #. direct=True msg only goes to self.'''
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if direct: return self.send(f':{src} {msg_type} {target} :{text}')
 		self.cmd_msg(src, target, text, notice=True, msg_type=msg_type)
@@ -998,7 +1003,7 @@ class DiscordSession:
 		if self.tasks: await self.tasks.close()
 
 	async def run(self):
-		self.log.debug('Starting discord session...')
+		self.log.debug('Initializing discord session...')
 		try: await asyncio.Future()
 		except asyncio.CancelledError: pass
 		self.log.debug('Finished')
@@ -1331,7 +1336,7 @@ class DiscordSession:
 			# elif act == 'delete': return self.op_ev_delete(gid, user=m.d.user.id)
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
-			elif act == 'delete_bulk':
+			elif act == 'delete_bulk': # can maybe shorten msg-spam here somehow
 				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 				return
 		elif mt == 'typing_start': pass # no need for these
@@ -1408,10 +1413,9 @@ class DiscordSession:
 			return self.log.warning( 'Dropped msg event with unknown guild/channel'
 				' id: msg_id={} guild_id={} channel_id={}', m.guild_id, m.id, m.channel_id )
 		if act == 'delete':
-			# XXX: fetch or otherwise indicate which message it was, at least if it's a recent one
-			# XXX: check "ids" for bulk delete, shorten/batch msgs in that case
+			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( self.t, cc,
-				None, 'message {m.id} was deleted', flake=m.id )
+				None, f'--- message was deleted: {msg_ts} [{m.id}]', flake=m.id )
 		author = m.get('author')
 		if not author:
 			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
@@ -1442,9 +1446,9 @@ class DiscordSession:
 		users = dict((m.id, m.username) for m in force_list(users))
 		chans = dict((c.id, c.did) for c in force_list(chans))
 		tags, mt = dict(), self.c_msg_tags
-		for m in re.finditer(r'<([@#])(\d+)>', line):
+		for m in re.finditer(r'<([@#])(\d+)>', line): # XXX: check docs on these
 			k_src, t, k = m.group(0), m.group(1), m.group(2)
-			if t == '@': v = mt.user, users.get(k, f'#{k}')
+			if t == '@': v = mt.user, users.get(k, f'@{k}')
 			elif t == '#': v = mt.chan, chans.get(k, f'#{k}')
 			else: v = mt.other, f'{t}{k}'
 			tags[k_src] = v
@@ -1460,6 +1464,10 @@ class DiscordSession:
 
 class RDIRCD:
 
+	class c:
+		chan_control = 'control'
+		chan_debug = 'debug'
+
 	def __init__(self, loop, conf):
 		self.loop, self.conf = loop, conf
 		self.log = get_logger('rdircd.bridge')
@@ -1471,9 +1479,9 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.nick_sys, self.chans_sys = 'core', dict(
-			control='rdircd: control channel, type "help" for more info',
-			debug='rdircd: debug logging channel, type "help" for more info' )
+		self.nick_sys, self.chans_sys = 'core', {
+			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
+			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' }
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict(uid=dict(), d2i=dict(), i2d=dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
@@ -1565,7 +1573,6 @@ class RDIRCD:
 		return self.cache.d2i[name]
 
 	def irc_chan_info(self, name):
-		if name.startswith('#'): name = name[1:]
 		if '.' not in name: return
 		gid, name = name.split('.', 1)
 		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
@@ -1578,8 +1585,8 @@ class RDIRCD:
 		return adict(gg=gg, cc=cc)
 
 	async def irc_topic_cmd(self, conn, chan, line=''):
-		notice_cmd = ft.partial( conn.cmd_msg_synth,
-			self.nick_sys, chan, notice=True, direct=True )
+		name, notice_cmd = conn.chan_name(chan), ft.partial(
+			conn.cmd_msg_synth, self.nick_sys, chan, notice=True, direct=True )
 		if not line.strip():
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
 				'  set {topic...} - set topic, as usual irc /topic command would do.',
@@ -1618,7 +1625,7 @@ class RDIRCD:
 					try: ts = parse_iso8601(state)
 					except ValueError: pass
 				if ts:
-					info = self.irc_chan_info(chan)
+					info = self.irc_chan_info(name)
 					if not (info and info.cc): raise IRCBridgeSignal(f'Not a discord channel: {chan}')
 					notice_cmd(f'--- Replaying new messages since {ts_iso8601(ts)}')
 					msg_list = await self.discord.cmd_history(info.gg, info.cc, ts)
@@ -1634,19 +1641,23 @@ class RDIRCD:
 			raise
 
 	def irc_msg(self, conn, chan, line):
+		name = conn.chan_name(chan)
+		if name in self.chans_sys:
+			return self.cmd_chan_sys(name, conn, chan, line)
 		# XXX: add mention/channel tags to messages
 		if not line.strip(): return
 		if not self.irc_msg_queue:
 			conn.cmd_msg_synth( self.nick_sys, chan,
 				f'ERR {{irc-msg-queue-failed}}: {line}', notice=True, direct=True )
-		else: self.irc_msg_queue.put_nowait(adict(conn=conn, chan=chan, line=line))
+		else: self.irc_msg_queue.put_nowait(
+			adict(conn=conn, chan=chan, name=name, line=line) )
 
 	async def irc_msg_queue_proc(self):
 		try:
 			while True:
 				m = await self.irc_msg_queue.get()
 				if m is StopIteration: break
-				info = self.irc_chan_info(m.chan)
+				info = self.irc_chan_info(m.name)
 				try:
 					if not (info and info.cc): raise IRCBridgeSignal('no-matching-chan')
 					await self.discord.cmd_msg_send(info.cc, m.line)
@@ -1720,7 +1731,32 @@ class RDIRCD:
 					name=name, topic=topic, did=cc.did,
 					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
 
-	def cmd_control_status(self, send):
+
+	def cmd_chan_sys(self, name, conn, chan, line):
+		getattr(self, f'cmd_chan_sys_{name}')(conn, chan, line)
+
+	def cmd_chan_sys_control(self, conn, chan, line):
+		line = line.strip().lower().split()
+		if not line: return
+		cmd, send = line[0],\
+			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
+		if cmd in ['h', 'help']:
+			self.cmd_chan_sys_control_status(send)
+			send('\n'.join([
+				'Commands:',
+				'  status - (alias: st) show whether discord is connected and working',
+				'  connect - (alias: on) connect/login to discord',
+				'  disconnect - (alias: off) disconnect from discord',
+				'Only immediate response to sent commands is logged here - no noise over time.' ]))
+		elif cmd in ['status', 'st']: self.cmd_chan_sys_control_status(send)
+		elif cmd in ['connect', 'on']:
+			send('discord: connection started')
+			self.discord.connect()
+		elif cmd in ['disconnect', 'off']:
+			send('discord: disconnecting')
+			self.discord.disconnect()
+
+	def cmd_chan_sys_control_status(self, send):
 		sess_state = self.discord.st.get('state', 'none')
 		counts = self.conf._debug_counts
 		counts = ' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
@@ -1730,28 +1766,8 @@ class RDIRCD:
 			f'  discord-state: {sess_state}',
 			f'  log-msg-counts: {counts}' ]))
 
-	def cmd_control(self, conn, text, chan):
-		line = text.strip().lower().split()
-		if not line: return
-		cmd, send = line[0],\
-			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
-		if cmd in ['h', 'help']:
-			self.cmd_control_status(send)
-			send('\n'.join([
-				'Commands:',
-				'  status - (alias: st) show whether discord is connected and working',
-				'  connect - (alias: on) connect/login to discord',
-				'  disconnect - (alias: off) disconnect from discord' ]))
-		elif cmd in ['status', 'st']: self.cmd_control_status(send)
-		elif cmd in ['connect', 'on']:
-			send('discord: connecting...')
-			self.discord.connect()
-		elif cmd in ['disconnect', 'off']:
-			send('discord: disconnecting...')
-			self.discord.disconnect()
-
-	def cmd_debug(self, conn, text, chan):
-		line = text.strip().lower().split()
+	def cmd_chan_sys_debug(self, conn, chan, line):
+		line_src, line = line, line.strip().lower().split()
 		if not line: return
 		send = ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
 		if line[0] in ['h', 'help']:
@@ -1791,7 +1807,7 @@ class RDIRCD:
 				else: arg = 'unavailable'
 				send(f'-- protocol log: {arg}')
 			elif len(line) >= 2:
-				path = text.strip().split(None, 1)[-1]
+				path = line_src.strip().split(None, 1)[-1] # preserve spaces and case
 				if self.conf._debug_proto:
 					self.conf._debug_proto.set_file(path)
 					self.conf._debug_proto.setLevel(logging.DEBUG)
@@ -1802,29 +1818,33 @@ class RDIRCD:
 	def cmd_log(self, line):
 		conn = self.cmd_conn()
 		if not conn: return
-		conn.cmd_msg_synth(self.nick_sys, '#debug', line)
+		conn.cmd_msg_synth( self.nick_sys,
+			conn.chan_spec(self.c.chan_debug), line )
 
 
 	def discord_msg(self, did, nick, line, tags=None, ts=None, conn=None):
 		if ts: self.conf.state_set(self.uid_start, ts)
 		name = self.cache.d2i.get(did)
 		if not name: return
+		conn_list = [conn] if conn else self.cmd_chan_conns(name)
+		if not conn_list: return
+		elif not conn: conn = conn_list[0]
 		if tags:
 			mt = DiscordSession.c_msg_tags
 			for k, (tt, v) in tags.items():
 				if tt == mt.user: v = '@' + self.irc_name(v)
-				elif tt == mt.chan: v = '#' + self.cache.d2i.get(v, v)
+				elif tt == mt.chan: v = conn.chan_spec(self.cache.d2i.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
-		conn_list = [conn] if conn else self.cmd_chan_conns(name)
 		for conn in conn_list:
-			conn.cmd_msg_synth(nick or self.nick_sys, f'#{name}', line)
+			conn.cmd_msg_synth( nick or self.nick_sys,
+				conn.chan_spec(name), line, notice=not nick, direct=True )
 
 
 
 class RDIRCDConfig:
 
-	version = '1.41' # git-version: py-str
+	version = '1.42' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
