@@ -78,6 +78,7 @@ class LogLevelCounter(logging.Handler):
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
 
+
 def monkey_patch_aiohttp_debug(log):
 	# This is obviously very fragile and will break eventually
 	import aiohttp.http_writer, aiohttp.client_reqrep
@@ -108,6 +109,7 @@ def monkey_patch_aiohttp_debug(log):
 		await write_bytes_base(self, writer, conn)
 	aiohttp.client_reqrep.ClientRequest.write_bytes = write_bytes
 
+
 def sockopt_resolve(prefix, v):
 	prefix = prefix.upper()
 	for k in dir(socket):
@@ -132,6 +134,7 @@ def str_repr(s, prefix=False, max_len=50, ext=' ...[{s_len}]'):
 		s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
 	return (s_len, s_repr) if prefix else s_repr
 
+
 def str_hash(s, c=None, key='rdircd'):
 	s = base64.urlsafe_b64encode(
 			hashlib.blake2s(str(s).encode(), key=key.encode()).digest() )\
@@ -143,6 +146,7 @@ def str_hash(s, c=None, key='rdircd'):
 def tuple_hash(t, c=None, key='rdircd'):
 	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
 	return str_hash(s, c=c, key=key)
+
 
 def force_list(v):
 	if not v: v = list()
@@ -206,8 +210,10 @@ async def await_wrap(res):
 	if inspect.isawaitable(res): res = await res
 	return res
 
-async def task_cancel_list(task_list):
-	task_list = list(task for task in task_list if task)
+async def task_cancel(task_list):
+	'Cancel and await a task or a list of such, which can have empty values mixed-in.'
+	if not isinstance(task_list, cs_abc.Iterable): task_list = [task_list]
+	task_list = list(filter(None, task_list))
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
@@ -223,7 +229,7 @@ class StacklessContext:
 	async def __aexit__(self, *err):
 		if self.tasks:
 			task_list, self.tasks = self.tasks.values(), None
-			await task_cancel_list(task_list)
+			await task_cancel(task_list)
 	async def close(self): await self.__aexit__(None, None, None)
 
 	def add_task(self, coro, run_after=None):
@@ -824,10 +830,10 @@ class Discord:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
-		self.session = None
 		if not ( self.conf.get(f'auth_main_email')
 				and self.conf.get(f'auth_main_password') ):
 			self.log.error('Disabling discord due to missing access credentials')
+			self.session = None
 		else:
 			s = self.session = DiscordSession(self, 'main')
 			s.task = self.loop.create_task(s.run_async())
@@ -836,7 +842,7 @@ class Discord:
 		return self
 
 	async def __aexit__(self, *err):
-		if self.session: await task_cancel_list([self.session.task])
+		if self.session: await task_cancel(self.session.task)
 
 	def connect(self):
 		if self.session: self.session.connect()
