@@ -1818,7 +1818,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.39' # git-version: py-str
+	version = '1.41' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1830,7 +1830,7 @@ class RDIRCDConfig:
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
 
-	discord_auto_connect = False
+	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
 	discord_msg_confirm_timeout = 10.0
 	discord_ws_timeout = 20.0
@@ -2107,7 +2107,7 @@ def main(args=None, conf=None):
 				enclose the latter in [], for example - [::]:6667.
 			Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.''')
 
-	group = parser.add_argument_group('Misc / debug opts')
+	group = parser.add_argument_group('Logging and debug opts')
 	group.add_argument('-d', '--debug',
 		action='store_true', help='Verbose operation mode.')
 	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
