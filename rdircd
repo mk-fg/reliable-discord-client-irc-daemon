@@ -1027,7 +1027,6 @@ class DiscordSession:
 	### Regular HTTP requests and OAuth2 stuff
 
 	async def rate_limit_wrapper(self, route, req_func):
-		# XXX: global limits currently only handled via http-429
 		req_limit_defaults = 1, None
 		while True:
 			ts = time.time()
@@ -1234,10 +1233,6 @@ class DiscordSession:
 
 
 	### Gateway Websocket protocol
-	# XXX: rate limits here?
-
-	def op_log_warn(self, m):
-		self.log.warning('Unhandled event: {}', m)
 
 	def op_track_seq(self, m): self.st.seq = m.s
 	def op_reconnect(self, m):
@@ -1844,7 +1839,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.42' # git-version: py-str
+	version = '1.43' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
