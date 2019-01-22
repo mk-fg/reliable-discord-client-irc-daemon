@@ -922,15 +922,15 @@ class Discord:
 			if len(msg_list) < lwm: break
 		return sorted(msg_list, key=op.itemgetter('ts'))
 
-	def cmd_msg_recv(self, acc, cc, nick,
-			line, tags=None, flake=None, nonce=None ):
+	def cmd_msg_recv(self, acc, cc, nick, line,
+			tags=None, flake=None, nonce=None, notice=None ):
 		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
 		if acc != 'main': return
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut: return fut.set_result(flake)
-		self.bridge.discord_msg( cc,
-			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
+		self.bridge.discord_msg( cc, nick, line, tags,
+			notice=notice, ts=self.flake_parse(flake) or time.time() )
 
 	async def cmd_msg_send(self, cc, line):
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
@@ -1372,10 +1372,8 @@ class DiscordSession:
 			elif act == 'delete_bulk': # can maybe shorten msg-spam here somehow
 				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 				return
-			# elif act == 'reaction_add':
-			# elif act == 'reaction_delete':
-		elif mt == 'typing_start': pass
-		elif o == 'presence': pass
+		elif o == 'message_reaction': return self.op_react(m.d, act)
+		elif o in ['presences', 'presence', 'sessions', 'typing']: return
 		self.log.info('Unhandled event: {}', self._repr(m))
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -1438,7 +1436,7 @@ class DiscordSession:
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( self.t, cc,
-				None, f'--- message was deleted: {msg_ts} [{m.id}]', flake=m.id )
+				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
 		author = m.get('author')
 		if not author:
 			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
@@ -1477,11 +1475,18 @@ class DiscordSession:
 			tags[k_src] = v
 		return line, tags
 
-	# Not handled:
-	#
-	# - After READY: op=0 t=SESSIONS_REPLACE s=2
-	#   d=[{ status=online, session_id=..., game=null,
-	#     client_info={version=0, os=other, client=web}, activities=[] }]
+	def op_react(self, m, act):
+		# user_id is also provided here, but not worth bothering with
+		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
+		if gg: cc = gg.chans.get(m.channel_id)
+		if not cc: return
+		try:
+			emo_id, emo = m.emoji.get('id'), f' -- {m.emoji.name}'
+			if emo_id: emo += f' [{emo_id}]'
+		except KeyError: emo = ''
+		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
+		self.discord.cmd_msg_recv( self.t, cc, None,
+			f'--- message reaction [{act}]: {msg_ts} [{m.message_id}]{emo}' )
 
 
 
@@ -1847,7 +1852,8 @@ class RDIRCD:
 			conn.chan_spec(self.c.chan_debug), line )
 
 
-	def discord_msg(self, cc, nick, line, tags=None, ts=None, conn=None):
+	def discord_msg( self, cc, nick, line,
+			tags=None, ts=None, conn=None, notice=None ):
 		if ts: self.conf.state_set(self.uid_start, ts)
 		name = self.cache.d2i.get(cc.did)
 		if not name: return
@@ -1863,15 +1869,16 @@ class RDIRCD:
 				elif tt == mt.chan: v = conn.chan_spec(self.cache.d2i.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
+		elif notice is None: notice = True
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick or self.nick_sys,
-				conn.chan_spec(name), line, notice=not nick, direct=True )
+				conn.chan_spec(name), line, notice=notice, direct=True )
 
 
 
 class RDIRCDConfig:
 
-	version = '1.44' # git-version: py-str
+	version = '1.45' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
