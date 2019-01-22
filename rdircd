@@ -1291,13 +1291,15 @@ class DiscordSession:
 		token = await self.req_auth_token()
 		if not self.st.get('session_id'):
 			self.state('hello.auth.identify')
-			self.ws_add_handler(self.c.dispatch, t='ready', func=self.op_ready)
+			self.ws_add_handler( self.c.dispatch,
+				t='ready', func=self.op_ready, replace=True )
 			self.ws_send(self.c.identify, dict(
 				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
 				token=token, compress=False, large_threshold=250 ))
 		else:
 			self.state('hello.auth.resume')
-			self.ws_add_handler(self.c.dispatch, t='resumed', func=self.op_ready)
+			self.ws_add_handler( self.c.dispatch,
+				t='resumed', func=self.op_ready, replace=True )
 			self.ws_send(self.c.resume, dict(
 				token=token, session_id=self.st.session_id, seq=self.st.get('seq') ))
 
@@ -1319,23 +1321,31 @@ class DiscordSession:
 		self.st.hb_ts_ack = self.loop.time()
 
 	async def op_invalid_session_retry(self, m):
-		self.log.info(
-			'Session/auth rejected during handshake'
-			' - updating auth token and retrying after delay' )
 		# "expected to wait a random amount of time -
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
 		self.state('session.error.delay')
-		await asyncio.sleep(1 + random.random() * 4)
+		delay = self.loop.create_task(asyncio.sleep(1 + random.random() * 4))
+		if self.st.get('session_id'):
+			# There is no indication of whether it's session_id or token that is failing.
+			# Should be safe to retry new session first, and if that fails, refresh token as well.
+			self.log.info('Session+auth rejected - trying new session')
+			self.st.session_id = self.st.seq = None
+			await delay
+			self.state('session.error')
+			return await self.op_hello_auth()
+		self.log.info('Auth rejected - updating auth token')
 		self.auth_token = None
+		token = await self.req_auth_token()
+		await delay
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_fail, replace=True )
 		self.state('session.error')
-		await self.op_hello_auth()
+		return await self.op_hello_auth()
 
 	async def op_invalid_session_fail(self, m):
-		self.log.info('Session/auth rejected unexpectedly - closing connection')
+		self.log.warning('Session/auth rejected unexpectedly - closing connection')
 		self.state('session.fail')
-		await self.ws_close()
+		await self.ws_close() # XXX: disable reconnect here as well
 
 	def op_ready(self, m):
 		md = m.get('d')
@@ -1360,7 +1370,17 @@ class DiscordSession:
 		try: gid = m.d.guild_id
 		except: gid = None
 		# Known stuff must be explicitly skipped here to not generate "Unhandled event"
-		if o == 'guild':
+		if mt == 'sessions_replace':
+			## Didn't test if this event should update session_id,
+			##  as it doesn't seem to resume on disconnect/reconnect anyway
+			# try:
+			# 	sid_last = list(s.session_id for s in (m.d or list()) if s.status == 'online')[-1]
+			# 	if sid_last != self.st.session_id:
+			# 		sid_last, self.st.session_id = self.st.session_id, sid_last
+			# 		self.log.debug('Updated session id: {} -> {}', sid_last, self.st.session_id)
+			# except (KeyError, IndexError): pass
+			return
+		elif o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
 		elif o == 'channel':
@@ -1373,7 +1393,7 @@ class DiscordSession:
 				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 				return
 		elif o == 'message_reaction': return self.op_react(m.d, act)
-		elif o in ['presences', 'presence', 'sessions', 'typing']: return
+		elif o in ['presences', 'presence', 'typing']: return
 		self.log.info('Unhandled event: {}', self._repr(m))
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -1878,7 +1898,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.45' # git-version: py-str
+	version = '1.46' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
