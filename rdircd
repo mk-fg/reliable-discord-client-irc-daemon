@@ -11,6 +11,57 @@ import logging, logging.handlers
 import aiohttp
 
 
+
+class RDIRCDConfigBase:
+	# Note: string time intervals can be either simple floats or stuff like
+	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see ts_duration below for that.
+
+	version = '1.48' # git-version: py-str
+
+	irc_host = '127.0.0.1'
+	irc_port = 6667
+	irc_password = ''
+	irc_host_af = 0
+	irc_auth_tbf = '30:8'
+	irc_uid_len = 4 # can be increased to fix conflicts
+	irc_uid_seed = ''
+	irc_prefix_edit = '[edit] '
+	irc_prefix_attachment = '[att] '
+	irc_names_timeout = '1d' # time since last activity
+
+	discord_auto_connect = True
+	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
+	discord_msg_confirm_timeout = 10.0
+	discord_ws_timeout = 20.0
+	discord_ws_heartbeat = 15.0
+	discord_ws_reconnect_min = '65.0'
+	discord_ws_reconnect_max = '700.0'
+	discord_ws_reconnect_factor = 1.6
+	discord_user_agent = ( f'rdircd/{version}'
+		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
+	discord_http_delay_padding = 10.0 # added to retry_after
+	discord_gateway = ''
+
+	auth_main_email = ''
+	auth_main_password = ''
+	auth_main_token = ''
+
+	debug_verbose = False
+	debug_msg_cut = 50
+	debug_proto_cut = 90
+	debug_proto_log_shared = True
+	debug_proto_log_file = ''
+	debug_proto_log_file_size = int(1.5e6)
+	debug_proto_log_file_count = 9
+	debug_log_file = ''
+	debug_log_file_size = int(1.5e6)
+	debug_log_file_count = 9
+
+	_conf_path = '~/.rdircd.ini'
+	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
+
+
+
 err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
 
 class LogMessage:
@@ -1162,9 +1213,9 @@ class DiscordSession:
 	### Gateway Websocket wrappers
 
 	async def ws_connect_loop(self):
-		opts = adict(
-			(k, getattr(self.conf, f'discord_ws_reconnect_{k}'))
-			for k in ['min', 'max', 'factor'] )
+		opts = adict((k, ts_duration(getattr( self.conf,
+			f'discord_ws_reconnect_{k}' ))) for k in ['min', 'max'])
+		opts.factor = self.conf.discord_ws_reconnect_factor
 		interval = opts.min
 		self.log.debug('Starting ws_connect_loop...')
 		while self.ws_enabled:
@@ -1928,49 +1979,7 @@ class RDIRCD:
 
 
 
-class RDIRCDConfig:
-
-	version = '1.47' # git-version: py-str
-
-	irc_host = '127.0.0.1'
-	irc_port = 6667
-	irc_password = ''
-	irc_host_af = 0
-	irc_auth_tbf = '30:8'
-	irc_uid_len = 4 # can be increased to fix conflicts
-	irc_uid_seed = ''
-	irc_prefix_edit = '[edit] '
-	irc_prefix_attachment = '[att] '
-	irc_names_timeout = '1d' # time since last activity
-
-	discord_auto_connect = True
-	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
-	discord_msg_confirm_timeout = 10.0
-	discord_ws_timeout = 20.0
-	discord_ws_heartbeat = 15.0
-	discord_ws_reconnect_min = 65.0
-	discord_ws_reconnect_max = 700.0
-	discord_ws_reconnect_factor = 1.6
-	discord_user_agent = ( f'rdircd/{version}'
-		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
-	discord_http_delay_padding = 10.0 # added to retry_after
-	discord_gateway = ''
-
-	auth_main_email = ''
-	auth_main_password = ''
-	auth_main_token = ''
-
-	debug_verbose = False
-	debug_msg_cut = 50
-	debug_proto_cut = 90
-	debug_proto_log_shared = True
-	debug_proto_log_file = ''
-	debug_proto_log_file_size = int(1.5e6)
-	debug_proto_log_file_count = 9
-	debug_log_file = ''
-	debug_log_file_size = int(1.5e6)
-	debug_log_file_count = 9
-	_debug_chan = _debug_proto = _debug_counts = None
+class RDIRCDConfig(RDIRCDConfigBase):
 
 	ws_dump_filter = None
 	ws_dump_file = 'dump.json'
@@ -1978,9 +1987,7 @@ class RDIRCDConfig:
 
 	state_tracked, state = True, None
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
-
-	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
+	_debug_chan = _debug_proto = _debug_counts = None
 
 	def __init__(self):
 		self.state = dict()
