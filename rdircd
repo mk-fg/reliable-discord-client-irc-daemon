@@ -1033,7 +1033,7 @@ class DiscordSession:
 		self.st = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict() )})
 		self.st.me = self.st.guilds[1]
-		self.auth_token = self.get_auth('token')
+		self.ws_enabled, self.auth_token = False, self.get_auth('token')
 		return self
 
 	async def __aexit__(self, *err):
@@ -1051,9 +1051,11 @@ class DiscordSession:
 		async with self: await self.run()
 
 	def connect(self):
-		# XXX: start reconnect logic/task, report back to irc control
-		return self.tasks.add(self.ws_connect())
-	def disconnect(self): return self.tasks.add(self.ws_close())
+		self.ws_enabled = True
+		return self.tasks.add(self.ws_connect_loop())
+	def disconnect(self):
+		self.ws_enabled = False
+		return self.tasks.add(self.ws_close())
 
 	def state(self, st):
 		st_old, self.st.state = self.st.get('state', 'none'), st
@@ -1159,6 +1161,36 @@ class DiscordSession:
 
 	### Gateway Websocket wrappers
 
+	async def ws_connect_loop(self):
+		opts = adict(
+			(k, getattr(self.conf, f'discord_ws_reconnect_{k}'))
+			for k in ['min', 'max', 'factor'] )
+		interval = opts.min
+		self.log.debug('Starting ws_connect_loop...')
+		while self.ws_enabled:
+			try: await self.ws_connect()
+			except DiscordSessionError as err:
+				self.log.info('Connection failure, retrying in {:.1f}s: {}', interval, err)
+				await asyncio.sleep(interval)
+				interval = min(opts.max, interval * opts.factor)
+				continue
+			except Exception as err:
+				self.log.error('Unexpected connection error, aborting: {}', err_fmt(err))
+				break
+			ts0 = self.loop.time()
+			await self.ws_closed.wait()
+			if not self.ws_enabled: break
+			ts_diff = self.loop.time() - ts0
+			if ts_diff > interval:
+				interval = opts.min
+				self.log.info('Disconnected, reconnecting immediately')
+			else:
+				interval = min(opts.max, interval * opts.factor)
+				delay = interval - ts_diff
+				self.log.info('Disconnected too quickly, reconnecting in {:.1f}s', delay)
+				await asyncio.sleep(delay)
+		self.log.debug('ws_connect_loop finished')
+
 	async def ws_connect(self):
 		if self.ws_ctx: return
 		self.state('connecting.init')
@@ -1189,11 +1221,11 @@ class DiscordSession:
 				err_str = err_fmt(err)
 				self.log_ws.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
 				self.state('connecting.ws.error')
-				self.log.error('Gateway connection error: {}', err_str)
+				self.log.info('Gateway connection error: {}', err_str)
 				if cache: continue # try fetching new gw url
 			else: break
 		else: self.ws = None
-		if not self.ws: # XXX: more specific error/details, handle wrt reconnect
+		if not self.ws:
 			self.state('connecting.ws.fail')
 			self.ws_closed.set()
 			raise DiscordSessionError('Failed to connect to discord')
@@ -1266,7 +1298,7 @@ class DiscordSession:
 		self.log_ws.debug('--- -close-', extra=('---', 'close'))
 		self.state('disconnected')
 		if self.ws: await self.ws.close()
-		self.ws_closed.set() # XXX: monitor for reconnect, close/wait ws_ctx there
+		self.ws_closed.set()
 		await self.ws_tasks.close()
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
 
@@ -1280,9 +1312,7 @@ class DiscordSession:
 
 	async def op_hello(self, m):
 		self.state('hello')
-		interval = m.d.heartbeat_interval / 1e3
-		self.log.debug('Heartbeat interval: {:,.2f}', interval)
-		self.ws_tasks.add(self.op_heartbeat_task(interval))
+		self.st.hb_interval = m.d.heartbeat_interval / 1e3
 		await self.op_hello_auth()
 		return self.c.oneshot
 
@@ -1302,23 +1332,6 @@ class DiscordSession:
 				t='resumed', func=self.op_ready, replace=True )
 			self.ws_send(self.c.resume, dict(
 				token=token, session_id=self.st.session_id, seq=self.st.get('seq') ))
-
-	async def op_heartbeat_task(self, interval):
-		self.st.hb_ts_ack = hb_ts = self.loop.time() + interval
-		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
-		while not self.ws_closed.is_set():
-			self.ws_send(self.c.heartbeat, self.st.get('seq'))
-			ts = self.loop.time()
-			if self.st.hb_ts_ack < ts - interval*2:
-				self.state('heartbeat.fail')
-				self.log.error('Missing heartbeat ack, reconnecting')
-				return await self.ws_close()
-			while hb_ts <= ts: hb_ts += interval
-			delay = hb_ts - ts
-			await asyncio.sleep(delay)
-
-	def op_heartbeat_ack(self, m):
-		self.st.hb_ts_ack = self.loop.time()
 
 	async def op_invalid_session_retry(self, m):
 		# "expected to wait a random amount of time -
@@ -1343,9 +1356,10 @@ class DiscordSession:
 		return await self.op_hello_auth()
 
 	async def op_invalid_session_fail(self, m):
-		self.log.warning('Session/auth rejected unexpectedly - closing connection')
+		self.log.warning('Session/auth rejected unexpectedly - disabling connection')
 		self.state('session.fail')
-		await self.ws_close() # XXX: disable reconnect here as well
+		self.ws_enabled = False
+		await self.ws_close()
 
 	def op_ready(self, m):
 		md = m.get('d')
@@ -1361,7 +1375,25 @@ class DiscordSession:
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_fail, replace=True )
+		self.ws_tasks.add(self.op_heartbeat_task(self.st.hb_interval))
 		return self.c.oneshot
+
+	async def op_heartbeat_task(self, interval):
+		self.st.hb_ts_ack = hb_ts = self.loop.time() + interval
+		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
+		while not self.ws_closed.is_set():
+			self.ws_send(self.c.heartbeat, self.st.get('seq'))
+			ts = self.loop.time()
+			if self.st.hb_ts_ack < ts - interval*2:
+				self.state('heartbeat.fail')
+				self.log.error('Missing heartbeat ack, reconnecting')
+				return await self.ws_close()
+			while hb_ts <= ts: hb_ts += interval
+			delay = hb_ts - ts
+			await asyncio.sleep(delay)
+
+	def op_heartbeat_ack(self, m):
+		self.st.hb_ts_ack = self.loop.time()
 
 	def op_ev(self, m):
 		mt = (m.get('t') or '').lower()
@@ -1898,7 +1930,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.46' # git-version: py-str
+	version = '1.47' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1916,6 +1948,9 @@ class RDIRCDConfig:
 	discord_msg_confirm_timeout = 10.0
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
+	discord_ws_reconnect_min = 65.0
+	discord_ws_reconnect_max = 700.0
+	discord_ws_reconnect_factor = 1.6
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -2255,7 +2290,7 @@ def main(args=None, conf=None):
 			backupCount=conf.debug_log_file_count )
 		log_handler.setLevel(logging.DEBUG)
 		log_handler.setFormatter(logging.Formatter(
-			'{asctime}.{msecs:03d} :: {name} {levelname:5} :: {message}',
+			'{asctime}.{msecs:03.0f} :: {name} {levelname:5} :: {message}',
 			datefmt='%Y-%m-%dT%H:%M:%S', style='{' ))
 		logging.root.addHandler(log_handler)
 
