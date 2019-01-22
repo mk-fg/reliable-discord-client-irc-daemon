@@ -1,6 +1,13 @@
 Reliable Discord-client IRC Daemon (rdircd)
 ===========================================
 
+.. contents::
+  :backlinks: none
+
+
+Description
+-----------
+
 Python3/asyncio daemon to present personal Discord_ client as local irc server,
 with a list of channels corresponding to ones available on all joined "discord
 servers" (group of users/channels with its own theme/auth/rules on discord,
@@ -30,9 +37,92 @@ As this app does not present itself as a "bot" and doesn't use bot-specific
 endpoints, if Discord staff would classify it as such, it might result in
 blocking of user account(s).
 
-See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
+| See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
+| Will update this warning blurb if I'll ever get banned for using this client myself.
 
 .. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
+
+
+Features
+--------
+
+- Reliable outgoing message ordering and delivery, with explicit notifications
+  for issues of any kind.
+
+- Support for both private and public channels, channel ordering.
+
+- Simple and consistent discord to irc guild/channel/user name translation.
+
+  None of these will change after reconnection, channel or server reshuffling,
+  etc - translation is fully deterministic and does not depend on other names.
+
+- Translation for discord mentions, attachments and emojis.
+
+- Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
+  log 2019-01-08" to dump backlog from that point on to the present, using as
+  many API requests as necessary (no message count limits).
+
+- Full unicode support everywhere.
+
+- IRC protocol is implemented from IRCv3 drafts, but doesn't use any of the
+  advanced features, and should be compatible with any clients.
+
+- Extensive protocol and debug logging options, some accessible at runtime via
+  #debug channel.
+
+- Single python3 script that only requires aiohttp module, trivial to run or
+  deploy anywhere.
+
+- Runs in constant ~35M memory footprint on amd64, which is probably more than
+  e.g. `bitlbee-discord <https://github.com/sm00th/bitlbee-discord>`_ but nothing
+  like those leaky browser tabs.
+
+- Easy to tweak and debug without rebuilds, gdb, rust and such.
+
+
+Limitations
+-----------
+
+- Won't /q or ping on new direct/private messages in any way yet, but will
+  probably implement that at some point.
+
+- No support for sending attachments or embeds of any kind - use WebUI for that,
+  not IRC.
+
+  Discord automatically annotates links though, so posting images is as simple as that.
+
+- No discord-specific actions beyond all kinds of reading and sending messages
+  to existing channels are supported - i.e. no creating new channels on discord,
+  managing roles, bans, timeouts, etc - use proper discord bots for that.
+
+- Does not track user presence (online, offline, afk, playing game, etc) at all.
+
+- Does not emit user joins/parts events and handles irc /names in a very simple
+  way, only listing nicks who used the channel since app startup and within
+  irc-names-timeout (1 day by default).
+
+- Completely ignores all non-text-chat stuff in general
+  (e.g. voice, user profiles, games library, store, friend lists, etc).
+
+- Does not support discord multifactor authentication mode.
+
+- Not the most user-friendly thing, though probably same as IRC itself.
+
+- No TLS mode for IRC - use bouncers like `ZNC <http://znc.in/>`_ for that
+  (and for much more than that!).
+
+- Only tested on Linux, probably won't work on OSX/Windows, but idk.
+
+- Has only one user (me!), so might be only tested and working for that single
+  and limited use-case.
+
+- Custom ad-hoc implementation of both discord and irc, not benefitting from any
+  kind of exposure and testing on pypi and such.
+
+  Though mostly due to both having rather trivial text-based protocols, simplier
+  than module APIs and with no extra crap in the middle.
+
+- No idea if even allowed by Discord ToS - see WARNING section above for more details.
 
 
 Usage
