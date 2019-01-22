@@ -312,6 +312,43 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False):
 	if ts_ext: ts_ext = f'.{ts_ext}'
 	return ts.strftime(f'%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
+_short_ts_days = dict(
+	y=365.25, yr=365.25, year=365.25,
+	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
+_short_ts_s = dict(
+	h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60,
+	s=1, sec=1, second=1 )
+def _short_ts_re():
+	sub_sort = lambda d: sorted(
+		d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+	ts_re = ['^'] + [
+		r'(?P<{0}>\d*{0}\s*)?'.format(k)
+		for k, v in it.chain.from_iterable(
+			map(sub_sort, [_short_ts_days, _short_ts_s]) ) ] + ['$']
+	return re.compile(''.join(ts_re), re.I | re.U)
+_short_ts_re = _short_ts_re()
+_parse_int = lambda v: int(''.join(c for c in v if c.isdigit()) or 1)
+
+def ts_duration(ts_str, to_float=True):
+	try: return dt.timedelta(seconds=float(ts_str))
+	except ValueError: pass
+	m = _short_ts_re.search(ts_str)
+	if not m or not any(m.groups()): raise ValueError(ts_str)
+	delta = list()
+	for units in _short_ts_days, _short_ts_s:
+		val = 0
+		for k, v in units.items():
+			try:
+				if not m.group(k): continue
+				n = _parse_int(m.group(k))
+			except IndexError: continue
+			val += n * v
+		delta.append(val)
+	delta = dt.timedelta(*delta)
+	return delta if not to_float else delta.total_seconds()
+
+
 
 def iter_gather(cls, cache=False):
 	'''Auto-gathers iterator function result into cls.
@@ -734,7 +771,8 @@ class IRCProtocol:
 
 	def send_names(self, chan, own=False, c=..., msg_len_max=200):
 		if c is ...: c = self.req_chan_info(chan)
-		name_line, names = list(), filter(None, c.names) if c else list()
+		name_line, names = list(), filter( None,
+			self.bridge.cmd_chan_names(c.name) ) if c else list()
 		for name in it.chain(names, [None]):
 			if name:
 				if name == self.st.nick: own = False
@@ -766,7 +804,8 @@ class IRCProtocol:
 		# XXX: searching for new channels (ELIST=C) might be nice to have
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
-			self.send(322, self.chan_spec(c.name), len(c.names), f':{c.topic}')
+			names = self.bridge.cmd_chan_names(c.name)
+			self.send(322, self.chan_spec(c.name), len(names), f':{c.topic}')
 		self.send(321, ':End of /LIST')
 
 	def recv_cmd_motd(self, target=None): self.send_motd()
@@ -890,7 +929,7 @@ class Discord:
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut: return fut.set_result(flake)
-		self.bridge.discord_msg( cc.did,
+		self.bridge.discord_msg( cc,
 			nick, line, tags, ts=self.flake_parse(flake) or time.time() )
 
 	async def cmd_msg_send(self, cc, line):
@@ -992,7 +1031,7 @@ class DiscordSession:
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
 		self.rate_limits, self.ws_closed = adict(), asyncio.Event()
 		self.st = adict(guilds={1: adict(
-			id=1, name='me', ts_joined=0, kh='me', chans=dict(), users=dict() )})
+			id=1, name='me', ts_joined=0, kh='me', chans=dict() )})
 		self.st.me = self.st.guilds[1]
 		self.auth_token = self.get_auth('token')
 		return self
@@ -1320,32 +1359,29 @@ class DiscordSession:
 		except ValueError: o = act = None
 		try: gid = m.d.guild_id
 		except: gid = None
+		# Known stuff must be explicitly skipped here to not generate "Unhandled event"
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
 		elif o == 'channel':
 			if act in ['create', 'update']: return self.op_ev_chans(gid, m.d)
 			elif act == 'delete': return self.op_ev_delete(gid, chan=m.d.id)
-		elif o == 'guild_member': return
-			# if act in ['add', 'update']: return self.op_ev_users(gid, m.d.user)
-			# elif act == 'delete': return self.op_ev_delete(gid, user=m.d.user.id)
+		elif o == 'guild_member': return # not tracking per-guild users in any way
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
 			elif act == 'delete_bulk': # can maybe shorten msg-spam here somehow
 				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 				return
-		elif mt == 'typing_start': pass # no need for these
-		# elif o == 'message_reaction':
-		# elif o == 'relationship':
-		# elif o == 'channel_pins':
-		# elif o == 'presence':
-		self.log.debug('Unhandled event: {}', self._repr(m))
+			# elif act == 'reaction_add':
+			# elif act == 'reaction_delete':
+		elif mt == 'typing_start': pass
+		elif o == 'presence': pass
+		self.log.info('Unhandled event: {}', self._repr(m))
 
-	def op_ev_delete(self, gid=None, user=..., chan=...):
+	def op_ev_delete(self, gid=None, chan=...):
 		gg = self.st.guilds.get(gid)
 		if not gg: return
-		if user is not ...: gg.users.pop(user, None)
-		elif chan is not ...: gg.chans.pop(chan, None)
+		if chan is not ...: gg.chans.pop(chan, None)
 		else: self.st.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guilds, sync=False):
@@ -1356,16 +1392,13 @@ class DiscordSession:
 				self.log.error('Skipping guild due to id/name conflict with "me" guild: {}', g)
 				continue
 			gg = gs_new.setdefault( g.id,
-				self.st.guilds.get(g.id, adict(id=g.id, chans=dict(), users=dict())) )
+				self.st.guilds.get(g.id, adict(id=g.id, chans=dict())) )
 			ts_joined = g.get('joined_at') or 0
 			if ts_joined: ts_joined = parse_iso8601(ts_joined)
 			gg.update(name=g.name, ts_joined=ts_joined)
-			gs_meta.append(
-				(g.id, *(g.get(k) for k in 'members channels'.split())) )
+			gs_meta.append((g.id, g.get('channels')))
 		dict_update(self.st.guilds, gs_new, sync=sync)
-		for gid, users, chans in gs_meta:
-			# self.op_ev_users(gid, users, sync=True)
-			self.op_ev_chans(gid, chans, sync=True)
+		for gid, chans in gs_meta: self.op_ev_chans(gid, chans, sync=True)
 
 	def op_ev_chans(self, gid, chans, sync=False):
 		gg = self.st.guilds.get(gid)
@@ -1373,11 +1406,12 @@ class DiscordSession:
 		cs, ct = dict(), self.c_chan_type
 		for c in force_list(chans):
 			if c.type in [ct.voice, ct.group]: continue
-			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict()))
+			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=dict())))
 			name, topic = c.get('name'), c.get('topic')
 			if c.type in [ct.private, ct.private_group]:
-				dict_update( cc.setdefault('users', dict()),
-					( (u.id, adict(name=u.username))
+				ts= time.time()
+				dict_update( cc.users,
+					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
 				user_names = list(u.name for u in cc.users.values())
 				name = self.op_ev_chans_priv_name(user_names)
@@ -1394,12 +1428,6 @@ class DiscordSession:
 			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
 			if n <= 1 or len(name) <= max_len: return name[:max_len]
 			n -= 1
-
-	# XXX: request userlist and maintain nicks[username, discriminator, server] mapping
-	# def op_ev_users(self, gid, users, sync=False):
-	# 	dict_update(gg.users, ((u.user.id, adict(
-	# 		id=u.user.id, name=u.user.username,
-	# 		deaf=u.get('deaf'), mute=u.get('mute') )) for u in force_list(users)), sync=sync)
 
 	def op_msg(self, m, act):
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
@@ -1474,6 +1502,7 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = dict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
+		self.irc_names_timeout = ts_duration(self.conf.irc_names_timeout)
 		self.nick_sys, self.chans_sys = 'core', {
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
 			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' }
@@ -1627,7 +1656,7 @@ class RDIRCD:
 					if not msg_list: return notice_cmd('--- no new messages')
 					for m in msg_list:
 						line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
-						self.discord_msg(info.cc.did, m.nick, line, m.tags, conn=conn)
+						self.discord_msg(info.cc, m.nick, line, m.tags, conn=conn)
 					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
 				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
 			else: raise IRCBridgeSignal(f'Unrecognized channel-topic cmd: {line}')
@@ -1686,32 +1715,34 @@ class RDIRCD:
 		for conn in self.irc_conns.values():
 			if name in conn.st.chans: yield conn
 
-	@iter_gather(sorted, cache=True)
-	def cmd_chan_names_discord(self, cache_track, name):
+	def cmd_chan_names_discord(self, name):
+		'''List nicks from discord, in most recently
+			active first order, doing auto-cleanup on these.'''
 		info = self.irc_chan_info(name)
-		if not info: return
-		cache_track(info.gg, 'users')
-		names = set(self.irc_name(u.name) for u in info.gg.users.values())
-		if info.cc and 'users' in info.cc:
-			names.update(self.irc_name(u.name) for u in info.cc.users.values())
-		yield from names.difference(self.irc_conn_names())
+		if not (info and info.cc): return
+		users, ts_cutoff = info.cc.get('users', dict()), time.time() - self.irc_names_timeout
+		for u in sorted(users.values(), key=op.itemgetter('ts'), reverse=True):
+			if u.ts < ts_cutoff: users.pop(u.name, None)
+			else: yield self.irc_name(u.name)
 
-	@iter_gather(sorted)
+	@iter_gather(list)
 	def cmd_chan_names(self, name):
-		for conn in self.cmd_chan_conns(name): yield conn.st.nick
-		yield from self.cmd_chan_names_discord(name)
+		'Returns persistent mutable list of names for specified channel.'
+		conn_nicks = set(conn.st.nick for conn in self.cmd_chan_conns(name))
+		yield from sorted(conn_nicks)
+		for nick in self.cmd_chan_names_discord(name):
+			if nick not in conn_nicks: yield nick
 
 	@iter_gather(adict, cache=True)
 	def cmd_chan_map(self, cache_track):
 		for name, topic in self.chans_sys.items():
-			yield (name, adict( name=name, topic=topic,
-				names=self.cmd_chan_names(name),
-				ts_created=self.server_ts.timestamp() ))
+			yield (name, adict( name=name,
+				topic=topic, ts_created=self.server_ts.timestamp() ))
 		ct = DiscordSession.c_chan_type
 		for gg in sorted(
 				self.discord.st.get('guilds', dict()).values(),
 				key=op.itemgetter('ts_joined') ):
-			cache_track(gg, 'name chans users ts_joined')
+			cache_track(gg, 'name chans ts_joined')
 			gid_pre = self.uid('guild', gg.id, kh=gg.get('kh'))
 			for cc in sorted(
 					gg.chans.values(),
@@ -1722,9 +1753,8 @@ class RDIRCD:
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.d2i[cc.did] = name
-				yield (name, adict(
-					name=name, topic=topic, did=cc.did,
-					ts_created=gg.ts_joined, names=self.cmd_chan_names(name) ))
+				yield (name, adict( name=name,
+					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 
 
 	def cmd_chan_sys(self, name, conn, chan, line):
@@ -1817,10 +1847,12 @@ class RDIRCD:
 			conn.chan_spec(self.c.chan_debug), line )
 
 
-	def discord_msg(self, did, nick, line, tags=None, ts=None, conn=None):
+	def discord_msg(self, cc, nick, line, tags=None, ts=None, conn=None):
 		if ts: self.conf.state_set(self.uid_start, ts)
-		name = self.cache.d2i.get(did)
+		name = self.cache.d2i.get(cc.did)
 		if not name: return
+		if nick not in cc.users: cc.users[nick] = adict(name=nick)
+		cc.users[nick].ts = ts or time.time()
 		conn_list = [conn] if conn else self.cmd_chan_conns(name)
 		if not conn_list: return
 		elif not conn: conn = conn_list[0]
@@ -1839,7 +1871,7 @@ class RDIRCD:
 
 class RDIRCDConfig:
 
-	version = '1.43' # git-version: py-str
+	version = '1.44' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1850,6 +1882,7 @@ class RDIRCDConfig:
 	irc_uid_seed = ''
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
+	irc_names_timeout = '1d' # time since last activity
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
