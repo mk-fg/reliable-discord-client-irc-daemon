@@ -108,6 +108,9 @@ Limitations
 - Completely ignores all non-text-chat stuff in general
   (e.g. voice, user profiles, games library, store, friend lists, etc).
 
+- Discord tracks "read_state" server-side, which is not used here in any way -
+  triggering history replay is only done manually (/t commands in chans).
+
 - Does not support discord multifactor authentication mode.
 
 - Not the most user-friendly thing, though probably same as IRC itself.

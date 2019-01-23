@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see ts_duration below for that.
 
-	version = '1.50' # git-version: py-str
+	version = '1.51' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -28,6 +28,8 @@ class RDIRCDConfigBase:
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
 	irc_names_timeout = '1d' # time since last activity
+	irc_cmd_len_split = 450 # will probably still work with most clients
+	irc_cmd_len_topic = 300 # cannot be split, so is truncated instead
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
@@ -605,11 +607,12 @@ class IRCProtocol:
 		else: raise IRCProtocolLineError(line)
 		return m
 
-	def send(self, line_or_code, *args, max_len=450, auto_split=True):
+	def send(self, line_or_code, *args, max_len=None, auto_split=True):
 		line = line_or_code
 		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
+		if max_len is None: max_len = self.conf.irc_cmd_len_split
 		line = line.rstrip(b'\r\n')
 		if b'\n' in line or len(line) > max_len:
 			if auto_split:
@@ -829,7 +832,8 @@ class IRCProtocol:
 		if c is ...: c = self.req_chan_info(chan)
 		if not (c and c.topic): self.send(331, chan, ':No topic is set')
 		else:
-			self.send(332, chan, f':{c.topic}')
+			topic = str_repr(c.topic, max_len=self.conf.irc_cmd_len_topic)
+			self.send(332, chan, f':{topic}')
 			topic_src = c.get('topic_src')
 			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
 
@@ -878,7 +882,8 @@ class IRCProtocol:
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
 			names = self.bridge.cmd_chan_names(c.name)
-			self.send(322, self.chan_spec(c.name), len(names), f':{c.topic}')
+			topic = str_repr(c.topic, max_len=self.conf.irc_cmd_len_topic)
+			self.send(322, self.chan_spec(c.name), len(names), f':{topic}')
 		self.send(321, ':End of /LIST')
 
 	def recv_cmd_motd(self, target=None): self.send_motd()
@@ -988,7 +993,7 @@ class Discord:
 	@property
 	def st(self):
 		try: return self.session.st
-		except KeyError: return adict()
+		except KeyError: return adict(guilds=dict())
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		if not self.session: return list()
@@ -1007,7 +1012,8 @@ class Discord:
 
 	def cmd_msg_recv(self, acc, cc, nick, line,
 			tags=None, flake=None, nonce=None, notice=None ):
-		self.log.debug('MSG: {} {} :: {} :: {} {}', acc, cc.name, nick, line, tags)
+		self.log.debug( 'MSG: {} {} {} :: {} :: {} {}',
+			acc, cc.gid, cc.name, nick, line, tags or '' )
 		if acc != 'main': return
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
@@ -1134,8 +1140,9 @@ class DiscordSession:
 		async with self: await self.run()
 
 	def connect(self):
-		self.ws_enabled = True
-		return self.tasks.add(self.ws_connect_loop())
+		if self.ws_enabled and not self.ws_enabled.done(): return
+		task = self.ws_enabled = self.loop.create_task(self.ws_connect_loop())
+		return self.tasks.add(task)
 	def disconnect(self):
 		self.ws_enabled = False
 		return self.tasks.add(self.ws_close())
@@ -1485,17 +1492,7 @@ class DiscordSession:
 		try: gid = m.d.guild_id
 		except: gid = None
 		# Known stuff must be explicitly skipped here to not generate "Unhandled event"
-		if mt == 'sessions_replace':
-			## Didn't test if this event should update session_id,
-			##  as it doesn't seem to resume on disconnect/reconnect anyway
-			# try:
-			# 	sid_last = list(s.session_id for s in (m.d or list()) if s.status == 'online')[-1]
-			# 	if sid_last != self.st.session_id:
-			# 		sid_last, self.st.session_id = self.st.session_id, sid_last
-			# 		self.log.debug('Updated session id: {} -> {}', sid_last, self.st.session_id)
-			# except (KeyError, IndexError): pass
-			return
-		elif o == 'guild':
+		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
 		elif o == 'channel':
@@ -1509,6 +1506,8 @@ class DiscordSession:
 				return
 		elif o == 'message_reaction': return self.op_react(m.d, act)
 		elif o in ['presences', 'presence', 'typing']: return
+		elif mt == 'message_ack': return # reading private chats from browser
+		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		self.log.info('Unhandled event: {}', self._repr(m))
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -1517,10 +1516,11 @@ class DiscordSession:
 		if chan is not ...: gg.chans.pop(chan, None)
 		else: self.st.guilds.pop(gid, None)
 
-	def op_ev_guilds(self, guilds, sync=False):
-		# XXX: parse emojis, read_state
+	def op_ev_guilds(self, guild, sync=False):
+		# XXX: track read_state somewhere
 		gs_new, gs_meta = {1: self.st.me}, list()
-		for g in force_list(guilds):
+		for g in force_list(guild):
+			if g.get('unavailable'): continue # can be sent in "ready" event
 			if g.id == self.st.me.id or g.name == self.st.me.name:
 				self.log.error('Skipping guild due to id/name conflict with "me" guild: {}', g)
 				continue
@@ -1572,7 +1572,7 @@ class DiscordSession:
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( self.t, cc,
 				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
-		author = m.get('author')
+		flake, author = None, m.get('author')
 		if not author:
 			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
 			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
@@ -1580,8 +1580,9 @@ class DiscordSession:
 		line, tags = self.op_msg_parse(m, gg)
 		if not line: return # "m.type = joins/parts" can be used to track names here
 		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
+		else: flake = m.id
 		self.discord.cmd_msg_recv( self.t, cc,
-			author.username, line.strip(), tags, flake=m.id, nonce=m.get('nonce') )
+			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
 		line = (m.get('content') or '').strip()
@@ -1752,7 +1753,8 @@ class RDIRCD:
 	async def irc_topic_cmd(self, conn, chan, line=''):
 		name, notice_cmd = conn.chan_name(chan), ft.partial(
 			conn.cmd_msg_synth, self.nick_sys, chan, notice=True, direct=True )
-		if not line.strip():
+		cmd = line.split(None, 1)
+		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
 				'  set {topic...} - set topic, as usual irc /topic command would do.',
 				'  log [state] - replay history since "state" point (default: last rdircd stop).',
@@ -1761,7 +1763,6 @@ class RDIRCD:
 				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
 				'      starting from last rdircd shutdown time, recorded under [state] in the ini.',
 				'  log list - list recorded state ids/timestamps, most recent one last.', '---' ]) )
-		cmd = line.split(None, 1)
 		try:
 			if cmd[0] == 'set':
 				raise IRCBridgeSignal('Changing topic is not implemented')
@@ -1887,9 +1888,9 @@ class RDIRCD:
 		for name, topic in self.chans_sys.items():
 			yield (name, adict( name=name,
 				topic=topic, ts_created=self.server_ts.timestamp() ))
-		ct = DiscordSession.c_chan_type
+		cache_track(self.discord.st.guilds)
 		for gg in sorted(
-				self.discord.st.get('guilds', dict()).values(),
+				self.discord.st.guilds.values(),
 				key=op.itemgetter('ts_joined') ):
 			cache_track(gg, 'name chans ts_joined')
 			gid_pre = self.uid('guild', gg.id, kh=gg.get('kh'))
@@ -1957,7 +1958,7 @@ class RDIRCD:
 				' unless --debug is specified on command line, or [debug] verbose=yes in ini.',
 				f'Status:',
 				f'  logging level: {level}',
-				f'   protocol log: {proto_log_info}',
+				f'  protocol log: {proto_log_info}',
 				'Recognized commands here:',
 				'  level info - (alias: i) set level=info (default) logging in this channel',
 				'  level debug - (alias: d) enable level=debug logging in this channel (verbose)',
