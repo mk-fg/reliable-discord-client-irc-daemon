@@ -162,13 +162,13 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
   #debug              0  rdircd: debug logging channel, read-only
   #me.SomeUser        1  me: private chat - SomeUser
   #me.some-other-user 1  me: private chat - some-other-user
-  #jvPp.announcements 0  Server-A: Please keep this channel unmuted
-  #jvPp.info          0  Server-A:
-  #jvPp.rules         0  Server-A:
-  #jvPp.welcome       0  Server-A: Mute unless you like notification spam
+  #jvpp.announcements 0  Server-A: Please keep this channel unmuted
+  #jvpp.info          0  Server-A:
+  #jvpp.rules         0  Server-A:
+  #jvpp.welcome       0  Server-A: Mute unless you like notification spam
   ...
-  #aXsd.intro         0  Server-B: Server info and welcomes.
-  #aXsd.offtopic      0  Server-B: Anything goes. Civility is expected.
+  #axsd.intro         0  Server-B: Server info and welcomes.
+  #axsd.offtopic      0  Server-B: Anything goes. Civility is expected.
 
 Notes on information here:
 
@@ -179,7 +179,7 @@ Notes on information here:
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
 
-``/j #aXsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
+``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
 
 Run ``/t`` (/topic) command to show more info on channel-specific commands,
 e.g. ``/t log`` to fetch and replay backlog since last rdircd shutdown time,

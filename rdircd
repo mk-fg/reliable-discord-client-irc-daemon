@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see ts_duration below for that.
 
-	version = '1.51' # git-version: py-str
+	version = '1.52' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1508,6 +1508,7 @@ class DiscordSession:
 		elif o in ['presences', 'presence', 'typing']: return
 		elif mt == 'message_ack': return # reading private chats from browser
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
+		elif mt.startswith('voice_'): return
 		self.log.info('Unhandled event: {}', self._repr(m))
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -1603,7 +1604,7 @@ class DiscordSession:
 		users = dict((m.id, m.username) for m in force_list(users))
 		chans = dict((c.id, c.did) for c in force_list(chans))
 		tags, mt = dict(), self.c_msg_tags
-		for m in re.finditer(r'<([@#])(\d+)>', line): # XXX: check docs on these
+		for m in re.finditer(r'<([@#])!?(\d+)>', line):
 			k_src, t, k = m.group(0), m.group(1), m.group(2)
 			if t == '@': v = mt.user, users.get(k, f'@{k}')
 			elif t == '#': v = mt.chan, chans.get(k, f'#{k}')
@@ -1631,6 +1632,7 @@ class RDIRCD:
 	class c:
 		chan_control = 'control'
 		chan_debug = 'debug'
+		chan_monitor = 'monitor'
 
 	def __init__(self, loop, conf):
 		self.loop, self.conf = loop, conf
@@ -1646,7 +1648,8 @@ class RDIRCD:
 		self.irc_names_timeout = ts_duration(self.conf.irc_names_timeout)
 		self.nick_sys, self.chans_sys = 'core', {
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
-			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' }
+			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info',
+			self.c.chan_monitor: 'rdircd: read-only catch-all channel with messages from everywhere' }
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict(uid=dict(), d2i=irc_name_dict(), i2d=irc_name_dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
@@ -1908,7 +1911,8 @@ class RDIRCD:
 
 
 	def cmd_chan_sys(self, name, conn, chan, line):
-		getattr(self, f'cmd_chan_sys_{name}')(conn, chan, line)
+		cmd_func = getattr(self, f'cmd_chan_sys_{name}', None)
+		if cmd_func: cmd_func(conn, chan, line)
 
 	def cmd_chan_sys_control(self, conn, chan, line):
 		line = line.strip().lower().split()
@@ -2005,8 +2009,8 @@ class RDIRCD:
 		if nick not in cc.users: cc.users[nick] = adict(name=nick)
 		cc.users[nick].ts = ts or time.time()
 		conn_list = [conn] if conn else self.cmd_chan_conns(name)
-		if not conn_list: return
-		elif not conn: conn = conn_list[0]
+		if not conn: conn = conn_list[0] if conn_list else self.cmd_conn()
+		if not conn: return
 		if tags:
 			mt = DiscordSession.c_msg_tags
 			for k, (tt, v) in tags.items():
@@ -2015,6 +2019,8 @@ class RDIRCD:
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
 		elif notice is None: notice = True
+		conn.cmd_msg_synth( nick or self.nick_sys,
+			conn.chan_spec(self.c.chan_monitor), f'{name} :: {line}', notice=notice )
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick or self.nick_sys,
 				conn.chan_spec(name), line, notice=notice, direct=True )
