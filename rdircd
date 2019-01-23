@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.57' # git-version: py-str
+	version = '1.58' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1002,12 +1002,14 @@ class Discord:
 			msg_batch = await self.session.req(
 				f'channels/{cc.id}/messages',
 				params=dict(after=flake, limit=hwm) )
+			flake_last = flake
 			for m in map(adict, msg_batch or list()):
 				line, tags = self.session.op_msg_parse(m, gg)
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
 				msg_list.append(adict( nick=m.author.username,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
-			if len(msg_list) < lwm: break
+				if int(m.id) > int(flake): flake = m.id
+			if flake == flake_last or len(msg_list) < lwm: break
 		return sorted(msg_list, key=op.itemgetter('ts'))
 
 	def cmd_msg_recv(self, acc, cc, nick, line,

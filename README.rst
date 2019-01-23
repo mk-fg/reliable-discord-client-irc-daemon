@@ -59,8 +59,8 @@ Features
 - Translation for discord mentions, attachments and emojis.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
-  log 2019-01-08" to dump backlog from that point on to the present, using as
-  many API requests as necessary (no message count limits).
+  log 2019-01-08" to dump backlog from that point on to the present, fetching
+  in multiple batches if necessary.
 
 - Own msgs sent thru other means (e.g. browser) will be relayed to irc too,
   maybe coming from a diff nick though, if irc name doesn't match discord-to-irc
