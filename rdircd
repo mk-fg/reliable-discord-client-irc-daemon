@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see ts_duration below for that.
 
-	version = '1.52' # git-version: py-str
+	version = '1.53' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1095,7 +1095,7 @@ class DiscordSession:
 		channel_pinned_message = 6
 		guild_member_join = 7
 
-	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role all other')
+	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
 	def __init__(self, discord, t):
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
@@ -1277,7 +1277,8 @@ class DiscordSession:
 			else:
 				interval = min(opts.max, interval * opts.factor)
 				delay = interval - ts_diff
-				self.log.info('Disconnected too quickly, reconnecting in {:.1f}s', delay)
+				self.log.info( 'Disconnected too quickly'
+					' ({:.1f}s), reconnecting in {:.1f}s', ts_diff, delay )
 				await asyncio.sleep(delay)
 		self.log.debug('ws_connect_loop finished')
 
@@ -1518,7 +1519,6 @@ class DiscordSession:
 		else: self.st.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guild, sync=False):
-		# XXX: track read_state somewhere
 		gs_new, gs_meta = {1: self.st.me}, list()
 		for g in force_list(guild):
 			if g.get('unavailable'): continue # can be sent in "ready" event
@@ -1529,7 +1529,9 @@ class DiscordSession:
 				self.st.guilds.get(g.id, adict(id=g.id, chans=dict())) )
 			ts_joined = g.get('joined_at') or 0
 			if ts_joined: ts_joined = parse_iso8601(ts_joined)
-			gg.update(name=g.name, ts_joined=ts_joined)
+			gg.update(
+				name=g.name, ts_joined=ts_joined,
+				roles=adict((r.id, r) for r in g.get('roles', list())) )
 			gs_meta.append((g.id, g.get('channels')))
 		dict_update(self.st.guilds, gs_new, sync=sync)
 		for gid, chans in gs_meta: self.op_ev_chans(gid, chans, sync=True)
@@ -1587,7 +1589,8 @@ class DiscordSession:
 
 	def op_msg_parse(self, m, gg):
 		line = (m.get('content') or '').strip()
-		line, tags = self.op_msg_parse_tags(line, m.get('mentions'), gg.chans.values())
+		line, tags = self.op_msg_parse_tags(
+			line, m.get('mentions'), gg.chans, gg.get('roles') )
 		for att in m.get('attachments') or list():
 			url = att.get('url')
 			if not url:
@@ -1599,17 +1602,23 @@ class DiscordSession:
 			else: self.log.warning('Unhandled empty msg type: {}', self._repr(m))
 		return line, tags
 
-	def op_msg_parse_tags(self, line, users, chans):
-		# XXX: mentions for roles and @everyone
-		users = dict((m.id, m.username) for m in force_list(users))
-		chans = dict((c.id, c.did) for c in force_list(chans))
-		tags, mt = dict(), self.c_msg_tags
-		for m in re.finditer(r'<([@#])!?(\d+)>', line):
-			k_src, t, k = m.group(0), m.group(1), m.group(2)
-			if t == '@': v = mt.user, users.get(k, f'@{k}')
-			elif t == '#': v = mt.chan, chans.get(k, f'#{k}')
-			else: v = mt.other, f'{t}{k}'
-			tags[k_src] = v
+	def op_msg_parse_tags(self, line, users, chans, roles):
+		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&)(\d+)>', line))
+		if tags_raw:
+			mt, users = self.c_msg_tags, dict((m.id, m.username) for m in force_list(users))
+			for m in tags_raw:
+				k_src, t, k = m.group(0), m.group(1), m.group(2)
+				if t in ['@', '@!']: v = mt.user, users.get(k, f'[{k}]')
+				elif t == '@&':
+					role_tag = ( f'[{roles[k].name}]'
+						if roles and k in roles else '[role:{}]'.format(str_hash(k, 3)) )
+					v = mt.role, role_tag
+				elif t == '#':
+					chan_tag = chans[k].did if k in chans else f'#[{k}]'
+					v = mt.chan, chan_tag
+				elif t.lstrip('a').startswith(':'): v = mt.emo, t.lstrip('a')
+				else: v = mt.other, f'{t}{k}'
+				tags[k_src] = v
 		return line, tags
 
 	def op_react(self, m, act):
