@@ -14,9 +14,9 @@ import aiohttp
 
 class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
-	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see ts_duration below for that.
+	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.53' # git-version: py-str
+	version = '1.54' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -386,7 +386,7 @@ def _short_ts_re():
 _short_ts_re = _short_ts_re()
 _parse_int = lambda v: int(''.join(c for c in v if c.isdigit()) or 1)
 
-def ts_duration(ts_str, to_float=True):
+def parse_duration(ts_str, to_float=True):
 	try: delta = dt.timedelta(seconds=float(ts_str))
 	except ValueError:
 		m = _short_ts_re.search(ts_str)
@@ -1252,7 +1252,7 @@ class DiscordSession:
 	### Gateway Websocket wrappers
 
 	async def ws_connect_loop(self):
-		opts = adict((k, ts_duration(getattr( self.conf,
+		opts = adict((k, parse_duration(getattr( self.conf,
 			f'discord_ws_reconnect_{k}' ))) for k in ['min', 'max'])
 		opts.factor = self.conf.discord_ws_reconnect_factor
 		interval = opts.min
@@ -1654,7 +1654,7 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.irc_names_timeout = ts_duration(self.conf.irc_names_timeout)
+		self.irc_names_timeout = parse_duration(self.conf.irc_names_timeout)
 		self.nick_sys, self.chans_sys = 'core', {
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
 			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info',
@@ -1770,7 +1770,7 @@ class RDIRCD:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
 				'  set {topic...} - set topic, as usual irc /topic command would do.',
 				'  log [state] - replay history since "state" point (default: last rdircd stop).',
-				'    "state" value can be either a number, state-id, or iso8601 timestamp.',
+				'    "state" value can be either a number, state-id, relative or iso8601 timestamp.',
 				'    Where number indicates last Nth state recorded in the config (0 - current).',
 				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
 				'      starting from last rdircd shutdown time, recorded under [state] in the ini.',
@@ -1801,7 +1801,10 @@ class RDIRCD:
 					except KeyError: raise IRCBridgeSignal(f'No state {state!r}')
 				else:
 					try: ts = parse_iso8601(state)
-					except ValueError: pass
+					except ValueError:
+						try: ts = parse_duration(state)
+						except ValueError: pass
+						else: ts = time.time() - ts
 				if ts:
 					info = self.irc_chan_info(name)
 					if not (info and info.cc): raise IRCBridgeSignal(f'Not a discord channel: {chan}')
