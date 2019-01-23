@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.58' # git-version: py-str
+	version = '1.59' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2024,7 +2024,7 @@ class RDIRCD:
 		if nick:
 			if nick not in cc.users: cc.users[nick] = adict(name=nick)
 			cc.users[nick].ts = ts or time.time()
-		conn_list = [conn] if conn else self.cmd_chan_conns(name)
+		direct, conn_list = bool(conn), [conn] if conn else self.cmd_chan_conns(name)
 		if not conn: conn = conn_list[0] if conn_list else self.cmd_conn()
 		if not conn: return
 		if tags:
@@ -2035,8 +2035,9 @@ class RDIRCD:
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
 		elif notice is None: notice = True
-		conn.cmd_msg_synth( nick or self.nick_sys,
-			conn.chan_spec(self.c.chan_monitor), f'{name} :: {line}', notice=notice )
+		if not direct:
+			conn.cmd_msg_synth( nick or self.nick_sys,
+				conn.chan_spec(self.c.chan_monitor), f'{name} :: {line}', notice=notice )
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick or self.nick_sys,
 				conn.chan_spec(name), line, notice=notice, direct=True )
