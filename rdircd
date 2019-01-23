@@ -168,6 +168,7 @@ def sockopt_resolve(prefix, v):
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
 
+# str_norm is not used in irc, where ascii-only casefold is more traditional
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 def str_part(s, sep, default=None):
@@ -184,6 +185,8 @@ def str_repr(s, prefix=False, max_len=50, ext=' ...[{s_len}]'):
 		s_len = f'{max_len}/{s_len}'
 		s_repr = s_repr[:max_len - ext_len] + ext.format(s_len=s_len)
 	return (s_len, s_repr) if prefix else s_repr
+
+irc_name_eq = lambda a, b: a.lower() == b.lower()
 
 
 def str_hash(s, c=None, key='rdircd'):
@@ -382,21 +385,22 @@ _short_ts_re = _short_ts_re()
 _parse_int = lambda v: int(''.join(c for c in v if c.isdigit()) or 1)
 
 def ts_duration(ts_str, to_float=True):
-	try: return dt.timedelta(seconds=float(ts_str))
-	except ValueError: pass
-	m = _short_ts_re.search(ts_str)
-	if not m or not any(m.groups()): raise ValueError(ts_str)
-	delta = list()
-	for units in _short_ts_days, _short_ts_s:
-		val = 0
-		for k, v in units.items():
-			try:
-				if not m.group(k): continue
-				n = _parse_int(m.group(k))
-			except IndexError: continue
-			val += n * v
-		delta.append(val)
-	delta = dt.timedelta(*delta)
+	try: delta = dt.timedelta(seconds=float(ts_str))
+	except ValueError:
+		m = _short_ts_re.search(ts_str)
+		if not m or not any(m.groups()):
+			raise ValueError(ts_str) from None
+		delta = list()
+		for units in _short_ts_days, _short_ts_s:
+			val = 0
+			for k, v in units.items():
+				try:
+					if not m.group(k): continue
+					n = _parse_int(m.group(k))
+				except IndexError: continue
+				val += n * v
+			delta.append(val)
+		delta = dt.timedelta(*delta)
 	return delta if not to_float else delta.total_seconds()
 
 
@@ -475,6 +479,16 @@ class adict(cs.UserDict):
 		super().__delitem__(k)
 		self._cache_cb_check(k)
 
+class irc_name_dict(cs.UserDict):
+	value_map = classmethod(
+		lambda cls, names: cls((v, v) for v in names) )
+	def add(self, name): self[name] = name
+	def remove(self, name): del self[name]
+	def __contains__(self, key): return key.lower() in self.data
+	def __getitem__(self, k): return self.data[k.lower()]
+	def __setitem__(self, k, v): self.data[k.lower()] = v
+	def __delitem__(self, k): del self.data[k.lower()]
+
 
 
 class IRCProtocolError(Exception): pass
@@ -507,7 +521,8 @@ class IRCProtocol:
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None, pw_hash=None,
-			host=None, auth=False, cap_neg=False, chans=set() )
+			host=None, auth=False, cap_neg=False, away=None,
+			chans=irc_name_dict() )
 		if self.conf.irc_password:
 			salt = os.urandom(8)
 			self.st.pw_hash = salt, hashlib.blake2b(
@@ -677,11 +692,13 @@ class IRCProtocol:
 		if not res: self.send(462, ':You may not reregister')
 		return res
 
-	# chan_spec=#some-channel, chan_name=some-channel
+	# chan_spec=#some-channel, chan_name=lower(some-channel)
 	_csc = lambda c: c.startswith('#')
 	chan_spec_check = staticmethod(_csc)
-	chan_spec = staticmethod(lambda name,_csc=_csc: name if _csc(name) else f'#{name}')
-	chan_name = staticmethod(lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:])
+	chan_spec = staticmethod(
+		lambda name,_csc=_csc: name if _csc(name) else f'#{name}' )
+	chan_name = staticmethod(
+		lambda chan,_csc=_csc: (chan if not _csc(chan) else chan[1:]).lower() )
 
 
 	def recv_cmd_ping(self, server, server_dst=None):
@@ -778,25 +795,26 @@ class IRCProtocol:
 		if check: self.send(403, chan, ':No such channel')
 
 	def recv_cmd_join(self, chan, key=None):
-		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans))
+		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans.values()))
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
 			c = self.req_chan_info(chan, cm=chan_map, check=False)
+			name = c.name if c else self.chan_name(chan)
 			self.send(f':{self.st.nick} JOIN {chan}')
 			self.send_topic(chan, c=c)
 			self.send_names(chan, own=True, c=c)
-			self.st.chans.add(c.name if c else self.chan_name(chan))
+			self.st.chans.add(name)
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
 			c = self.req_chan_info(chan, cm=chan_map, check=False)
-			if not c: continue
-			if c.name not in self.st.chans:
+			name = c.name if c else self.chan_name(chan)
+			if name not in self.st.chans:
 				self.send(442, chan, ':You are not on that channel')
 			else:
-				self.st.chans.remove(c.name)
-				self.send(f'PART {chan}')
+				self.st.chans.remove(name)
+				self.send(f':{self.st.nick} PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
 		if not self.chan_spec_check(chan):
@@ -825,7 +843,7 @@ class IRCProtocol:
 			self.bridge.cmd_chan_names(c.name) ) if c else list()
 		for name in it.chain(names, [None]):
 			if name:
-				if name == self.st.nick: own = False
+				if irc_name_eq(name, self.st.nick): own = False
 				name_line.append(name)
 			elif own: name_line.append(self.st.nick)
 			if name_line and (
@@ -846,9 +864,14 @@ class IRCProtocol:
 				chan_ts = int(time.time())
 			self.send(329, chan, chan_ts)
 		else:
-			if target != self.st.nick:
+			if not irc_name_eq(target, self.st.nick):
 				return self.send(502, ':No access to modes of other users')
 			self.send(221, ':+w')
+
+	def recv_cmd_away(self, msg=None):
+		self.st.away = msg or None
+		if self.st.away: self.send(306, ':You have been marked as being away')
+		else: self.send(305, ':You are no longer marked as being away')
 
 	def recv_cmd_list(self, chan=None, cond=None):
 		# XXX: searching for new channels (ELIST=C) might be nice to have
@@ -864,13 +887,6 @@ class IRCProtocol:
 		self.send(351, self.bridge.server_ver, 'rdircd', ':rdircd discord-to-irc bridge')
 		self.send_feats()
 
-	def recv_cmd_userhost(self, nick):
-		if str_norm(nick) == str_norm(self.st.nick):
-			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
-		else: self.send(401, nick, ':No such nick/channel') # XXX: info for discord nicks
-
-	# def recv_cmd_whois(self, nick): # XXX: RPL_*WHOIS* + discord info via notices?
-
 	def recv_cmd_privmsg(self, target, text):
 		self.cmd_msg(self.st.nick, target, text, skip_self=True)
 
@@ -880,11 +896,11 @@ class IRCProtocol:
 	def cmd_msg(self, src, target, text, notice=False, skip_self=False, msg_type=None):
 		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if self.chan_spec_check(target):
-			chan = target
+			chan, name = target, self.chan_name(target)
 			if not notice: c = self.req_chan_info(chan)
-			else: c = self.bridge.cmd_chan_map().get(chan[1:])
+			else: c = self.bridge.cmd_chan_map().get(name)
 			if not c: return
-			for conn in self.bridge.cmd_chan_conns(c.name):
+			for conn in self.bridge.cmd_chan_conns(name):
 				if skip_self and conn is self: continue
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
@@ -901,12 +917,29 @@ class IRCProtocol:
 		if direct: return self.send(f':{src} {msg_type} {target} :{text}')
 		self.cmd_msg(src, target, text, notice=True, msg_type=msg_type)
 
-	# XXX: more server info commands
-	# def recv_cmd_admin(self):
-	# def recv_cmd_connect(self):
-	# def recv_cmd_time(self):
-	# def recv_cmd_stats(self):
-	# def recv_cmd_info(self):
+	# Some of following user/server/channel-info cmds
+	#  can be (ab)used to provide discord user/channel info.
+	# Currently this isn't stored or queried anywhere,
+	#  so no need for these beyond stubs for what ZNC and such use.
+
+	def recv_cmd_userhost(self, nick):
+		if irc_name_eq(nick, self.st.nick):
+			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
+		else: self.send(401, nick, ':No such nick/channel')
+
+	def recv_cmd_who(self, nick):
+		conn = self.bridge.cmd_conn_map().get(nick)
+		if conn:
+			self.send( 352, '*', conn.st.user, conn.st.host,
+				self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
+		self.send(315, nick, ':End of /WHO list.')
+
+	# recv_cmd_whois
+	# recv_cmd_whowas
+	# recv_cmd_admin
+	# recv_cmd_time
+	# recv_cmd_stats
+	# recv_cmd_info
 
 
 
@@ -1607,14 +1640,14 @@ class RDIRCD:
 		self.server_ver = self.conf.version
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
-		self.irc_conns, self.irc_conns_max = dict(), 0
+		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_names_timeout = ts_duration(self.conf.irc_names_timeout)
 		self.nick_sys, self.chans_sys = 'core', {
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
 			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' }
 		self.tasks = StacklessContext(self.log)
-		self.cache = adict(uid=dict(), d2i=dict(), i2d=dict())
+		self.cache = adict(uid=dict(), d2i=irc_name_dict(), i2d=irc_name_dict())
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
 		if not self.uid_seed:
 			for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
@@ -1638,7 +1671,7 @@ class RDIRCD:
 		if k not in self.cache.uid:
 			if kh is None:
 				kh = str_hash( '\0'.join(map(str, k)),
-					hash_len or self.uid_len, self.uid_seed )
+					hash_len or self.uid_len, self.uid_seed ).lower()
 			if kh in self.cache.uid:
 				# Hash collisions should not happen here - raise uid_len if they do
 				raise ValueError(k, kh, self.cache.uid[kh])
@@ -1688,6 +1721,7 @@ class RDIRCD:
 
 	def irc_name(self, name):
 		# Must be deterministic but not create collisions by stripping too much
+		# Assuming that discord doesn't allow same names in diff case
 		if name not in self.cache.d2i:
 			name_irc, sub_chars = '', '°×·„∂'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
@@ -1813,14 +1847,21 @@ class RDIRCD:
 		if delay: self.tasks.add(asyncio.sleep(delay), func)
 		else: self.tasks.add(await_wrap(func()))
 
-	def cmd_conn(self, name=None):
+	@iter_gather(irc_name_dict)
+	def cmd_conn_map(self):
 		for conn in self.irc_conns.values():
-			if not name or name == conn.st.nick: return conn
+			if conn.st.nick: yield (conn.st.nick, conn)
+
+	def cmd_conn(self, name=None):
+		try:
+			if not name: return next(iter(self.irc_conns.values()))
+			return self.cmd_conn_map()[name]
+		except (KeyError, StopIteration): return
 
 	@iter_gather(list)
 	def cmd_chan_conns(self, name):
 		for conn in self.irc_conns.values():
-			if name in conn.st.chans: yield conn
+			if conn.chan_name(name) in conn.st.chans: yield conn
 
 	def cmd_chan_names_discord(self, name):
 		'''List nicks from discord, in most recently
@@ -1835,8 +1876,9 @@ class RDIRCD:
 	@iter_gather(list)
 	def cmd_chan_names(self, name):
 		'Returns persistent mutable list of names for specified channel.'
-		conn_nicks = set(conn.st.nick for conn in self.cmd_chan_conns(name))
-		yield from sorted(conn_nicks)
+		conn_nicks = irc_name_dict.value_map(
+			conn.st.nick for conn in self.cmd_chan_conns(name) )
+		yield from sorted(conn_nicks.values())
 		for nick in self.cmd_chan_names_discord(name):
 			if nick not in conn_nicks: yield nick
 
@@ -1860,7 +1902,7 @@ class RDIRCD:
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.d2i[cc.did] = name
-				yield (name, adict( name=name,
+				yield (name.lower(), adict( name=name,
 					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 
 

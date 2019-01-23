@@ -62,6 +62,10 @@ Features
   log 2019-01-08" to dump backlog from that point on to the present, using as
   many API requests as necessary (no message count limits).
 
+- Own msgs sent thru other means (e.g. browser) will be relayed to irc too,
+  maybe coming from a diff nick though, if irc name doesn't match discord-to-irc
+  nick translation.
+
 - Full unicode support everywhere.
 
 - IRC protocol is implemented from IRCv3 drafts, but doesn't use any of the
@@ -117,10 +121,7 @@ Limitations
   and limited use-case.
 
 - Custom ad-hoc implementation of both discord and irc, not benefitting from any
-  kind of exposure and testing on pypi and such.
-
-  Though mostly due to both having rather trivial text-based protocols, simplier
-  than module APIs and with no extra crap in the middle.
+  kind of exposure and testing on pypi and such wrt bugs and corner-cases.
 
 - No idea if even allowed by Discord ToS - see WARNING section above for more details.
 
