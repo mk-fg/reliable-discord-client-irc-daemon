@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.55' # git-version: py-str
+	version = '1.56' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1503,12 +1503,12 @@ class DiscordSession:
 		elif o == 'guild_member': return # not tracking per-guild users in any way
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
-			elif act == 'delete_bulk': # can maybe shorten msg-spam here somehow
-				for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
-				return
+			elif act == 'ack': return # reading private chats from browser
+		elif mt == 'message_delete_bulk': # can maybe shorten notice-spam here somehow
+			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
+			return
 		elif o == 'message_reaction': return self.op_react(m.d, act)
 		elif o in ['presences', 'presence', 'typing']: return
-		elif mt == 'message_ack': return # reading private chats from browser
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
 		self.log.info('Unhandled event: {}', self._repr(m))
