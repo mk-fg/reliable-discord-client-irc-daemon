@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.63' # git-version: py-str
+	version = '1.64' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -133,8 +133,23 @@ log_bak = get_logger('fallback')
 
 
 def monkey_patch_aiohttp_debug(log):
-	# This is obviously very fragile and will break eventually
 	import aiohttp.http_writer, aiohttp.client_reqrep
+
+	# This is obviously very fragile and will break eventually,
+	#  so at least make sure that patched funcs are exactly as expected.
+	import ast, textwrap
+	def func_ast_hash(func):
+		module = ast.parse(textwrap.dedent(inspect.getsource(func)))
+		return str_hash(ast.dump(module, annotate_fields=False))
+	if not all(
+			(func_ast_hash(func) == ast_hash)
+			for func, ast_hash in [
+				( aiohttp.http_writer.StreamWriter.write_headers,
+					'c7lO91m96OTZMJjT01E5LHWuxWJotJbPfRkmQPX8' ),
+				( aiohttp.client_reqrep.ClientRequest.write_bytes,
+					'8I3uhb8QnU7l9dW6sTB2Ss45Y3x8PgI5QEABTNwjLk' ) ] ):
+		log.warning('Disabling monkey-patching of logging into aiohttp due to ast diffs')
+		return
 
 	@contextlib.contextmanager
 	def log_req(part):
