@@ -56,7 +56,7 @@ Features
   None of these will change after reconnection, channel or server reshuffling,
   etc - translation is fully deterministic and does not depend on other names.
 
-- Translation for discord mentions, attachments and emojis.
+- Translation for discord mentions, attachments and emojis in incoming msgs.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
   log 2019-01-08" to dump backlog from that point on to the present, fetching
@@ -89,6 +89,9 @@ Limitations
 
 - Won't /q or ping on new direct/private messages in any way yet, but will
   probably implement that at some point.
+
+- Mentions for users/channels/roles and such in messages coming from IRC are not
+  parsed or translated to discord tags in any way, all text is sent as-is.
 
 - No support for sending attachments or embeds of any kind - use WebUI for that,
   not IRC.

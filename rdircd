@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.61' # git-version: py-str
+	version = '1.62' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -878,7 +878,6 @@ class IRCProtocol:
 		else: self.send(305, ':You are no longer marked as being away')
 
 	def recv_cmd_list(self, chan=None, cond=None):
-		# XXX: searching for new channels (ELIST=C) might be nice to have
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
 			names = self.bridge.cmd_chan_names(c.name)
@@ -1825,7 +1824,6 @@ class RDIRCD:
 		name = conn.chan_name(chan)
 		if name in self.chans_sys:
 			return self.cmd_chan_sys(name, conn, chan, line)
-		# XXX: add mention/channel tags to messages
 		if not line.strip(): return
 		if not self.irc_msg_queue:
 			conn.cmd_msg_synth( self.nick_sys, chan,
