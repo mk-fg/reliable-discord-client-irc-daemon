@@ -51,6 +51,8 @@ Features
 
 - Support for both private and public channels, channel ordering.
 
+- Configurable local name aliases.
+
 - Simple and consistent discord to irc guild/channel/user name translation.
 
   None of these will change after reconnection, channel or server reshuffling,
@@ -199,6 +201,48 @@ Requirements
 
 * `Python 3.7+ <http://python.org/>`_
 * `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
+
+
+Misc Features
+-------------
+
+Notes on various optional and less obvious features are collected here.
+
+Multiple Config Files
+`````````````````````
+
+Multiple ini files can be specified with -c option, overriding each other in sequence.
+
+Last one will be updated wrt [state], token= and similar runtime stuff,
+so it can be useful to specify persistent config with auth and options,
+and separate (initially empty) one for such dynamic state.
+
+| E.g. ``./rdircd -c config.ini -c state.ini`` will do that.
+| ``--conf-dump`` can be added to print resulting ini assembled from all these.
+|
+
+Frequent state timestamp updates are done in-place (small fixed-length values),
+but checking ctime before writes, so should be safe to tweak any of these files
+anytime anyway.
+
+Channel Commands
+````````````````
+
+| In special channels like #control, #debug and #monitor: send "h" or "help".
+| All discord channels - send "/t" or "/topic".
+
+Local Name Aliases
+``````````````````
+
+Can be defined in the config file to replace hash-based IDs with something
+easily readable::
+
+  [aliases]
+  guild.jvpp = game-X
+
+(to turn e.g. #jvpp.info into #game-X.info)
+
+Currently only implemented for guild IDs in IRC channel names.
 
 
 API and Implementation Notes
