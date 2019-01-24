@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.60' # git-version: py-str
+	version = '1.61' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1206,7 +1206,7 @@ class DiscordSession:
 			res = await self.req( 'auth/login', m='post',
 				auth=False, json=dict(email=email, password=pw) )
 			if res.get('mfa'):
-				raise DiscordSessionError( 'Multi-factor auth'
+				raise DiscordAbort( 'Multi-factor auth'
 					' requirement detected, but is not supported by rdircd' )
 			setattr(self.conf, f'auth_{self.t}_token', res['token'])
 			self.conf.update_file_section(f'auth_{self.t}', 'token')
@@ -1432,22 +1432,19 @@ class DiscordSession:
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
 		self.state('session.error.delay')
 		delay = self.loop.create_task(asyncio.sleep(1 + random.random() * 4))
-		if self.st.get('session_id'):
-			# There is no indication of whether it's session_id or token that is failing.
-			# Should be safe to retry new session first, and if that fails, refresh token as well.
+		if not m.get('d') and self.st.get('session_id'):
 			self.log.info('Session+auth rejected - trying new session')
 			self.st.session_id = self.st.seq = None
 			await delay
-			self.state('session.error')
-			return await self.op_hello_auth()
-		self.log.info('Auth rejected - updating auth token')
-		self.auth_token = None
-		token = await self.req_auth_token()
-		await delay
-		self.ws_add_handler( self.c.invalid_session,
-			self.op_invalid_session_fail, replace=True )
+		else:
+			self.log.info('Auth rejected - updating auth token')
+			self.auth_token = None
+			token = await self.req_auth_token()
+			await delay
+			self.ws_add_handler( self.c.invalid_session,
+				self.op_invalid_session_fail, replace=True )
 		self.state('session.error')
-		return await self.op_hello_auth()
+		await self.op_hello_auth()
 
 	async def op_invalid_session_fail(self, m):
 		self.log.warning('Session/auth rejected unexpectedly - disabling connection')
