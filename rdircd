@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.67' # git-version: py-str
+	version = '1.68' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -30,6 +30,7 @@ class RDIRCDConfigBase:
 	irc_names_timeout = '1d' # time since last activity
 	irc_cmd_len_split = 450 # will probably still work with most clients
 	irc_cmd_len_topic = 300 # cannot be split, so is truncated instead
+	irc_chan_modes = False # causes needless spam on ZNC reconnects
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
@@ -855,6 +856,7 @@ class IRCProtocol:
 			self.send(f':{self.st.nick} JOIN {chan}')
 			self.send_topic(chan, c=c)
 			self.send_names(chan, own=True, c=c)
+			self.send(f'MODE {chan} +v {self.st.nick}')
 			self.st.chans.add(name)
 
 	def recv_cmd_part(self, chan, reason=None):
@@ -909,13 +911,13 @@ class IRCProtocol:
 		if self.chan_spec_check(target):
 			chan = target
 			c = self.req_chan_info(chan, check=False)
-			self.send(324, chan, '+cnrt')
+			if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
 			if c: chan_ts = int(c.ts_created)
 			else:
 				if self.chan_name(chan) not in self.st.chans:
 					return self.send(403, chan, ':No such channel')
 				chan_ts = int(time.time())
-			self.send(329, chan, chan_ts)
+			if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
 		else:
 			if not irc_name_eq(target, self.st.nick):
 				return self.send(502, ':No access to modes of other users')
