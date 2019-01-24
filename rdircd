@@ -270,21 +270,19 @@ def file_tail(p, n, grep=None, bs=100 * 2**10):
 	import mmap
 	lines = list()
 	with open(p,'rb') as src:
-		a, mm = 1, mmap.mmap(
+		a, buff, mm = 1, b'', mmap.mmap(
 			src.fileno(), 0, access=mmap.ACCESS_READ )
 		while len(lines) < n:
-			a0, b = a, a + bs
-			buff = mm[-a:-b:-1][::-1]
-			if not buff: break
-			a = a + len(buff)
-			m = buff.index(b'\n') + 1
-			if b < len(mm):
-				a, buff = a - m, buff[m:]
-				if a0 == a: bs *= 2 # lines don't fit into buffer
-			ext = reversed(buff.decode().splitlines())
-			if grep: ext = filter(grep, ext)
-			lines.extend(ext)
-	return list(reversed(lines))[-n:]
+			b = a + bs
+			a, buff, end = b, buff + mm[-a:-b:-1], b > len(mm)
+			while True:
+				try: line, buff = buff.split(b'\n', 1)
+				except ValueError:
+					if end and buff: line, buff = buff, b''
+					else: break
+				lines.append(line[::-1].decode())
+			if end: break
+	return list(reversed(lines))
 
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
