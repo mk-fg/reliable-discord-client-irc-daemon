@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.69' # git-version: py-str
+	version = '1.71' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -182,7 +182,7 @@ def setup_aiohttp_trace_logging(log):
 	tc.on_request_chunk_sent.append(on_req_chunk)
 
 	async def on_req_done(s, tc_ctx, ps):
-		res_info = ( '  {0.status} {0.reason}'
+		res_info = ( '{0.status} {0.reason}'
 			' HTTP/{0.version.major}.{0.version.minor}' ).format(ps.response)
 		with log_req('headers', f'[{tc_ctx.req_uid}] {res_info}', 'res') as log:
 			for k, v in ps.response.headers.items(): log.debug('', extra=('<  ', f'  {k}: {v}'))
@@ -278,9 +278,9 @@ def file_tail(p, n, grep=None, bs=100 * 2**10):
 				except ValueError:
 					if end and buff: line, buff = buff, b''
 					else: break
-				lines.append(line[::-1].decode())
+				if line: lines.append(line[::-1].decode())
 			if end: break
-	return list(reversed(lines))
+	return list(reversed(lines[:n]))
 
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
@@ -1497,7 +1497,7 @@ class DiscordSession:
 
 	def op_ready(self, m):
 		md = m.get('d')
-		if md:
+		if md and md.get('session_id'):
 			self.st.update(
 				session_id=md.session_id,
 				user_id=md.user.id,
