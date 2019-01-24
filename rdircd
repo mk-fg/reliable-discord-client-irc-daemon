@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.66' # git-version: py-str
+	version = '1.67' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1068,8 +1068,8 @@ class Discord:
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut: return fut.set_result(flake)
-		self.bridge.discord_msg( cc, nick, line, tags,
-			notice=notice, ts=self.flake_parse(flake) or time.time() )
+		self.bridge.discord_msg( cc, nick, line,
+			tags, notice=notice, ts=self.flake_parse(flake) )
 
 	async def cmd_msg_send(self, cc, line):
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
@@ -2288,9 +2288,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			self.update_file_section('state', {k: v})
 			self.state[k] = ts
 			return self.state_cleanup()
-		if self.state[k] > ts:
-			self.log.warning( 'State timestamp'
-				' jumped backwards: {} -> {}', self.state[k], ts )
+		if self.state[k] > ts: return
 		src, offsets = self._state_source_get()
 		n, v = offsets[k], v.encode()
 		src.seek(n)
