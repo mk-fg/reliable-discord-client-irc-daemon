@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.64' # git-version: py-str
+	version = '1.66' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -58,6 +58,8 @@ class RDIRCDConfigBase:
 	debug_log_file = '' # not affected by debug_verbose in any way
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
+	debug_chan_proto_tail = 50
+	debug_chan_proto_cut = 230
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
@@ -97,6 +99,16 @@ class LogEmptyMsgFilter(logging.Filter):
 		return bool(msg if isinstance(msg, str) else msg.fmt)
 log_empty_filter = LogEmptyMsgFilter()
 
+class LogProtoDebugFilter(logging.Filter):
+	debug_re = re.compile(b'^:core (PRIVMSG|NOTICE) #debug :')
+	def filter(self, record):
+		try: st, msg = record.extra
+		except: return True
+		return not ( st == ' >>'
+			and isinstance(msg, bytes)
+			and self.debug_re.search(msg) )
+log_proto_debug_filter = LogProtoDebugFilter()
+
 class LogProtoFormatter(logging.Formatter):
 	last_ts = last_rec = last_reltime = None
 	def format(self, record):
@@ -121,15 +133,19 @@ class LogProtoFormatter(logging.Formatter):
 class LogFileHandler(logging.handlers.RotatingFileHandler):
 	def set_file(self, path):
 		self.stream, self.baseFilename = None, os.path.abspath(os.fspath(path))
+	def get_file(self): return self.baseFilename
 
 class LogLevelCounter(logging.Handler):
 	def __init__(self, *args, **kws):
 		super().__init__(*args, **kws)
 		self.counts = cs.Counter()
-	def emit(self, record): self.counts[record.levelname.lower()] += 1
+	def emit(self, record):
+		if record.levelno <= logging.DEBUG: return
+		self.counts[record.levelname.lower()] += 1
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
+log_proto_root = logging.getLogger('proto')
 
 
 def monkey_patch_aiohttp_debug(log):
@@ -249,6 +265,26 @@ def safe_replacement(path, *open_args, mode=None, **open_kws):
 		finally:
 			try: os.unlink(tmp.name)
 			except OSError: pass
+
+def file_tail(p, n, grep=None, bs=100 * 2**10):
+	import mmap
+	lines = list()
+	with open(p,'rb') as src:
+		a, mm = 1, mmap.mmap(
+			src.fileno(), 0, access=mmap.ACCESS_READ )
+		while len(lines) < n:
+			a0, b = a, a + bs
+			buff = mm[-a:-b:-1][::-1]
+			if not buff: break
+			a = a + len(buff)
+			m = buff.index(b'\n') + 1
+			if b < len(mm):
+				a, buff = a - m, buff[m:]
+				if a0 == a: bs *= 2 # lines don't fit into buffer
+			ext = reversed(buff.decode().splitlines())
+			if grep: ext = filter(grep, ext)
+			lines.extend(ext)
+	return list(reversed(lines))[-n:]
 
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
@@ -1973,32 +2009,40 @@ class RDIRCD:
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
+		pt_n, pt_cut = (getattr(self.conf, f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
 		if not line: return
 		send = ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
-		if line[0] in ['h', 'help']:
+		if line[0] in ['h', 'help', 'st', 'status']:
 			level = proto_log_info = '???'
+			proto_log_shared = ['no', 'yes'][bool(log_proto_root.propagate)]
 			if self.conf._debug_chan:
 				level = logging.getLevelName(self.conf._debug_chan.level).lower()
 			if self.conf._debug_proto:
 				proto_log_info = logging.getLevelName(self.conf._debug_proto.level).lower()
 				proto_log_info = ( 'disabled' if proto_log_info == 'warning'
-					else f'enabled, file={self.conf._debug_proto.baseFilename}' )
+					else f'enabled, file={self.conf._debug_proto.get_file()}' )
 			return send('\n'.join(f'-- {line}' for line in [
 				'This channel is for logging output, with level=info by default,',
-				' unless --debug is specified on command line, or [debug] verbose=yes in ini.',
+				'  unless --debug is specified on command line, or [debug] verbose=yes in ini.',
 				f'Status:',
 				f'  logging level: {level}',
 				f'  protocol log: {proto_log_info}',
+				f'  protocol log shared: {proto_log_shared}',
 				'Recognized commands here:',
 				'  level info - (alias: i) set level=info (default) logging in this channel',
 				'  level debug - (alias: d) enable level=debug logging in this channel (verbose)',
 				'  level warning - (alias: w) only dump warnings and errors here',
-				'  proto {file} - enable irc/discord procool logging to specified file',
-				'  proto off - disable irc/discord procool logging' ]))
-		if len(line) == 1:
-			with contextlib.suppress(KeyError):
-				line = dict(i='level info', d='level debug', w='level warning')[line[0]].split()
-		cmd, arg = line[0], line[-1]
+				'  proto {file} - enable irc/discord protocol logging to specified file',
+				'  proto off - (alias: px) disable irc/discord protocol logging',
+				'  proto share/unshare - (alias: ps/pu)',
+				'    whether to dump protocol logging (level=debug) to regular logs',
+				f'  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines',
+				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).' ]))
+		with contextlib.suppress(KeyError):
+			line = dict(
+				i='level info', d='level debug', w='level warning', px='proto off',
+				ps='proto share', pu='proto unshare', pt='proto tail' )[line[0]].split() + line[1:]
+		cmd, arg = line[0], line[1] if len(line) >= 2 else None
 		if cmd == 'level' and len(line) == 2:
 			level = getattr(logging, arg.upper(), None)
 			if level is not None and self.conf._debug_chan:
@@ -2011,6 +2055,19 @@ class RDIRCD:
 					self.conf._debug_proto.setLevel(logging.WARNING)
 				else: arg = 'unavailable'
 				send(f'-- protocol log: {arg}')
+			elif arg in ['share', 'unshare']:
+				share = arg == 'share'
+				send(f'-- protocol log shared: {str(share).lower()}')
+				log_proto_root.propagate = share
+			elif arg == 'tail':
+				if not self.conf._debug_proto: send(f'-- protocol log disabled, nothing to show')
+				else:
+					if len(line) > 2: pt_n = int(line[2])
+					if len(line) > 3: pt_cut = int(line[3])
+					lines = file_tail(self.conf._debug_proto.get_file(), pt_n)
+					send(f'-- protocol log tail [{len(lines)}/{pt_n}:{pt_cut}]:')
+					for line in lines: send(f'--- {str_repr(line, max_len=pt_cut)}')
+					send(f'-- protocol log tail end')
 			elif len(line) >= 2:
 				path = line_src.strip().split(None, 1)[-1] # preserve spaces and case
 				if self.conf._debug_proto:
@@ -2384,8 +2441,7 @@ def main(args=None, conf=None):
 			datefmt='%Y-%m-%dT%H:%M:%S', style='{' ))
 		logging.root.addHandler(log_handler)
 
-	log_proto = logging.getLogger('proto')
-	log_proto.propagate = conf.debug_proto_log_shared
+	log_proto_root.propagate = conf.debug_proto_log_shared
 	log_handler = conf._debug_proto = LogFileHandler(
 		conf.debug_proto_log_file or '/dev/null',
 		maxBytes=conf.debug_proto_log_file_size,
@@ -2394,7 +2450,8 @@ def main(args=None, conf=None):
 		if conf.debug_proto_log_file else logging.WARNING )
 	log_handler.setFormatter(LogProtoFormatter(
 		'%(asctime)s :: %(reltime)s :: %(name)s :: %(message)s' ))
-	log_proto.addHandler(log_handler)
+	log_handler.addFilter(log_proto_debug_filter)
+	log_proto_root.addHandler(log_handler)
 
 	def handle_exception(err_t, err, err_tb):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
@@ -2433,6 +2490,7 @@ def main(args=None, conf=None):
 		log_handler.setFormatter(logging.Formatter(
 			'{name} {levelname:5} :: {message}', style='{' ))
 		log_handler.addFilter(log_empty_filter)
+		log_handler.addFilter(log_proto_debug_filter)
 		logging.root.addHandler(log_handler)
 
 		rdircd_task = loop.create_task(rdircd.run_async())
