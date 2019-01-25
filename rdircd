@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.72' # git-version: py-str
+	version = '1.74' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -28,8 +28,10 @@ class RDIRCDConfigBase:
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
 	irc_names_timeout = '1d' # time since last activity
-	irc_cmd_len_split = 450 # will probably still work with most clients
-	irc_cmd_len_topic = 300 # cannot be split, so is truncated instead
+	irc_len_hwm = 450 # will probably still work with most clients
+	irc_len_lwm = 300
+	irc_len_topic = 300 # cannot be split, so is truncated instead
+	irc_len_monitor = 350 # to tuncate long lines in #monitor
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 
 	discord_auto_connect = True
@@ -142,6 +144,7 @@ class LogLevelCounter(logging.Handler):
 		super().__init__(*args, **kws)
 		self.counts = cs.Counter()
 	def emit(self, record):
+		self.counts['all'] += 1
 		if record.levelno <= logging.DEBUG: return
 		self.counts[record.levelname.lower()] += 1
 
@@ -662,7 +665,7 @@ class IRCProtocol:
 		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
-		if max_len is None: max_len = self.conf.irc_cmd_len_split
+		if max_len is None: max_len = self.conf.irc_len_hwm
 		line = line.rstrip(b'\r\n')
 		if b'\n' in line or len(line) > max_len:
 			if auto_split:
@@ -674,9 +677,9 @@ class IRCProtocol:
 		line += b'\r\n'
 		self.data_send(line)
 
-	def send_split_msg(self, m, max_len=300):
+	def send_split_msg(self, m):
 		dst, line = m.params
-		pre = f'{m.cmd.upper()} {dst}'
+		pre, max_len = f'{m.cmd.upper()} {dst}', self.conf.irc_len_lwm
 		if m.src: pre = f'{m.src} {pre}'
 		if '\n' in line:
 			for line in line.split('\n'): self.send(pre, f':{line.rstrip()}')
@@ -883,7 +886,7 @@ class IRCProtocol:
 		if c is ...: c = self.req_chan_info(chan)
 		if not (c and c.topic): self.send(331, chan, ':No topic is set')
 		else:
-			topic = str_repr(c.topic, max_len=self.conf.irc_cmd_len_topic)
+			topic = str_repr(c.topic, max_len=self.conf.irc_len_topic)
 			self.send(332, chan, f':{topic}')
 			topic_src = c.get('topic_src')
 			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
@@ -932,7 +935,7 @@ class IRCProtocol:
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
 			names = self.bridge.cmd_chan_names(c.name)
-			topic = str_repr(c.topic, max_len=self.conf.irc_cmd_len_topic)
+			topic = str_repr(c.topic, max_len=self.conf.irc_len_topic)
 			self.send(322, self.chan_spec(c.name), len(names), f':{topic}')
 		self.send(321, ':End of /LIST')
 
@@ -1563,7 +1566,7 @@ class DiscordSession:
 		elif o in ['presences', 'presence', 'typing']: return
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
-		self.log.info('Unhandled event: {}', self._repr(m))
+		self.log.warning('Unhandled event: {}', self._repr(m))
 
 	def op_ev_delete(self, gid=None, chan=...):
 		gg = self.st.guilds.get(gid)
@@ -1637,7 +1640,7 @@ class DiscordSession:
 			return
 		line, tags = self.op_msg_parse(m, gg)
 		if not line: return # "m.type = joins/parts" can be used to track names here
-		if act == 'update': line = f'{self.conf.irc_prefix_edit}{line}'
+		if act == 'update': tags['_prefix'] = self.conf.irc_prefix_edit
 		else: flake = m.id
 		self.discord.cmd_msg_recv( self.t, cc,
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
@@ -1981,6 +1984,19 @@ class RDIRCD:
 		cmd_func = getattr(self, f'cmd_chan_sys_{name}', None)
 		if cmd_func: cmd_func(conn, chan, line)
 
+	def cmd_chan_sys_log_counts(self):
+		counts = self.conf._debug_counts
+		counts = (' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
+			sorted(((n, k.lower()) for n, k in logging._levelToName.items()), reverse=True)
+			if counts[k] > 0 ) + f' all={counts["all"]:,d}').strip()
+		return counts
+
+	def cmd_chan_sys_control_status(self, send):
+		sess_state = self.discord.st.get('state', 'none')
+		send('\n'.join([ 'Status:',
+			f'  discord-state: {sess_state}',
+			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ]))
+
 	def cmd_chan_sys_control(self, conn, chan, line):
 		line = line.strip().lower().split()
 		if not line: return
@@ -2002,16 +2018,6 @@ class RDIRCD:
 			send('discord: disconnecting')
 			self.discord.disconnect()
 
-	def cmd_chan_sys_control_status(self, send):
-		sess_state = self.discord.st.get('state', 'none')
-		counts = self.conf._debug_counts
-		counts = ' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
-			sorted(((n, k.lower()) for n, k in logging._levelToName.items()), reverse=True)
-			if counts[k] > 0 )
-		send('\n'.join([ 'Status:',
-			f'  discord-state: {sess_state}',
-			f'  log-msg-counts: {counts}' ]))
-
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
 		pt_n, pt_cut = (getattr(self.conf, f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
@@ -2030,20 +2036,23 @@ class RDIRCD:
 				'This channel is for logging output, with level=info by default,',
 				'  unless --debug is specified on command line, or [debug] verbose=yes in ini.',
 				f'Status:',
-				f'  logging level: {level}',
+				f'  log level: {level}',
+				f'  log msg counts: {self.cmd_chan_sys_log_counts()}',
 				f'  protocol log: {proto_log_info}',
 				f'  protocol log shared: {proto_log_shared}',
 				'Recognized commands here:',
-				'  level info - (alias: i) set level=info (default) logging in this channel',
-				'  level debug - (alias: d) enable level=debug logging in this channel (verbose)',
 				'  level warning - (alias: w) only dump warnings and errors here',
-				'  cache stats - (alias: cs) print hit/miss info on some cached stuff',
+				'  level info - (alias: i) set level=info (default) logging in this channel',
+				'    That mostly adds connection stuff - disconnects, reconnects, auth, etc.',
+				'  level debug - (alias: d) enable level=debug logging in this channel',
+				'    Includes protocol info (if shared), events, messages and everything else.',
 				'  proto {file} - enable irc/discord protocol logging to specified file',
 				'  proto off - (alias: px) disable irc/discord protocol logging',
 				'  proto share/unshare - (alias: ps/pu)',
 				'    whether to dump protocol logging (level=debug) to regular logs',
 				f'  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines',
-				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).' ]))
+				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).',
+				'  cache stats - (alias: cs) print hit/miss info on some internal caches' ]))
 		with contextlib.suppress(KeyError):
 			line = dict(
 				i='level info', d='level debug', w='level warning',
@@ -2105,7 +2114,7 @@ class RDIRCD:
 	def discord_msg( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None ):
 		if ts: self.conf.state_set(self.uid_start, ts)
-		name = self.cache.d2i.get(cc.did)
+		prefix, name = '', self.cache.d2i.get(cc.did)
 		if not name: return
 		if nick:
 			if nick not in cc.users: cc.users[nick] = adict(name=nick)
@@ -2114,19 +2123,22 @@ class RDIRCD:
 		if not conn: conn = conn_list[0] if conn_list else self.cmd_conn()
 		if not conn: return
 		if tags:
-			mt = DiscordSession.c_msg_tags
+			mt, prefix = DiscordSession.c_msg_tags, tags.pop('_prefix', prefix)
 			for k, (tt, v) in tags.items():
 				if tt == mt.user: v = '@' + self.irc_name(v)
 				elif tt == mt.chan: v = conn.chan_spec(self.cache.d2i.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
-		elif notice is None: notice = True
+		else:
+			nick = self.nick_sys
+			if notice is None: notice = True
 		if not direct:
-			conn.cmd_msg_synth( nick or self.nick_sys,
-				conn.chan_spec(self.c.chan_monitor), f'{name} :: {line}', notice=notice )
+			c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
+			for s in filter(None, line.splitlines()):
+				conn.cmd_msg_synth(nick, c, f'{name} :: {prefix}{s[:n]}', notice=notice)
 		for conn in conn_list:
-			conn.cmd_msg_synth( nick or self.nick_sys,
-				conn.chan_spec(name), line, notice=notice, direct=True )
+			conn.cmd_msg_synth( nick,
+				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
 
 
 

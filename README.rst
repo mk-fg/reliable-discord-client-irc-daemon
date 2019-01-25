@@ -228,7 +228,7 @@ anytime anyway.
 Channel Commands
 ````````````````
 
-| In special channels like #control, #debug and #monitor: send "h" or "help".
+| In special channels like #control and #debug: send "h" or "help".
 | All discord channels - send "/t" or "/topic".
 
 Local Name Aliases
