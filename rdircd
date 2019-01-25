@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.71' # git-version: py-str
+	version = '1.72' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1099,6 +1099,13 @@ class Discord:
 			self.log.exception('Failed sending discord msg: {}', err_str)
 			raise IRCBridgeSignal(err_str)
 
+	def cmd_chan_rename(self, acc, cc, name_new):
+		if acc != 'main': return
+		self.bridge.discord_msg( cc, None,
+			f'-----== Discord channel renamed: {cc.name!r} -> {name_new!r} ==-----' )
+		self.bridge.discord_msg( cc, None,
+			f'-----== !!! This channel will not get any more updates !!! ==-----' )
+
 
 
 class DiscordSession:
@@ -1589,7 +1596,7 @@ class DiscordSession:
 		for c in force_list(chans):
 			if c.type in [ct.voice, ct.group]: continue
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
-			name, topic = c.get('name'), c.get('topic')
+			name_old, name, topic = cc.get('name'), c.get('name'), c.get('topic')
 			if c.type in [ct.private, ct.private_group]:
 				ts= time.time()
 				dict_update( cc.users,
@@ -1598,6 +1605,8 @@ class DiscordSession:
 				user_names = list(u.name for u in cc.users.values())
 				name = self.op_ev_chans_priv_name(user_names)
 				if not topic: topic = 'private chat - ' + ', '.join(user_names)
+			if name_old and name != name_old:
+				self.discord.cmd_chan_rename(self.t, cc, name)
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', name=name, t=ct(c.get('type', 0)),
 				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
