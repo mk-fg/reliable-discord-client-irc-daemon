@@ -463,6 +463,7 @@ def iter_gather(cls, cache=False):
 				Any changes to specified keys of "d" will drop result cache for this call.
 				If any of these keys have adict value, shallow changes to it will propagate.'''
 	def _cls_wrapper(func):
+		if cache: stats_k = func.__name__ if cache is True else str(cache)
 		@ft.wraps(func)
 		def _wrapper(self, *args, **kws):
 			if not cache: return cls(func(self, *args, **kws))
@@ -472,6 +473,8 @@ def iter_gather(cls, cache=False):
 				cache_track = ft.partial(iter_gather_track, k)
 				args = [cache_track, *args]
 				iter_gather.cache[k] = cls(func(self, *args, **kws))
+				iter_gather.cache_stats[stats_k, 'miss'] += 1
+			else: iter_gather.cache_stats[stats_k, 'hit'] += 1
 			return iter_gather.cache[k]
 		return _wrapper
 	return _cls_wrapper
@@ -488,7 +491,7 @@ def iter_gather_track(cache_k, o, keys=None):
 	for k in keys or list():
 		if isinstance(o.get(k), adict): iter_gather_track(cache_k, o[k])
 
-iter_gather.cache = dict()
+iter_gather.cache, iter_gather.cache_stats = dict(), cs.Counter()
 
 
 class adict(cs.UserDict):
@@ -2025,6 +2028,7 @@ class RDIRCD:
 				'  level info - (alias: i) set level=info (default) logging in this channel',
 				'  level debug - (alias: d) enable level=debug logging in this channel (verbose)',
 				'  level warning - (alias: w) only dump warnings and errors here',
+				'  cache stats - (alias: cs) print hit/miss info on some cached stuff',
 				'  proto {file} - enable irc/discord protocol logging to specified file',
 				'  proto off - (alias: px) disable irc/discord protocol logging',
 				'  proto share/unshare - (alias: ps/pu)',
@@ -2033,8 +2037,9 @@ class RDIRCD:
 				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).' ]))
 		with contextlib.suppress(KeyError):
 			line = dict(
-				i='level info', d='level debug', w='level warning', px='proto off',
-				ps='proto share', pu='proto unshare', pt='proto tail' )[line[0]].split() + line[1:]
+				i='level info', d='level debug', w='level warning',
+				cs='cache stats', px='proto off', ps='proto share',
+				pu='proto unshare', pt='proto tail' )[line[0]].split() + line[1:]
 		cmd, arg = line[0], line[1] if len(line) >= 2 else None
 		if cmd == 'level' and len(line) == 2:
 			level = getattr(logging, arg.upper(), None)
@@ -2069,6 +2074,17 @@ class RDIRCD:
 					arg = f'file={path}'
 				else: arg = 'unavailable'
 				send(f'-- protocol log: {arg}')
+		elif cmd == 'cache':
+			if arg == 'stats':
+				send(f'-- cache stats:')
+				stats = dict()
+				for (k, t), n in iter_gather.cache_stats.items():
+					stats.setdefault(k, [0, 0])[t != 'hit'] = n
+				for k, (n_hit, n_miss) in stats.items():
+					send(
+						f'--- {k}: {n_hit:,d} / {n_hit + n_miss:,d}'
+						f' [{100 * n_hit / (n_hit + n_miss):.1f}%]' )
+				send(f'-- cache stats end')
 
 	def cmd_log(self, line):
 		conn = self.cmd_conn()
