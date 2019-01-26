@@ -211,7 +211,7 @@ def str_part(s, sep, default=None):
 	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
-def str_repr(s, prefix=False, max_len=50, ext=' ...[{s_len}]'):
+def str_repr(s, max_len=50, prefix=False, ext=' ...[{s_len}]'):
 	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
 	if not isinstance(s, str): s = str(s)
 	s_len, s_repr, ext_len = f'{len(s):,d}', repr(s)[1:-1], len(ext.format(s_len=9999))
@@ -2135,7 +2135,7 @@ class RDIRCD:
 		if not direct:
 			c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
 			for s in filter(None, line.splitlines()):
-				conn.cmd_msg_synth(nick, c, f'{name} :: {prefix}{s[:n]}', notice=notice)
+				conn.cmd_msg_synth(nick, c, f'{name} :: {prefix}{str_repr(s, n)}', notice=notice)
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick,
 				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
