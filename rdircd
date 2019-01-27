@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.74' # git-version: py-str
+	version = '1.76' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -525,8 +525,8 @@ class adict(cs.UserDict):
 	def __setattr__(self, k, v):
 		if k not in self.__slots__: self[k] = v
 		return super().__setattr__(k, v)
-
 	def __delattr__(self, k, v): del self[k]
+
 	def __setitem__(self, k, v):
 		super().__setitem__(k, v)
 		self._cache_cb_check(k, v)
@@ -1058,6 +1058,7 @@ class Discord:
 			flake_last = flake
 			for m in map(adict, msg_batch or list()):
 				line, tags = self.session.op_msg_parse(m, gg)
+				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
 				msg_list.append(adict( nick=m.author.username,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
@@ -1563,7 +1564,7 @@ class DiscordSession:
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
 		elif o == 'message_reaction': return self.op_react(m.d, act)
-		elif o in ['presences', 'presence', 'typing']: return
+		elif o in ['presences', 'presence', 'typing', 'channel_pins']: return
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
 		self.log.warning('Unhandled event: {}', self._repr(m))
@@ -1639,25 +1640,29 @@ class DiscordSession:
 			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
 			return
 		line, tags = self.op_msg_parse(m, gg)
-		if not line: return # "m.type = joins/parts" can be used to track names here
-		if act == 'update': tags['_prefix'] = self.conf.irc_prefix_edit
+		if not line: return # joins/parts/pins and such
+		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else: flake = m.id
 		self.discord.cmd_msg_recv( self.t, cc,
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
-		line = (m.get('content') or '').strip()
-		line, tags = self.op_msg_parse_tags(
-			line, m.get('mentions'), gg.chans, gg.get('roles') )
-		for att in m.get('attachments') or list():
-			url = att.get('url')
-			if not url:
-				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
-				continue
-			line += f'\n{self.conf.irc_prefix_attachment}{url}'
-		if not line:
-			if m.get('type') == self.c_msg_type.guild_member_join: pass
-			else: self.log.warning('Unhandled empty msg type: {}', self._repr(m))
+		tags, mt, line = dict(), m.get('type', ''), (m.get('content') or '').strip()
+		try:
+			mt = self.c_msg_type(int(mt))
+			if mt != self.c_msg_type.default: line = ''
+		except ValueError: # new unknown msg type - check how to handle
+			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
+			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
+		if line:
+			tags.update(self.op_msg_parse_tags(
+				line, m.get('mentions'), gg.chans, gg.get('roles') ))
+			for att in m.get('attachments') or list():
+				url = att.get('url')
+				if not url:
+					self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
+					continue
+				line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		return line, tags
 
 	def op_msg_parse_tags(self, line, users, chans, roles):
@@ -1677,7 +1682,7 @@ class DiscordSession:
 				elif t.lstrip('a').startswith(':'): v = mt.emo, t.lstrip('a')
 				else: v = mt.other, f'{t}{k}'
 				tags[k_src] = v
-		return line, tags
+		return tags
 
 	def op_react(self, m, act):
 		# user_id is also provided here, but not worth bothering with
