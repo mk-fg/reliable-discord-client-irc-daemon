@@ -1657,13 +1657,13 @@ class DiscordSession:
 		if line:
 			tags.update(self.op_msg_parse_tags(
 				line, m.get('mentions'), gg.chans, gg.get('roles') ))
-			for att in m.get('attachments') or list():
-				url = att.get('url')
-				if not url:
-					self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
-					continue
-				line += f'\n{self.conf.irc_prefix_attachment}{url}'
-		return line, tags
+		for att in m.get('attachments') or list():
+			url = att.get('url')
+			if not url:
+				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
+				continue
+			line += f'\n{self.conf.irc_prefix_attachment}{url}'
+		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, users, chans, roles):
 		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&)(\d+)>', line))
