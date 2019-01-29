@@ -11,7 +11,7 @@ Description
 Python3/asyncio daemon to present personal Discord_ client as local irc server,
 with a list of channels corresponding to ones available on all joined "discord
 servers" (group of users/channels with its own theme/auth/rules on discord,
-also referred to as "guilds" in API docs).
+also referred to as `"guilds" in API docs`_).
 
 Purpose is to be able to comfortably use discord via simple text-based IRC client,
 and not browser, electron app or anything of the sort.
@@ -22,6 +22,7 @@ all-in-same-order-or-nothing posting, which - somewhat surprisingly - other
 discord clients seem to be quite sloppy about.
 
 .. _Discord: http://discord.gg/
+.. _"guilds" in API docs: https://discordapp.com/developers/docs/resources/guild
 
 
 WARNING
@@ -187,8 +188,8 @@ Notes on information here:
 ``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
 
 Run ``/t`` (/topic) command to show more info on channel-specific commands,
-e.g. ``/t log`` to fetch and replay backlog since last rdircd shutdown time,
-``/t log list`` to list all the activity timestamps that rdircd tracks,
+e.g. ``/t log`` to fetch and replay backlog starting from last event before last
+rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tracks,
 or ``/t log 2019-01-08`` to fetch/dump channel log since specific date/time
 (in iso8601 format).
 
@@ -206,7 +207,8 @@ Requirements
 Misc Features
 -------------
 
-Notes on various optional and less obvious features are collected here.
+| Notes on various optional and less obvious features are collected here.
+| See "Usage" section for a more general information.
 
 Multiple Config Files
 `````````````````````
@@ -243,6 +245,18 @@ easily readable::
 (to turn e.g. #jvpp.info into #game-X.info)
 
 Currently only implemented for guild IDs in IRC channel names.
+
+Lookup Discord IDs
+``````````````````
+
+Mostly useful for debugging - /who command can resolve specified ID
+(e.g. channel_id from protocol logs) to a channel/user/guild info:
+
+- ``/who #123456`` - find/describe channel with id=123456.
+- ``/who @123456`` - user id lookup.
+- ``/who %123456`` - guild id info.
+
+Note that all these ID values are globally-unique for discord.
 
 
 API and Implementation Notes

@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.77' # git-version: py-str
+	version = '1.79' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -27,6 +27,7 @@ class RDIRCDConfigBase:
 	irc_uid_seed = ''
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
+	irc_prefix_embed = '[em.{}] '
 	irc_names_timeout = '1d' # time since last activity
 	irc_len_hwm = 450 # will probably still work with most clients
 	irc_len_lwm = 300
@@ -236,6 +237,13 @@ def tuple_hash(t, c=None, key='rdircd'):
 	return str_hash(s, c=c, key=key)
 
 
+def data_repr(data):
+	pp = getattr(data_repr, '_pp', None)
+	if not pp:
+		import pprint as pp
+		pp = data_repr._pp = pp.PrettyPrinter(indent=2, width=100, compact=True)
+	return pp.pformat(data)
+
 def force_list(v):
 	if not v: v = list()
 	elif isinstance(v, cs_abc.ValuesView): v = list(v)
@@ -313,6 +321,7 @@ def token_bucket(spec, negative_tokens=False):
 		val = (yield val) or 1
 
 async def await_wrap(res):
+	if not inspect.isawaitable(res) and callable(res): res = res()
 	if inspect.isawaitable(res): res = await res
 	return res
 
@@ -975,6 +984,10 @@ class IRCProtocol:
 		if direct: return self.send(f':{src} {msg_type} {target} :{text}')
 		self.cmd_msg(src, target, text, notice=True, msg_type=msg_type)
 
+	def cmd_msg_self(self, src, text, notice=True):
+		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
+		self.send(f':{src} {msg_type} {self.st.nick} :{text}')
+
 	# Some of following user/server/channel-info cmds
 	#  can be (ab)used to provide discord user/channel info.
 	# Currently this isn't stored or queried anywhere,
@@ -985,12 +998,15 @@ class IRCProtocol:
 			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
 		else: self.send(401, nick, ':No such nick/channel')
 
-	def recv_cmd_who(self, nick):
-		conn = self.bridge.cmd_conn_map().get(nick)
-		if conn:
-			self.send( 352, '*', conn.st.user, conn.st.host,
-				self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
-		self.send(315, nick, ':End of /WHO list.')
+	def recv_cmd_who(self, name):
+		if re.search(r'^[#@%]\d+$', name):
+			self.bridge.cmd_delay(self.bridge.cmd_info(self, name[0], name[1:]))
+		else:
+			conn = self.bridge.cmd_conn_map().get(name)
+			if conn:
+				self.send( 352, '*', conn.st.user, conn.st.host,
+					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
+		self.send(315, name, ':End of /WHO list.')
 
 	# recv_cmd_whois
 	# recv_cmd_whowas
@@ -1065,6 +1081,12 @@ class Discord:
 				if int(m.id) > int(flake): flake = m.id
 			if flake == flake_last or len(msg_list) < lwm: break
 		return sorted(msg_list, key=op.itemgetter('ts'))
+
+	async def cmd_info_dump(self, info_url):
+		if not self.session: return f'No info for {info_url}: no discord session'
+		try: info = await self.session.req(info_url)
+		except DiscordHTTPError as err: return f'No info for {info_url}: {err}'
+		return data_repr(info)
 
 	def cmd_msg_recv(self, acc, cc, nick, line,
 			tags=None, flake=None, nonce=None, notice=None ):
@@ -1157,6 +1179,8 @@ class DiscordSession:
 		channel_icon_change = 5
 		channel_pinned_message = 6
 		guild_member_join = 7
+		# Negative values are internal types
+		bot_embeds = -1001
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
@@ -1301,8 +1325,13 @@ class DiscordSession:
 			body = await res.text()
 			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
 		if not raw:
-			res_raw, res = res, await res.json()
-			res_raw.release()
+			res_raw = res
+			try: res = await res.json()
+			except aiohttp.ContentTypeError:
+				body = await res.text()
+				raise DiscordHTTPError(
+					f'[{res.status}] non-JSON data ({res.content_type}) - {body}' ) from None
+			finally: res_raw.release()
 		res_repr = str(res)
 		if '\n' in res_repr: res_repr = (res_repr.strip() + ' ').splitlines()[0]
 		self.log_http.debug('<<  {}', self._repr(res_repr), extra=('<< ', res_repr))
@@ -1637,7 +1666,7 @@ class DiscordSession:
 		flake, author = None, m.get('author')
 		if not author:
 			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
-			else: self.log.warning('Unhandled empty msg type: {} [{}]', self._repr(m), act)
+			else: self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 			return
 		line, tags = self.op_msg_parse(m, gg)
 		if not line: return # joins/parts/pins and such
@@ -1647,16 +1676,30 @@ class DiscordSession:
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
+		# Note: must produce non-empty message for any relevant msg type
 		tags, mt, line = dict(), m.get('type', ''), (m.get('content') or '').strip()
 		try:
-			mt = self.c_msg_type(int(mt))
-			if mt != self.c_msg_type.default: line = ''
+			if not mt and m.get('author', dict()).get('bot') and m.get('embeds'):
+				mt = self.c_msg_type.bot_embeds
+			else:
+				mt = self.c_msg_type(int(mt))
+				if mt != self.c_msg_type.default: line = ''
 		except ValueError: # new unknown msg type - check how to handle
 			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
 		if line:
 			tags.update(self.op_msg_parse_tags(
 				line, m.get('mentions'), gg.chans, gg.get('roles') ))
+		if mt == self.c_msg_type.bot_embeds:
+			for n, em in enumerate(m.embeds):
+				pre = self.conf.irc_prefix_embed.format(tuple_hash((m.id, n), 3))
+				if em.get('author'):
+					info = ' '.join(em.author.get(k, '') for k in ['name', 'url']).strip()
+					if info: line += f'\n{pre}[author] {info}'
+				if em.get('title'): line += f'\n{pre}-- {em.title.strip()} --'
+				if em.get('description'):
+					info = (dl.strip() for dl in em.description.splitlines())
+					for info in filter(None, info): line += f'\n{pre}{info}'
 		for att in m.get('attachments') or list():
 			url = att.get('url')
 			if not url:
@@ -1841,7 +1884,7 @@ class RDIRCD:
 				'    "state" value can be either a number, state-id, relative or iso8601 timestamp.',
 				'    Where number indicates last Nth state recorded in the config (0 - current).',
 				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
-				'      starting from last rdircd shutdown time, recorded under [state] in the ini.',
+				'     starting from last ev before last rdircd shutdown (saved under [state] in ini).',
 				'  log list - list recorded state ids/timestamps, most recent one last.', '---' ]) )
 		try:
 			if cmd[0] == 'set':
@@ -1928,7 +1971,7 @@ class RDIRCD:
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			else: raise ValueError(delay)
 		if delay: self.tasks.add(asyncio.sleep(delay), func)
-		else: self.tasks.add(await_wrap(func()))
+		else: self.tasks.add(await_wrap(func))
 
 	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
@@ -2119,6 +2162,13 @@ class RDIRCD:
 		conn.cmd_msg_synth( self.nick_sys,
 			conn.chan_spec(self.c.chan_debug), line )
 
+	async def cmd_info(self, conn, t, id_str):
+		t = {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
+		info_url = f'{t}/{id_str}'
+		info = await self.discord.cmd_info_dump(info_url)
+		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] info follows')
+		conn.cmd_msg_self(self.nick_sys, info)
+		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] end')
 
 	def discord_msg( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None ):
