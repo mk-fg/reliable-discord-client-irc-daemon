@@ -1096,7 +1096,7 @@ class Discord:
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut: return fut.set_result(flake)
-		self.bridge.discord_msg( cc, nick, line,
+		self.bridge.cmd_msg_discord( cc, nick, line,
 			tags, notice=notice, ts=self.flake_parse(flake) )
 
 	async def cmd_msg_send(self, cc, line):
@@ -1127,10 +1127,14 @@ class Discord:
 
 	def cmd_chan_rename(self, acc, cc, name_new):
 		if acc != 'main': return
-		self.bridge.discord_msg( cc, None,
+		self.bridge.cmd_msg_discord( cc, None,
 			f'-----== Discord channel renamed: {cc.name!r} -> {name_new!r} ==-----' )
-		self.bridge.discord_msg( cc, None,
+		self.bridge.cmd_msg_discord( cc, None,
 			f'-----== !!! This channel will not get any more updates !!! ==-----' )
+
+	def cmd_guild_ban(self, acc, act, guild_name, name):
+		if acc != 'main': return
+		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}')
 
 
 
@@ -1582,10 +1586,12 @@ class DiscordSession:
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
+		elif o == 'guild_member': return # not tracking per-guild users in any way
+		elif o == 'guild_ban':
+			if act == ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'channel':
 			if act in ['create', 'update']: return self.op_ev_chans(gid, m.d)
 			elif act == 'delete': return self.op_ev_delete(gid, chan=m.d.id)
-		elif o == 'guild_member': return # not tracking per-guild users in any way
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
 			elif act == 'ack': return # reading private chats from browser
@@ -1652,6 +1658,13 @@ class DiscordSession:
 			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
 			if n <= 1 or len(name) <= max_len: return name[:max_len]
 			n -= 1
+
+	def op_ev_ban(self, m, act):
+		gg = self.st.guilds.get(m.guild_id)
+		guild_name = gg.name if gg else f'%{m.guild_id}'
+		name = m.get('user', dict())
+		name = name.get('username') or f'@{name.get("id")}'
+		self.discord.cmd_guild_ban(self.t, act, guild_name, name)
 
 	def op_msg(self, m, act):
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
@@ -1924,7 +1937,7 @@ class RDIRCD:
 					if not msg_list: return notice_cmd('--- no new messages')
 					for m in msg_list:
 						line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
-						self.discord_msg(info.cc, m.nick, line, m.tags, conn=conn)
+						self.cmd_msg_discord(info.cc, m.nick, line, m.tags, conn=conn)
 					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
 				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
 			else: raise IRCBridgeSignal(f'Unrecognized channel-topic cmd: {line}')
@@ -2170,7 +2183,12 @@ class RDIRCD:
 		conn.cmd_msg_self(self.nick_sys, info)
 		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] end')
 
-	def discord_msg( self, cc, nick, line,
+	def cmd_msg_monitor(self, msg, notice=True):
+		conn = self.cmd_conn()
+		c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
+		conn.cmd_msg_synth(self.nick_sys, c, str_repr(msg, n), notice=notice)
+
+	def cmd_msg_discord( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None ):
 		if ts: self.conf.state_set(self.uid_start, ts)
 		prefix, name = '', self.cache.d2i.get(cc.did)
