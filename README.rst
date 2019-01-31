@@ -256,7 +256,7 @@ Mostly useful for debugging - /who command can resolve specified ID
 - ``/who @123456`` - user id lookup.
 - ``/who %123456`` - guild id info.
 
-Note that all these ID values are globally-unique for discord.
+All these ID values are unique for discord within their type.
 
 
 API and Implementation Notes

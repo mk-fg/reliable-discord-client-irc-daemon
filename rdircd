@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.79' # git-version: py-str
+	version = '1.80' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1611,7 +1611,7 @@ class DiscordSession:
 		else: self.st.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guild, sync=False):
-		gs_new, gs_meta = {1: self.st.me}, list()
+		gs_new, gs_chans = {1: self.st.me}, dict()
 		for g in force_list(guild):
 			if g.get('unavailable'): continue # can be sent in "ready" event
 			if g.id == self.st.me.id or g.name == self.st.me.name:
@@ -1624,9 +1624,9 @@ class DiscordSession:
 			gg.update(
 				name=g.name, ts_joined=ts_joined,
 				roles=adict((r.id, r) for r in g.get('roles', list())) )
-			gs_meta.append((g.id, g.get('channels')))
+			if 'channels' in g: gs_chans[g.id] = g.channels # missing in guild_update evs
 		dict_update(self.st.guilds, gs_new, sync=sync)
-		for gid, chans in gs_meta: self.op_ev_chans(gid, chans, sync=True)
+		for gid, chans in gs_chans.items(): self.op_ev_chans(gid, chans, sync=True)
 
 	def op_ev_chans(self, gid, chans, sync=False):
 		gg = self.st.guilds.get(gid)
@@ -1671,7 +1671,7 @@ class DiscordSession:
 		if gg: cc = gg.chans.get(m.channel_id)
 		if not cc:
 			return self.log.warning( 'Dropped msg event with unknown guild/channel'
-				' id: msg_id={} guild_id={} channel_id={}', m.guild_id, m.id, m.channel_id )
+				' id: msg_id={} guild_id={} channel_id={}', m.id, m.guild_id, m.channel_id )
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( self.t, cc,
