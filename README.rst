@@ -258,6 +258,27 @@ Mostly useful for debugging - /who command can resolve specified ID
 
 All these ID values are unique for discord within their type.
 
+asyncio ERROR :: Fatal read error on socket transport
+`````````````````````````````````````````````````````
+
+Rarely this error might pop-up randomly, when websocket connection is patchy::
+
+  asyncio ERROR :: Fatal read error on socket transport
+  protocol: <asyncio.sslproto.SSLProtocol object at 0x7f057da99080>
+  transport: <_SelectorSocketTransport fd=9 read=polling write=<idle, bufsize=0>>
+  Traceback (most recent call last):
+    File "/usr/lib/python3.7/asyncio/selector_events.py", line 801, in _read_ready__data_received
+      data = self._sock.recv(self.max_size)
+  TimeoutError: [Errno 110] Connection timed out
+
+It's a problem in python3 asyncio, as described in `Python Issue 34148`_ and `PR#11576`_.
+
+Should be harmless, especially as both websocket and discord protocols have
+built-in keepalives to work around any kind of underlying connection problems.
+
+.. _Python Issue 34148: https://bugs.python.org/issue34148
+.. _PR#11576: https://github.com/python/cpython/pull/11576
+
 
 API and Implementation Notes
 ----------------------------
