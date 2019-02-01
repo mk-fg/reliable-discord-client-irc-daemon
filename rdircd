@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.81' # git-version: py-str
+	version = '1.82' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1568,7 +1568,7 @@ class DiscordSession:
 			if self.st.hb_ts_ack < ts - interval*2:
 				self.state('heartbeat.fail')
 				self.log.error('Missing heartbeat ack, reconnecting')
-				return await self.ws_close()
+				return self.tasks.add(self.ws_close)
 			while hb_ts <= ts: hb_ts += interval
 			delay = hb_ts - ts
 			await asyncio.sleep(delay)
