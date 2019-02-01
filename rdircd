@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.83' # git-version: py-str
+	version = '1.85' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -37,7 +37,7 @@ class RDIRCDConfigBase:
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
-	discord_msg_confirm_timeout = 10.0
+	discord_msg_confirm_timeout = 25.0
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
 	discord_ws_reconnect_min = '65.0'
@@ -46,6 +46,8 @@ class RDIRCDConfigBase:
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
+	discord_http_timeout_conn = 40.0
+	discord_http_timeout_conn_sock = 30.0
 	discord_gateway = ''
 
 	auth_main_email = ''
@@ -320,12 +322,13 @@ def token_bucket(spec, negative_tokens=False):
 			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
 		val = (yield val) or 1
 
-async def await_wrap(res):
+
+async def aio_await_wrap(res):
 	if not inspect.isawaitable(res) and callable(res): res = res()
 	if inspect.isawaitable(res): res = await res
 	return res
 
-async def task_cancel(task_list):
+async def aio_task_cancel(task_list):
 	'Cancel and await a task or a list of such, which can have empty values mixed-in.'
 	if inspect.isawaitable(task_list): task_list = [task_list]
 	task_list = list(filter(None, task_list))
@@ -333,6 +336,21 @@ async def task_cancel(task_list):
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): await task
+
+async def aio_wait_or_cancel(
+		loop, task, timeout, default=..., cancel_suppress=None ):
+	'Like asyncio.wait_for, but also awaits the task that it cancels.'
+	if asyncio.iscoroutine(task): task = loop.create_task(task)
+	try: return await asyncio.wait_for(task, timeout)
+	except asyncio.TimeoutError:
+		if default is ...:
+			err = sys.exc_info()
+			err = err[1].with_traceback(err[2])
+		task.cancel()
+		with contextlib.suppress(
+			asyncio.CancelledError, *(cancel_suppress or list()) ): await task
+		if default is ...: raise err from None
+		else: return default
 
 
 class StacklessContext:
@@ -344,7 +362,7 @@ class StacklessContext:
 	async def __aexit__(self, *err):
 		if self.tasks:
 			task_list, self.tasks = self.tasks.values(), None
-			await task_cancel(task_list)
+			await aio_task_cancel(task_list)
 	async def close(self): await self.__aexit__(None, None, None)
 
 	def add_task(self, coro, run_after=None):
@@ -735,14 +753,14 @@ class IRCProtocol:
 			return self.send(421, ':Unknown command')
 		if not self.check_access(m.cmd):
 			return self.log.error('Out-of-order cmd: {!r}', self._repr(line_raw))
-		if cmd_ps_n is None: await await_wrap(cmd_func(m))
+		if cmd_ps_n is None: await aio_await_wrap(cmd_func(m))
 		else:
 			(a, b), n = cmd_ps_n, len(m.params)
 			if not a <= n <= b:
 				self.log.error( 'Command/args'
 					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr(line) )
 				return self.send(461, ':Incorrect command parameters')
-			try: await await_wrap(cmd_func(*m.params))
+			try: await aio_await_wrap(cmd_func(*m.params))
 			except Exception as err:
 				self.send(400, m.cmd.upper(), f':BUG - Internal Error - {err_fmt(err)}')
 				self.log.exception('Error processing message: {}', m)
@@ -1043,7 +1061,7 @@ class Discord:
 		return self
 
 	async def __aexit__(self, *err):
-		if self.session: await task_cancel(self.session.task)
+		if self.session: await aio_task_cancel(self.session.task)
 
 	def connect(self):
 		if self.session: self.session.connect()
@@ -1103,18 +1121,20 @@ class Discord:
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 		try:
 			nonce = self.flake_build(time.time())
-			fut = self.msg_confirms[nonce] = asyncio.Future()
-			res = await self.session.req(
+			res = self.loop.create_task(self.session.req(
 				f'channels/{cc.id}/messages',
-				m='post', json=dict(content=line, nonce=nonce) )
-			try: flake_res = res['id']
-			except: raise DiscordError(f'Invalid response: {res}')
+				m='post', json=dict(content=line, nonce=nonce) ))
+			fut = self.msg_confirms[nonce] = asyncio.Future()
 			try:
-				flake_gw = await asyncio.wait_for( fut,
+				flake_gw, res = await aio_wait_or_cancel(
+					self.loop, asyncio.gather(fut, res),
 					self.conf.discord_msg_confirm_timeout )
 			except asyncio.TimeoutError:
-				self.msg_confirms.pop(nonce, None)
+				await aio_task_cancel(res)
 				raise IRCBridgeSignal('msg-confirm-timed-out')
+			finally: self.msg_confirms.pop(nonce, None)
+			try: flake_res = res['id']
+			except: raise DiscordError(f'Invalid response: {res}')
 			if flake_gw != flake_res:
 				self.log.warning( 'Same-nonce sent/received'
 					' msg-id mismatch: {} != {}', flake_gw, flake_res )
@@ -1207,7 +1227,9 @@ class DiscordSession:
 		if not (self.get_auth('email') and self.get_auth('password')):
 			raise DiscordSessionError('Missing account auth credentials')
 		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext(self.log)
-		aiohttp_opts = adict()
+		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
+			connect=self.conf.discord_http_timeout_conn,
+			sock_connect=self.conf.discord_http_timeout_conn_sock ))
 		if self.conf.debug_proto_aiohttp:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
@@ -1308,8 +1330,7 @@ class DiscordSession:
 
 	async def req( self, url, m='get',
 			route=None, auth=True, raw=False, **kws ):
-		if not re.search(r'^https?:', url):
-			url = urllib.parse.urljoin(self.api_url, url)
+		if not re.search(r'^https?:', url): url = urllib.parse.urljoin(self.api_url, url)
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
 			'User-Agent', self.conf.discord_user_agent )
@@ -1449,7 +1470,7 @@ class DiscordSession:
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
 					handled = True
-					status = await await_wrap(h.func(msg_data))
+					status = await aio_await_wrap(h.func(msg_data))
 					if status is self.c.oneshot: hs_discard.add(k)
 				for k in hs_discard: self.ws_handlers.pop(k, None)
 				if not handled:
@@ -1985,7 +2006,7 @@ class RDIRCD:
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			else: raise ValueError(delay)
 		if delay: self.tasks.add(asyncio.sleep(delay), func)
-		else: self.tasks.add(await_wrap(func))
+		else: self.tasks.add(aio_await_wrap(func))
 
 	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
