@@ -1620,8 +1620,8 @@ class DiscordSession:
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
 		elif o == 'message_reaction': return self.op_react(m.d, act)
-		elif o in [ 'presences', 'presence', 'typing', 'channel_pins',
-			'guild_emojis', 'guild_integrations', 'guild_member', 'webhooks' ]: return
+		elif o in [ 'presences', 'presence', 'typing', 'channel_pins', 'webhooks',
+			'guild_emojis', 'guild_integrations', 'guild_member', 'guild_role' ]: return
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
 		self.log.warning('Unhandled event: {}', self._repr(m))
