@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.86' # git-version: py-str
+	version = '1.87' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -373,10 +373,10 @@ class StacklessContext:
 		task_id = None
 		async def _task_wrapper(coro=coro):
 			try:
-				await coro
+				await aio_await_wrap(coro)
 				if run_after:
 					coro = run_after()
-					if asyncio.isawaitable(coro): await coro
+					await aio_await_wrap(coro)
 			except asyncio.CancelledError: pass
 			except Exception as err:
 				self.log.exception('Background task failed: {} - {}', coro, err_fmt(err))
