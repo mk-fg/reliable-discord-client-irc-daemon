@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.87' # git-version: py-str
+	version = '1.88' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -327,6 +327,7 @@ def token_bucket(spec, negative_tokens=False):
 
 
 async def aio_await_wrap(res):
+	'Wraps coroutine, callable that creates one or any other awaitable.'
 	if not inspect.isawaitable(res) and callable(res): res = res()
 	if inspect.isawaitable(res): res = await res
 	return res
@@ -1412,7 +1413,8 @@ class DiscordSession:
 				self.state('connecting.ws.cached')
 			else:
 				self.state('connecting.ws.get-url')
-				self.conf.discord_gateway = (await self.req('gateway', auth=False))['url']
+				try: self.conf.discord_gateway = (await self.req('gateway', auth=False))['url']
+				except aiohttp.ClientError as err: break
 				self.conf.update_file_section('discord', 'gateway')
 			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
 			query = urllib.parse.parse_qs(parts.query)
