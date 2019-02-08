@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.88' # git-version: py-str
+	version = '1.90' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -33,6 +33,7 @@ class RDIRCDConfigBase:
 	irc_len_lwm = 300
 	irc_len_topic = 300 # cannot be split, so is truncated instead
 	irc_len_monitor = 350 # to tuncate long lines in #monitor
+	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #monitor
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 
 	discord_auto_connect = True
@@ -2210,14 +2211,23 @@ class RDIRCD:
 		conn.cmd_msg_self(self.nick_sys, info)
 		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] end')
 
-	def cmd_msg_monitor(self, msg, notice=True):
-		conn = self.cmd_conn()
+	def cmd_msg_monitor(self, msg, conn=None, nick=None, pre='', notice=True):
+		if not conn: conn = self.cmd_conn()
+		if not conn: return
+		lines, n = list(filter(None, msg.splitlines())), self.conf.irc_len_monitor_lines
+		if len(lines) > n:
+			lines_n, lines = len(lines), lines[:n]
+			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
 		c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
-		conn.cmd_msg_synth( self.nick_sys, c,
-			str_repr(msg, n, len_bytes=True), notice=notice )
+		nick = nick or self.nick_sys
+		for s in lines:
+			conn.cmd_msg_synth( nick, c,
+				f'{pre}{str_repr(s, n, len_bytes=True)}', notice=notice )
 
 	def cmd_msg_discord( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None ):
+		# Must be synchronous wrt all discord data,
+		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
 		prefix, name = '', self.cache.d2i.get(cc.did)
 		if not name: return
@@ -2238,10 +2248,8 @@ class RDIRCD:
 			nick = self.nick_sys
 			if notice is None: notice = True
 		if not direct:
-			c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
-			for s in filter(None, line.splitlines()):
-				conn.cmd_msg_synth( nick, c,
-					f'{name} :: {prefix}{str_repr(s, n, len_bytes=True)}', notice=notice )
+			self.cmd_msg_monitor( line, conn=conn,
+				nick=nick, pre=f'{name} :: {prefix}', notice=notice )
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick,
 				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
