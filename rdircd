@@ -889,8 +889,6 @@ class IRCProtocol:
 			c = self.req_chan_info(chan, cm=chan_map, check=False)
 			name = c.name if c else self.chan_name(chan)
 			self.send(f':{self.st.nick} JOIN {chan}')
-			self.send_topic(chan, c=c)
-			self.send_names(chan, own=True, c=c)
 			self.send(f'MODE {chan} +v {self.st.nick}')
 			self.st.chans.add(name)
 
