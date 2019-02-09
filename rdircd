@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.90' # git-version: py-str
+	version = '1.91' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -694,7 +694,8 @@ class IRCProtocol:
 
 	def send(self, line_or_code, *args, max_len=None, auto_split=True):
 		line = line_or_code
-		if isinstance(line, int): line = f'{line:03d} {self.st.nick or "*"}'
+		if isinstance(line, int):
+			line = f':{self.bridge.server_host} {line:03d} {self.st.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
 		if max_len is None: max_len = self.conf.irc_len_hwm
@@ -889,6 +890,8 @@ class IRCProtocol:
 			c = self.req_chan_info(chan, cm=chan_map, check=False)
 			name = c.name if c else self.chan_name(chan)
 			self.send(f':{self.st.nick} JOIN {chan}')
+			self.send_topic(chan, c=c)
+			self.send_names(chan, own=True, c=c)
 			self.send(f'MODE {chan} +v {self.st.nick}')
 			self.st.chans.add(name)
 
