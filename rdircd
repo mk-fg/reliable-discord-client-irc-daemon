@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.91' # git-version: py-str
+	version = '1.92' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1406,7 +1406,7 @@ class DiscordSession:
 		if self.ws_ctx: return
 		self.state('connecting.init')
 		self.ws_ctx = ctx = contextlib.AsyncExitStack()
-		self.ws_tasks, self.ws_handlers = StacklessContext(self.log), dict()
+		self.ws, self.ws_tasks, self.ws_handlers = None, StacklessContext(self.log), dict()
 		ctx.push_async_callback(self.ws_close)
 		self.ws_closed.clear()
 		for cache in True, False:
@@ -1416,7 +1416,10 @@ class DiscordSession:
 			else:
 				self.state('connecting.ws.get-url')
 				try: self.conf.discord_gateway = (await self.req('gateway', auth=False))['url']
-				except aiohttp.ClientError as err: break
+				except aiohttp.ClientError as err:
+					self.state('connecting.ws.error')
+					self.log.info('Failed to fetch discord gateway URL: {}', err_fmt(err))
+					continue # ws_connect will fail
 				self.conf.update_file_section('discord', 'gateway')
 			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
 			query = urllib.parse.parse_qs(parts.query)
