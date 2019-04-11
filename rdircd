@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.93' # git-version: py-str
+	version = '1.95' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -44,6 +44,7 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_min = '65.0'
 	discord_ws_reconnect_max = '700.0'
 	discord_ws_reconnect_factor = 1.6
+	discord_ws_reconnect_warn = '3600:3' # to filter-out expected reconnects
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -1375,9 +1376,14 @@ class DiscordSession:
 		opts = adict((k, parse_duration(getattr( self.conf,
 			f'discord_ws_reconnect_{k}' ))) for k in ['min', 'max'])
 		opts.factor = self.conf.discord_ws_reconnect_factor
+		reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
 		interval = opts.min
 		self.log.debug('Starting ws_connect_loop...')
 		while self.ws_enabled:
+			if next(reconn_warn_tb):
+				self.log.warn( 'Reconnecting to discord faster than {},'
+						' can be persistent problem, switch logging to INFO for details',
+					self.conf.discord_ws_reconnect )
 			try: await self.ws_connect()
 			except DiscordSessionError as err:
 				self.log.info('Connection failure, retrying in {:.1f}s: {}', interval, err)
