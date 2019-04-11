@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.92' # git-version: py-str
+	version = '1.93' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -599,7 +599,7 @@ class IRCProtocol:
 				log = get_logger('rdircd.irc.factory')
 				log.exception('Failed to initialize ircd protocol: {}', err_fmt(err))
 				log.critical('Stopping daemon due to unhandled protocol error')
-				loop.stop()
+				rdircd.loop.stop()
 		return _wrapper
 
 	def __init__(self, rdircd):
@@ -1442,7 +1442,7 @@ class DiscordSession:
 		else: self.ws = None
 		if not self.ws:
 			self.state('connecting.ws.fail')
-			self.ws_closed.set()
+			await self.ws_close()
 			raise DiscordSessionError('Failed to connect to discord')
 		self.state('connected')
 		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
@@ -2611,7 +2611,7 @@ def main(args=None, conf=None):
 	try:
 		addrinfo = socket.getaddrinfo( host, str(port),
 			family=family, type=socket.SOCK_STREAM, proto=socket.IPPROTO_TCP )
-		if not addrinfo: raise socket.gaierror('No addrinfo for host: {}'.format(host))
+		if not addrinfo: raise socket.gaierror(f'No addrinfo for host: {host}')
 	except (socket.gaierror, socket.error) as err:
 		parser.error( 'Failed to resolve irc socket parameters (address, family)'
 			' via getaddrinfo: {!r} - [{}] {}'.format((host, port), err.__class__.__name__, err) )
