@@ -1625,7 +1625,7 @@ class DiscordSession:
 			elif act == 'delete': return self.op_ev_delete(gid)
 		elif o == 'guild_member': return # not tracking per-guild users in any way
 		elif o == 'guild_ban':
-			if act == ['add', 'remove']: return self.op_ev_ban(m.d, act)
+			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'channel':
 			if act in ['create', 'update']: return self.op_ev_chans(gid, m.d)
 			elif act == 'delete': return self.op_ev_delete(gid, chan=m.d.id)
