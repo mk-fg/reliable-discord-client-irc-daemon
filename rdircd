@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.97' # git-version: py-str
+	version = '1.99' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1635,7 +1635,7 @@ class DiscordSession:
 		elif mt == 'message_delete_bulk': # can maybe shorten notice-spam here somehow
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
-		elif o == 'message_reaction': return self.op_react(m.d, act)
+		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif o in [ 'presences', 'presence', 'typing', 'channel_pins', 'webhooks',
 			'guild_emojis', 'guild_integrations', 'guild_member', 'guild_role' ]: return
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
@@ -1787,6 +1787,7 @@ class DiscordSession:
 			emo_id, emo = m.emoji.get('id'), m.emoji.get('name') or ''
 			if emo_id and len(emo) != 1: emo = f'[{emo_id}]' if not emo else f':{emo}:'
 		except KeyError: emo = ''
+		if act == 'remove_all': act, emo = '', f'-all'
 		if emo:
 			if act == 'add': act, emo = '', f'+{emo}'
 			elif act == 'remove': act, emo = '', f'-{emo}'
@@ -2136,7 +2137,7 @@ class RDIRCD:
 				proto_log_info = ( 'disabled' if proto_log_info == 'warning'
 					else f'enabled, file={self.conf._debug_proto.get_file()}' )
 			return send('\n'.join(f'-- {line}' for line in [
-				'This channel is for logging output, with level=info by default,',
+				'This channel is for logging output, with level=warning by default,',
 				'  unless --debug is specified on command line, or [debug] verbose=yes in ini.',
 				f'Status:',
 				f'  log level: {level}',
