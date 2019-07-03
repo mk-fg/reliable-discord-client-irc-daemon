@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.96' # git-version: py-str
+	version = '1.97' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -706,7 +706,7 @@ class IRCProtocol:
 				m = self._parse(line)
 				if m.cmd in ['privmsg', 'notice']: return self.send_split_msg(m)
 			if len(line) > max_len:
-				self.log.warning('Sending line with >{}B: {!r}', max_len, self._repr(line))
+				self.log.info('Sending line with >{}B: {!r}', max_len, self._repr(line))
 		if b'\n' in line: raise IRCProtocolError(f'Line with newlines: {line!r}')
 		line += b'\r\n'
 		self.data_send(line)
