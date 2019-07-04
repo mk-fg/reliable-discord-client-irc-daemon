@@ -1381,7 +1381,7 @@ class DiscordSession:
 		self.log.debug('Starting ws_connect_loop...')
 		while self.ws_enabled:
 			if next(reconn_warn_tb):
-				self.log.warn( 'Reconnecting to discord faster than {},'
+				self.log.warning( 'Reconnecting to discord faster than {},'
 						' can be persistent problem, see info/debug/protocol logs for details',
 					self.conf.discord_ws_reconnect_warn )
 			try: await self.ws_connect()
