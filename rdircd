@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.100' # git-version: py-str
+	version = '1.101' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -342,21 +342,6 @@ async def aio_task_cancel(task_list):
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): await task
-
-async def aio_wait_or_cancel(
-		loop, task, timeout, default=..., cancel_suppress=None ):
-	'Like asyncio.wait_for, but also awaits the task that it cancels.'
-	if asyncio.iscoroutine(task): task = loop.create_task(task)
-	try: return await asyncio.wait_for(task, timeout)
-	except asyncio.TimeoutError:
-		if default is ...:
-			err = sys.exc_info()
-			err = err[1].with_traceback(err[2])
-		task.cancel()
-		with contextlib.suppress(
-			asyncio.CancelledError, *(cancel_suppress or list()) ): await task
-		if default is ...: raise err from None
-		else: return default
 
 
 class StacklessContext:
@@ -1133,9 +1118,8 @@ class Discord:
 				m='post', json=dict(content=line, nonce=nonce) ))
 			fut = self.msg_confirms[nonce] = asyncio.Future()
 			try:
-				flake_gw, res = await aio_wait_or_cancel(
-					self.loop, asyncio.gather(fut, res),
-					self.conf.discord_msg_confirm_timeout )
+				flake_gw, res = await asyncio.wait_for(
+					asyncio.gather(fut, res), self.conf.discord_msg_confirm_timeout )
 			except asyncio.TimeoutError:
 				await aio_task_cancel(res)
 				raise IRCBridgeSignal('msg-confirm-timed-out')
