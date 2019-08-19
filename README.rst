@@ -145,7 +145,7 @@ Install script dependencies (see Requirements section below)::
   % pip3 install --user aiohttp
 
 Create configuration file with discord and ircd auth credentials in ~/.rdircd.ini
-(see all the --conf\* opts wrt these)::
+(see all --conf\* opts wrt these)::
 
   [irc]
   password = hunter2
@@ -223,6 +223,7 @@ and separate (initially empty) one for such dynamic state.
 
 | E.g. ``./rdircd -c config.ini -c state.ini`` will do that.
 | ``--conf-dump`` can be added to print resulting ini assembled from all these.
+| ``--conf-dump-defaults`` flag can be used to list all options and their defaults.
 |
 
 Frequent state timestamp updates are done in-place (small fixed-length values),
@@ -255,14 +256,19 @@ Currently only implemented for guild IDs in IRC channel names.
 gets all messages, prefixed by the relevant irc channel name.
 
 #monitor.guild (where "guild" is a hash or alias, see above)
-is a similar catch-all channel for specific discord server/guild.
+is a similar catch-all channels for specific discord server/guild.
+
+They are currently created on-first-message, so might not be listed initially,
+but can be joined anytime (same as with any other channels).
+Joining #monitor.me can be useful in particular to monitor any private chats
+and messages for the account.
 
 Messages in these channels are limited to specific length/lines
 to avoid excessive flooding of these by multi-line msgs.
 
-"len-monitor" and "len-monitor-lines" parameters in "[irc]" config section
-can be used to control max length for these, see top of rdircd script
-for their default values.
+"len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
+can be used to control max length for these,
+see ``./rdircd --conf-dump-defaults`` output for their default values.
 
 Lookup Discord IDs
 ``````````````````
