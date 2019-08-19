@@ -52,6 +52,8 @@ Features
 
 - Support for both private and public channels, channel ordering.
 
+- Per-server and global catch-all channels to check on general activity.
+
 - Configurable local name aliases.
 
 - Simple and consistent discord to irc guild/channel/user name translation.
@@ -245,6 +247,22 @@ easily readable::
 (to turn e.g. #jvpp.info into #game-X.info)
 
 Currently only implemented for guild IDs in IRC channel names.
+
+#monitor channels
+`````````````````
+
+#monitor can be used to check on activity from all connected servers -
+gets all messages, prefixed by the relevant irc channel name.
+
+#monitor.guild (where "guild" is a hash or alias, see above)
+is a similar catch-all channel for specific discord server/guild.
+
+Messages in these channels are limited to specific length/lines
+to avoid excessive flooding of these by multi-line msgs.
+
+"len-monitor" and "len-monitor-lines" parameters in "[irc]" config section
+can be used to control max length for these, see top of rdircd script
+for their default values.
 
 Lookup Discord IDs
 ``````````````````
