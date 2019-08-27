@@ -270,6 +270,19 @@ to avoid excessive flooding of these by multi-line msgs.
 can be used to control max length for these,
 see ``./rdircd --conf-dump-defaults`` output for their default values.
 
+Private messages and friends
+````````````````````````````
+
+Discord private messages create and get posted to channels in "me" server/guild,
+same as they do in discord webui, and can be interacted with in the same way as
+any other guild/channels (list, join/part, send/recv msgs, etc).
+
+Join #monitor.me (or #monitor, see above) to get all new msgs/chats there,
+as well as relationship change notifications (friend requests/adds/removes) as notices.
+
+Accepting friend requests and adding/removing these can be done via regular
+discord webui and is not implemented in this client in any special way.
+
 Lookup Discord IDs
 ``````````````````
 
@@ -282,26 +295,14 @@ Mostly useful for debugging - /who command can resolve specified ID
 
 All these ID values are unique for discord within their type.
 
-asyncio ERROR :: Fatal read error on socket transport
-`````````````````````````````````````````````````````
+Anything unknown or unexpected
+``````````````````````````````
 
-Rarely this error might pop-up randomly, when websocket connection is patchy::
+Can be seen in #debug channel with warning/error level, as well as logged to stderr.
 
-  asyncio ERROR :: Fatal read error on socket transport
-  protocol: <asyncio.sslproto.SSLProtocol object at 0x7f057da99080>
-  transport: <_SelectorSocketTransport fd=9 read=polling write=<idle, bufsize=0>>
-  Traceback (most recent call last):
-    File "/usr/lib/python3.7/asyncio/selector_events.py", line 801, in _read_ready__data_received
-      data = self._sock.recv(self.max_size)
-  TimeoutError: [Errno 110] Connection timed out
-
-It's a problem in python3 asyncio, as described in `Python Issue 34148`_ and `PR#11576`_.
-
-Should be harmless, especially as both websocket and discord protocols have
-built-in keepalives to work around any kind of underlying connection problems.
-
-.. _Python Issue 34148: https://bugs.python.org/issue34148
-.. _PR#11576: https://github.com/python/cpython/pull/11576
+These should not normally occur though, unless there's a bug or - more likely -
+missing handling for some new/uncommon events (either can be reported as a
+github issue), so joining/monitoring either of these sources is recommended.
 
 
 API and Implementation Notes
