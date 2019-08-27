@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.104' # git-version: py-str
+	version = '1.106' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1147,9 +1147,10 @@ class Discord:
 		if acc != 'main': return
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
 
-	def cmd_relationship(self, acc, uid, t, act):
+	def cmd_relationship(self, acc, uid, t, act, name):
 		if acc != 'main': return
-		self.bridge.cmd_msg_monitor(f'--- relationship: [uid={uid}] {act} {t}', gid=1)
+		name = '' if not name else f' name={name}'
+		self.bridge.cmd_msg_monitor(f'--- relationship: [uid={uid}{name}] {act} {t}', gid=1)
 
 
 
@@ -1697,17 +1698,17 @@ class DiscordSession:
 			n -= 1
 
 	def op_ev_ban(self, m, act):
-		gg = self.st.guilds.get(m.guild_id)
+		gg, name = self.st.guilds.get(m.guild_id), m.get('user', dict())
 		guild_name = gg.name if gg else f'%{m.guild_id}'
-		name = m.get('user', dict())
-		name = name.get('username') or f'@{name.get("id")}'
+		name = name.get('username') or f'@{name.get("id", "???")}'
 		self.discord.cmd_guild_ban(self.t, act, m.guild_id, guild_name, name)
 
 	def op_ev_rel(self, m, act):
-		t = m.get('type', None)
+		t, name = m.get('type'), m.get('user')
 		try: t = self.c_rel_type(t).name
 		except ValueError: t = f'unknown[{t}]'
-		self.discord.cmd_relationship(self.t, m.get('id', '?'), t, act)
+		if name: name = name.get('username')
+		self.discord.cmd_relationship(self.t, m.get('id', '?'), t, act, name)
 
 	def op_msg(self, m, act):
 		gid = m.get('guild_id', 1)
