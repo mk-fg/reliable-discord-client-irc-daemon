@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.103' # git-version: py-str
+	version = '1.104' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1147,6 +1147,10 @@ class Discord:
 		if acc != 'main': return
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
 
+	def cmd_relationship(self, acc, uid, t, act):
+		if acc != 'main': return
+		self.bridge.cmd_msg_monitor(f'--- relationship: [uid={uid}] {act} {t}', gid=1)
+
 
 
 class DiscordSession:
@@ -1196,6 +1200,14 @@ class DiscordSession:
 		guild_member_join = 7
 		# Negative values are internal types
 		bot_embeds = -1001
+
+	class c_rel_type(enum.IntEnum):
+		none = 0
+		friend = 1
+		blocked = 2
+		friend_req_in = 3
+		friend_req_out = 4
+		friend_implicit = 5
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
@@ -1618,6 +1630,7 @@ class DiscordSession:
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
 			elif act == 'ack': return # reading private chats from browser
+		elif o == 'relationship': return self.op_ev_rel(m.d, act)
 		elif mt == 'message_delete_bulk': # can maybe shorten notice-spam here somehow
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
@@ -1689,6 +1702,12 @@ class DiscordSession:
 		name = m.get('user', dict())
 		name = name.get('username') or f'@{name.get("id")}'
 		self.discord.cmd_guild_ban(self.t, act, m.guild_id, guild_name, name)
+
+	def op_ev_rel(self, m, act):
+		t = m.get('type', None)
+		try: t = self.c_rel_type(t).name
+		except ValueError: t = f'unknown[{t}]'
+		self.discord.cmd_relationship(self.t, m.get('id', '?'), t, act)
 
 	def op_msg(self, m, act):
 		gid = m.get('guild_id', 1)
