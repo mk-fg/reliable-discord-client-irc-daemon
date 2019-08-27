@@ -64,8 +64,8 @@ Features
 - Translation for discord mentions, attachments and emojis in incoming msgs.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
-  log 2019-01-08" to dump backlog from that point on to the present, fetching
-  in multiple batches if necessary.
+  log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
+  from that point on to the present, fetching in multiple batches if necessary.
 
 - Own msgs sent thru other means (e.g. browser) will be relayed to irc too,
   maybe coming from a diff nick though, if irc name doesn't match discord-to-irc
@@ -192,8 +192,8 @@ Notes on information here:
 Run ``/t`` (/topic) command to show more info on channel-specific commands,
 e.g. ``/t log`` to fetch and replay backlog starting from last event before last
 rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tracks,
-or ``/t log 2019-01-08`` to fetch/dump channel log since specific date/time
-(in iso8601 format).
+or ``/t log 2h`` to fetch/dump channel log for/from specific time(stamp/span)
+(iso8601 or a simple relative format).
 
 Discord-global commands are available in #control channel,
 send "help" here for information on all of these.

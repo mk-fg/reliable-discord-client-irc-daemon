@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.106' # git-version: py-str
+	version = '1.107' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -447,7 +447,7 @@ def _short_ts_re():
 	sub_sort = lambda d: sorted(
 		d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
 	ts_re = ['^'] + [
-		r'(?P<{0}>\d*{0}\s*)?'.format(k)
+		r'(?P<{0}>\d*{0}s?\s*)?'.format(k)
 		for k, v in it.chain.from_iterable(
 			map(sub_sort, [_short_ts_days, _short_ts_s]) ) ] + ['$']
 	return re.compile(''.join(ts_re), re.I | re.U)
@@ -1951,6 +1951,9 @@ class RDIRCD:
 				'    Where number indicates last Nth state recorded in the config (0 - current).',
 				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
 				'     starting from last ev before last rdircd shutdown (saved under [state] in ini).',
+				'    Timestamp examples: 2019-01-05T2:00, 2019-01-08 12:30:00, 2h, 1d 5h 30m, 1mo5d.',
+				'    Relative timespan units: y/yr/year, mo/month,',
+				'      w/week, d/day, h/hr/hour, m/min/minute, s/sec/second.',
 				'  log list - list recorded state ids/timestamps, most recent one last.', '---' ]) )
 		try:
 			if cmd[0] == 'set':
