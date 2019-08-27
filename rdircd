@@ -1626,8 +1626,8 @@ class DiscordSession:
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'channel':
-			if act in ['create', 'update']: return self.op_ev_chans(gid, m.d)
-			elif act == 'delete': return self.op_ev_delete(gid, chan=m.d.id)
+			if act in ['create', 'update']: return self.op_ev_chans(gid or 1, m.d)
+			elif act == 'delete': return self.op_ev_delete(gid or 1, chan=m.d.id)
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
 			elif act == 'ack': return # reading private chats from browser
