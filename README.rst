@@ -92,9 +92,6 @@ Features
 Limitations
 -----------
 
-- Won't /q or ping on new direct/private messages in any way yet, but will
-  probably implement that at some point.
-
 - Mentions for users/channels/roles and such in messages coming from IRC are not
   parsed or translated to discord tags in any way, all text is sent as-is.
 
@@ -128,8 +125,8 @@ Limitations
 
 - Only tested on Linux, probably won't work on OSX/Windows, but idk.
 
-- Has only one user (me!), so might be only tested and working for that single
-  and limited use-case.
+- Has only one known user (me!), so might be only tested and working for that
+  single and limited use-case.
 
 - Custom ad-hoc implementation of both discord and irc, not benefitting from any
   kind of exposure and testing on pypi and such wrt bugs and corner-cases.
@@ -168,6 +165,8 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
   -------          ----- -----
   #control            0  rdircd: control channel, type "help" for more info
   #debug              0  rdircd: debug logging channel, read-only
+  #monitor            0  rdircd: read-only catch-all channel with messages from everywhere
+  #monitor.jvpp       0  rdircd: read-only catch-all channel for messages posted within discord server/guild
   #me.SomeUser        1  me: private chat - SomeUser
   #me.some-other-user 1  me: private chat - some-other-user
   #jvpp.announcements 0  Server-A: Please keep this channel unmuted
@@ -184,6 +183,7 @@ Notes on information here:
 - Full guild name (e.g. "Server-A") is used as a prefix for every channel topic.
 - "#me." is a prefix of discord @me guild, where all private channels are.
 - #control and #debug are special channels, send "help" there for more info.
+- There's #monitor catch-all channel and guild-specific ones (see notes below).
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
 
@@ -195,8 +195,9 @@ rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tra
 or ``/t log 2h`` to fetch/dump channel log for/from specific time(stamp/span)
 (iso8601 or a simple relative format).
 
-Discord-global commands are available in #control channel,
-send "help" here for information on all of these.
+Discord-global commands are available in #control channel, #debug chan can be
+used to tweak various logging and inspect daemon state and protocols more
+closely, send "help" there to list available commands.
 
 
 Requirements
