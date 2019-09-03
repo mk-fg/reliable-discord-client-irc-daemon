@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.108' # git-version: py-str
+	version = '1.109' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -767,11 +767,11 @@ class IRCProtocol:
 		if not res: self.send(462, ':You may not reregister')
 		return res
 
-	# chan_spec=#some-channel, chan_name=lower(some-channel)
+	# chan_spec=#lower(some-channel), chan_name=lower(some-channel)
 	_csc = lambda c: c.startswith('#')
 	chan_spec_check = staticmethod(_csc)
 	chan_spec = staticmethod(
-		lambda name,_csc=_csc: name if _csc(name) else f'#{name}' )
+		lambda name,_csc=_csc: name if _csc(name) else f'#{name.lower()}' )
 	chan_name = staticmethod(
 		lambda chan,_csc=_csc: (chan if not _csc(chan) else chan[1:]).lower() )
 
@@ -893,12 +893,12 @@ class IRCProtocol:
 				self.send(f':{self.st.nick} PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
-		if not self.chan_spec_check(chan):
-			return self.send(403, chan, ':No such channel')
+		c = self.req_chan_info(chan)
+		if not c: return self.send(403, chan, ':No such channel')
 		if not topic:
 			self.send_topic(chan)
-			return await self.bridge.irc_topic_cmd(self, chan)
-		try: await self.bridge.irc_topic_cmd(self, chan, topic)
+			return await self.bridge.irc_topic_cmd(self, c.name)
+		try: await self.bridge.irc_topic_cmd(self, c.name, topic)
 		except IRCBridgeSignal as err: self.send(482, chan, f':{err}')
 
 	def send_topic(self, chan, c=...):
@@ -1674,8 +1674,10 @@ class DiscordSession:
 		cs, ct = dict(), self.c_chan_type
 		for c in force_list(chans):
 			if c.type in [ct.voice, ct.group]: continue
+
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
-			name_old, name, topic = cc.get('name'), c.get('name'), c.get('topic')
+			name, topic = c.get('name'), c.get('topic')
+			name_old, name_old_base = cc.get('name'), cc.get('name_base')
 			if c.type in [ct.private, ct.private_group]:
 				ts= time.time()
 				dict_update( cc.users,
@@ -1684,12 +1686,19 @@ class DiscordSession:
 				user_names = list(u.name for u in cc.users.values())
 				name = self.op_ev_chans_priv_name(user_names)
 				if not topic: topic = 'private chat - ' + ', '.join(user_names)
+
 			if name_old and name != name_old:
 				self.discord.cmd_chan_rename(self.t, cc, name)
 			cc.update(
-				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', name=name, t=ct(c.get('type', 0)),
+				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
+				name_base=name, name=name, t=ct(c.get('type', 0)),
 				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
+
+			if name_old and name_old != name_old_base: # was disambiguated
+				self.op_ev_chans_update_disambiguation(cs, name_old_base)
+			if name != name_old: self.op_ev_chans_update_disambiguation(cs, name)
+
 		dict_update(gg.chans, cs, sync=sync)
 
 	def op_ev_chans_priv_name(self, user_names, max_len=32):
@@ -1698,6 +1707,24 @@ class DiscordSession:
 			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
 			if n <= 1 or len(name) <= max_len: return name[:max_len]
 			n -= 1
+
+	def op_ev_chans_update_disambiguation(self, cs, name):
+		irc_name, irc_chans = self.discord.bridge.irc_name(name).lower(), list()
+		for cc in cs.values():
+			if self.discord.bridge.irc_name(cc.name_base).lower() != irc_name: continue
+			irc_chans.append(cc)
+		if not irc_chans:
+			return self.log.error('update_disambiguation failed for name: {!r}', name)
+		if len(irc_chans) == 1: # remove unnecessary disambiguation
+			cc = irc_chans[0]
+			if cc.name_base != cc.name:
+				self.discord.cmd_chan_rename(self.t, cc, cc.name_base)
+				cc.name = cc.name_base
+			return
+		for n, cc in enumerate(sorted(irc_chans, key=op.itemgetter('did')), 1):
+			name = f'{cc.name_base}.{n}'
+			if name != cc.name: self.discord.cmd_chan_rename(self.t, cc, name)
+			cc.name = name
 
 	def op_ev_ban(self, m, act):
 		gg, name = self.st.guilds.get(m.guild_id), m.get('user', dict())
@@ -1930,6 +1957,7 @@ class RDIRCD:
 		return self.cache.d2i[name]
 
 	def irc_chan_info(self, name):
+		# Note: internal name (cc.name) must always be passed, not lowercased irc one
 		if '.' not in name: return
 		gid, name = name.split('.', 1)
 		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
@@ -1941,9 +1969,10 @@ class RDIRCD:
 		else: cc = None
 		return adict(gg=gg, cc=cc)
 
-	async def irc_topic_cmd(self, conn, chan, line=''):
-		name, notice_cmd = conn.chan_name(chan), ft.partial(
-			conn.cmd_msg_synth, self.nick_sys, chan, notice=True, direct=True )
+	async def irc_topic_cmd(self, conn, name, line=''):
+		chan = conn.chan_spec(name)
+		notice_cmd = ft.partial( conn.cmd_msg_synth,
+			self.nick_sys, chan, notice=True, direct=True )
 		cmd = line.split(None, 1)
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
@@ -2106,6 +2135,7 @@ class RDIRCD:
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.did_chan[cc.did] = name
+				# Note: lowercase translation is handled by using different (proper) internal name
 				yield (name.lower(), adict( name=name,
 					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 

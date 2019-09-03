@@ -59,7 +59,7 @@ Features
 - Simple and consistent discord to irc guild/channel/user name translation.
 
   None of these will change after reconnection, channel or server reshuffling,
-  etc - translation is fully deterministic and does not depend on other names.
+  etc - translation is mostly deterministic and does not depend on other names.
 
 - Translation for discord mentions, attachments and emojis in incoming msgs.
 
@@ -296,6 +296,21 @@ Mostly useful for debugging - /who command can resolve specified ID
 
 All these ID values are unique for discord within their type.
 
+Channel name disambiguation
+```````````````````````````
+
+Discord name translation is "mostly" deterministic due to one exception -
+channels with exactly same name within same server/guild, which discord allows.
+
+Only when there is a conflict, these are suffixed by .1, .2, etc in alpha-sort
+order of their (constant) IDs, so same combination of channels will retain same
+suffixes, regardless of any ordering quirks.
+
+Renaming conflicting channels will rename IRC chans to unsuffixed ones as well.
+
+Note that when channels are renamed (incl. during such conflicts), IRC notice lines
+about it are always issued in both affected channels and relevant #monitor channels.
+
 Anything unknown or unexpected
 ``````````````````````````````
 
@@ -312,7 +327,7 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2019-01-02
+Last updated: 2019-09-03
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   which likely means that such use is not officially supported or endorsed.
@@ -342,3 +357,6 @@ Last updated: 2019-01-02
 
 - Some events coming from websocket gateway are undocumented, maybe due to lag
   of docs behind implementation, or due to them not being deemed that useful to bots, idk.
+
+- Discord allows channels (and probably users) to have exactly same name, which is not
+  a big deal for users (due to one-way translation), but have to be disambiguated for channels.
