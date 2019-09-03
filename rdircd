@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.107' # git-version: py-str
+	version = '1.108' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1105,7 +1105,9 @@ class Discord:
 		if acc != 'main': return
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
-			if fut: return fut.set_result(flake)
+			if fut:
+				self.log.debug('MSG: {} confirm nonce={} flake={}', acc, nonce, flake)
+				return fut.set_result(flake)
 		self.bridge.cmd_msg_discord( cc, nick, line,
 			tags, notice=notice, ts=self.flake_parse(flake) )
 
@@ -2275,11 +2277,10 @@ class RDIRCD:
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
 		prefix, name = '', self.cache.did_chan.get(cc.did)
-		if not name: return
 		if nick:
 			if nick not in cc.users: cc.users[nick] = adict(name=nick)
 			cc.users[nick].ts = ts or time.time()
-		direct, conn_list = bool(conn), [conn] if conn else self.cmd_chan_conns(name)
+		direct, conn_list = bool(conn), [conn] if conn else (name and self.cmd_chan_conns(name))
 		if not conn: conn = conn_list[0] if conn_list else self.cmd_conn()
 		if not conn: return
 		if tags:
@@ -2295,6 +2296,9 @@ class RDIRCD:
 		if not direct:
 			self.cmd_msg_monitor( line, conn=conn, nick=nick,
 				pre=f'{name} :: {prefix}', notice=notice, gid=cc.gid )
+		if not name:
+			self.log.warning( 'Failed to resolve channel did'
+				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
 		for conn in conn_list:
 			conn.cmd_msg_synth( nick,
 				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
