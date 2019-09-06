@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.110' # git-version: py-str
+	version = '1.111' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1074,6 +1074,10 @@ class Discord:
 		try: return self.session.st
 		except KeyError: return adict(guilds=dict())
 
+	def cmd_chan_map_update(self):
+		'Discord channel changes signal, to rebuild various mappings as necessary.'
+		list(self.bridge.cmd_chan_map())
+
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		if not self.session: return list()
 		msg_list, flake = list(), self.flake_build(ts)
@@ -1191,6 +1195,8 @@ class DiscordSession:
 		voice = 2
 		private_group = 3
 		group = 4 # header for a group of channels
+		news = 5 # some inter-discord-guild thing
+		store = 6
 
 	class c_msg_type(enum.IntEnum):
 		default = 0
@@ -1673,7 +1679,7 @@ class DiscordSession:
 		if not gg: return
 		cs, ct = dict(), self.c_chan_type
 		for c in force_list(chans):
-			if c.type in [ct.voice, ct.group]: continue
+			if c.type in [ct.voice, ct.group, ct.news, ct.store]: continue
 
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
 			name, topic = c.get('name'), c.get('topic')
@@ -1700,6 +1706,7 @@ class DiscordSession:
 			if name != name_old: self.op_ev_chans_update_disambiguation(cs, name)
 
 		dict_update(gg.chans, cs, sync=sync)
+		self.discord.cmd_chan_map_update()
 
 	def op_ev_chans_priv_name(self, user_names, max_len=32):
 		n = max_len
@@ -2111,6 +2118,9 @@ class RDIRCD:
 
 	@iter_gather(adict, cache=True)
 	def cmd_chan_map(self, cache_track):
+		'''Overloaded function to return cached adict of
+				{chan-name: {name, topic, did, ts_created}},
+			updating misc minor .cache.* maps used elsewhere in the process.'''
 		cache_track(self.chans_sys)
 		for name, topic in self.chans_sys.items():
 			yield (name, adict( name=name,
