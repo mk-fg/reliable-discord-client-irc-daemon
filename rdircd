@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.111' # git-version: py-str
+	version = '1.112' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1586,6 +1586,11 @@ class DiscordSession:
 		self.ws_enabled = False
 		await self.ws_close()
 
+	async def op_invalid_session_event(self, m):
+		self.log.warning('Unexpected "invalid session" event - reconnecting')
+		self.state('session.fail')
+		await self.ws_close()
+
 	def op_ready(self, m):
 		md = m.get('d')
 		if md and md.get('session_id'):
@@ -1599,7 +1604,7 @@ class DiscordSession:
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
-			self.op_invalid_session_fail, replace=True )
+			self.op_invalid_session_event, replace=True )
 		self.ws_tasks.add(self.op_heartbeat_task(self.st.hb_interval))
 		return self.c.oneshot
 
