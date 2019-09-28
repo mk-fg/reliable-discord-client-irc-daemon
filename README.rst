@@ -311,6 +311,25 @@ Renaming conflicting channels will rename IRC chans to unsuffixed ones as well.
 Note that when channels are renamed (incl. during such conflicts), IRC notice lines
 about it are always issued in both affected channels and relevant #monitor channels.
 
+WARNING :: Session/auth rejected unexpectedly - disabling connection
+````````````````````````````````````````````````````````````````````
+
+This should happen by default when discord gateway responds with op=9
+"invalid session" event to an authentication attempt,
+not reconnecting after that, as presumably it'd fail in the same way anyway.
+
+This would normally mean that authentication with the discord server has failed,
+but on (quite frequent) discord service disruptions, gateway also returns that
+opcode for all logins after some timeout, presumably using it as a fallback
+when failing to access auth backends.
+
+This can get annoying fast, as one'd have to manually force reconnection when
+discord itself is in limbo.
+
+If auth data is supposed to be correct, can be fixed by setting
+``ws-reconnect-on-auth-fail = yes`` option in ``[discord]`` ini section,
+which will force client to keep reconnecting regardless.
+
 Anything unknown or unexpected
 ``````````````````````````````
 
@@ -327,7 +346,7 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2019-09-03
+Last updated: 2019-09-28
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   which likely means that such use is not officially supported or endorsed.
@@ -360,3 +379,10 @@ Last updated: 2019-09-03
 
 - Discord allows channels (and probably users) to have exactly same name, which is not
   a big deal for users (due to one-way translation), but have to be disambiguated for channels.
+
+- Discord status page with something like 99.98% API/gateway uptimes is
+  completely useless, as it only seem to track frontend accessibility via tcp connections,
+  and it's almost always fails are backends, timing-out logins and returning error opcodes.
+
+  At least in my experience so far, discord servers seem to fail like that for a
+  few minutes to an hour or two pretty much every other week.

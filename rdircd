@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.113' # git-version: py-str
+	version = '1.114' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -45,6 +45,7 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_max = '700.0'
 	discord_ws_reconnect_factor = 1.6
 	discord_ws_reconnect_warn = '3600:3' # to filter-out expected reconnects
+	discord_ws_reconnect_on_auth_fail = False # useful for discord service disruptions
 	discord_user_agent = ( f'rdircd/{version}'
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -1396,7 +1397,7 @@ class DiscordSession:
 				interval = min(opts.max, interval * opts.factor)
 				continue
 			except Exception as err:
-				self.log.error('Unexpected connection error, aborting: {}', err_fmt(err))
+				self.log.exception('Unexpected connection error, aborting: {}', err_fmt(err))
 				break
 			ts0 = self.loop.time()
 			await self.ws_closed.wait()
@@ -1579,9 +1580,12 @@ class DiscordSession:
 		await self.op_hello_auth()
 
 	async def op_invalid_session_fail(self, m):
-		self.log.warning('Session/auth rejected unexpectedly - disabling connection')
-		self.state('session.fail')
-		self.ws_enabled = False
+		if self.conf.discord_ws_reconnect_on_auth_fail:
+			self.state('session.auth-fail-reconnect')
+		else:
+			self.log.warning('Session/auth rejected unexpectedly - disabling connection')
+			self.state('session.fail')
+			self.ws_enabled = False
 		await self.ws_close()
 
 	async def op_invalid_session_event(self, m):
