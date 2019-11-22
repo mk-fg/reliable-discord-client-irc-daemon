@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.115' # git-version: py-str
+	version = '1.116' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1206,6 +1206,11 @@ class DiscordSession:
 		channel_icon_change = 5
 		channel_pinned_message = 6
 		guild_member_join = 7
+		user_premium_guild_subscription = 8
+		user_premium_guild_subscription_tier_1 = 9
+		user_premium_guild_subscription_tier_2 = 10
+		user_premium_guild_subscription_tier_3 = 11
+		channel_follow_add = 12
 		# Negative values are internal types
 		bot_embeds = -1001
 
@@ -1784,7 +1789,7 @@ class DiscordSession:
 
 	def op_msg_parse(self, m, gg):
 		# Note: must produce non-empty message for any relevant msg type
-		tags, mt, line = dict(), m.get('type', ''), (m.get('content') or '').strip()
+		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
 		try:
 			if not mt and m.get('author', dict()).get('bot') and m.get('embeds'):
 				mt = self.c_msg_type.bot_embeds
@@ -1794,6 +1799,7 @@ class DiscordSession:
 		except ValueError: # new unknown msg type - check how to handle
 			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
+			mt_nx = True
 		if line:
 			tags.update(self.op_msg_parse_tags(
 				line, m.get('mentions'), gg.chans, gg.get('roles') ))
@@ -1813,6 +1819,10 @@ class DiscordSession:
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
+		if not mt_nx and not line: # represent some non-text/embed events
+			if mt == self.c_msg_type.recipient_add: line = f'[+recipient]'
+			elif mt == self.c_msg_type.recipient_remove: line = f'[-recipient]'
+			elif mt == self.c_msg_type.channel_name_change: line = f'[channel renamed]'
 		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, users, chans, roles):
