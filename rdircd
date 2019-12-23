@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.116' # git-version: py-str
+	version = '1.118' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -56,6 +56,7 @@ class RDIRCDConfigBase:
 	auth_main_email = ''
 	auth_main_password = ''
 	auth_main_token = ''
+	auth_main_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	debug_verbose = False
 	debug_msg_cut = 50
@@ -1254,7 +1255,9 @@ class DiscordSession:
 		self.st = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict() )})
 		self.st.me = self.st.guilds[1]
-		self.ws_enabled, self.auth_token = False, self.get_auth('token')
+		self.auth_token, self.auth_token_manual = (
+			self.get_auth('token'), self.get_auth('token_manual') )
+		self.ws_enabled = False
 		return self
 
 	async def __aexit__(self, *err):
@@ -1331,6 +1334,9 @@ class DiscordSession:
 	async def req_auth_token(self):
 		if isinstance(self.auth_token, asyncio.Event): await self.auth_token
 		elif not self.auth_token:
+			if self.auth_token_manual:
+				raise DiscordAbort( 'Authentication token is set'
+					' to be configured manually, but is not specified' )
 			self.auth_token = asyncio.Event()
 			email, pw = (self.get_auth(k) for k in ['email', 'password'])
 			res = await self.req( 'auth/login', m='post',
@@ -1581,9 +1587,13 @@ class DiscordSession:
 			self.st.session_id = self.st.seq = None
 			await delay
 		else:
-			self.log.info('Auth rejected - updating auth token')
-			self.auth_token = None
-			token = await self.req_auth_token()
+			if self.auth_token_manual:
+				self.log.info( 'Auth rejected, but auth token'
+					' is set to be manual, so just retrying once more' )
+			else:
+				self.log.info('Auth rejected - updating auth token')
+				self.auth_token = None
+				token = await self.req_auth_token()
 			await delay
 			self.ws_add_handler( self.c.invalid_session,
 				self.op_invalid_session_fail, replace=True )

@@ -83,10 +83,11 @@ Features
   deploy anywhere.
 
 - Runs in constant ~35M memory footprint on amd64, which is probably more than
-  e.g. `bitlbee-discord <https://github.com/sm00th/bitlbee-discord>`_ but nothing
-  like those leaky browser tabs.
+  e.g. bitlbee-discord_ but nothing like those leaky browser tabs.
 
 - Easy to tweak and debug without rebuilds, gdb, rust and such.
+
+.. _bitlbee-discord: https://github.com/sm00th/bitlbee-discord
 
 
 Limitations
@@ -344,6 +345,35 @@ Rarely this error might pop-up randomly, when websocket connection is patchy::
   TimeoutError: [Errno 110] Connection timed out
 
 It's a problem in python3 asyncio, as described in `Python Issue 34148`_ and `PR#11576`_.
+
+Captcha-solving is required for login for some reason
+`````````````````````````````````````````````````````
+
+Don't know why or when it happens, but was reported by some users in this and
+other similar discord clients - see `issue-1`_ here and links in there.
+
+Fix is same as with bitlbee-discord_ - login via browser, maybe from the same
+IP Address, and put auth token extracted from this browser into configuration
+ini file's [auth-main] section, e.g.::
+
+  [auth-main]
+  token = ...
+
+See "Usage" in README of bitlbee-discord_ (scroll down on that link) for how to
+extract this token from various browsers.
+
+Note that you can use multiple configuration files (see -c/--conf option) to specify
+this token via separate file, generated in whatever fashion, in addition to main one.
+
+Extra ``token-manual = yes`` option can be added in that section to never
+try to request, update or refresh this token automatically in any way.
+Dunno if this option is needed, or if such captcha-login is only required once,
+and later automatic token requests/updates might work (maybe leave note on
+`issue-1`_ if you'll test it one way or the other).
+
+Never encountered this problem myself so far.
+
+.. _issue-1: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
 
 Anything unknown or unexpected
 ``````````````````````````````
