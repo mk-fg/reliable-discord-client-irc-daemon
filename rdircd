@@ -1800,6 +1800,7 @@ class DiscordSession:
 	def op_msg_parse(self, m, gg):
 		# Note: must produce non-empty message for any relevant msg type
 		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
+		line = line.replace('\u200b', '') # unicode zero-width-space junk
 		try:
 			if not mt and m.get('author', dict()).get('bot') and m.get('embeds'):
 				mt = self.c_msg_type.bot_embeds
