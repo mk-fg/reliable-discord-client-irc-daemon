@@ -346,6 +346,9 @@ Rarely this error might pop-up randomly, when websocket connection is patchy::
 
 It's a problem in python3 asyncio, as described in `Python Issue 34148`_ and `PR#11576`_.
 
+.. _Python Issue 34148: https://bugs.python.org/issue34148
+.. _PR#11576: https://github.com/python/cpython/pull/11576
+
 Captcha-solving is required for login for some reason
 `````````````````````````````````````````````````````
 
