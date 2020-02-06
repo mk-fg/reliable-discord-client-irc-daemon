@@ -39,9 +39,20 @@ endpoints, if Discord staff would classify it as such, it might result in
 blocking of user account(s).
 
 | See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
-| Will update this warning blurb if I'll ever get banned for using this client myself.
+| Will update this warning blurb if I'll ever get any trouble for using this client myself.
+|
+
+Unrelated to this client, but one person reported getting following warning
+(2020-01-30) after being reported (by another user) for mentioning that
+they're using betterdiscord_ (which is mostly just custom css theme, afaik):
+
+.. image:: discord-tos-violation-warning.jpg
+
+| Which seem to emphasize "automating" language in ToS.
+| So if you don't get even that kind of warning, you're probably safe, but I'm no authority on that.
 
 .. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
+.. _betterdiscord: https://betterdiscord.net/
 
 
 Features
@@ -349,8 +360,8 @@ It's a problem in python3 asyncio, as described in `Python Issue 34148`_ and `PR
 .. _Python Issue 34148: https://bugs.python.org/issue34148
 .. _PR#11576: https://github.com/python/cpython/pull/11576
 
-Captcha-solving is required for login for some reason
-`````````````````````````````````````````````````````
+Captcha-solving is required to login for some reason
+````````````````````````````````````````````````````
 
 Don't know why or when it happens, but was reported by some users in this and
 other similar discord clients - see `issue-1`_ here and links in there.
