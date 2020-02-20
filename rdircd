@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.118' # git-version: py-str
+	version = '1.120' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1870,8 +1870,9 @@ class DiscordSession:
 			elif act == 'remove': act, emo = '', f'-{emo}'
 			else: emo = f' {emo}'
 		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
-		self.discord.cmd_msg_recv(
-			self.t, cc, None, f'--- reacts [{msg_ts}]: {act}{emo}' )
+		try: nick = m['member']['user']['username']
+		except: nick = None # notice from nick_sys
+		self.discord.cmd_msg_recv(self.t, cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
 
 
 
