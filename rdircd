@@ -1856,7 +1856,6 @@ class DiscordSession:
 		return tags
 
 	def op_react(self, m, act):
-		# user_id is also provided here, but not worth bothering with
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
 		if gg: cc = gg.chans.get(m.channel_id)
 		if not cc: return
