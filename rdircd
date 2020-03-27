@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.121' # git-version: py-str
+	version = '1.123' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1146,8 +1146,10 @@ class Discord:
 
 	def cmd_chan_rename(self, acc, cc, name_new):
 		if acc != 'main': return
+		chan_old, chan_new = (
+			self.bridge.irc_name(n).lower() for n in [cc.name, name_new] )
 		self.bridge.cmd_msg_discord( cc, None,
-			f'-----== Discord channel renamed: {cc.name!r} -> {name_new!r} ==-----' )
+			f'-----== Discord channel renamed: {chan_old} -> {chan_new} ==-----' )
 
 	def cmd_guild_ban(self, acc, act, gid, guild_name, name):
 		if acc != 'main': return
@@ -1225,7 +1227,7 @@ class DiscordSession:
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
-	def __init__(self, discord, t): # t = type, for multiple sessions, used but not relevant atm
+	def __init__(self, discord, t): # t = this session/acc type, for multiple sessions
 		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
 		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
 		self.log = get_logger(f'rdircd.discord.{self.t}')
@@ -1765,6 +1767,7 @@ class DiscordSession:
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
+		# XXX: this will likely cause channel to be renamed, call update here later
 		cc = self.st.guilds[1].chans.get(m.channel_id)
 		self.discord.cmd_msg_recv( self.t, cc,
 			m.get('user').get('username'), f'--- recipient {act.lower()}' )
