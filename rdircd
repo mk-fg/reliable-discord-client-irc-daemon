@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.125' # git-version: py-str
+	version = '1.126' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1745,8 +1745,10 @@ class DiscordSession:
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
 				user_names = list(u.name for u in cc.users.values())
-				name = self.op_ev_chans_priv_name(user_names)
-				if not topic: topic = 'private chat - ' + ', '.join(user_names)
+				name = f'chat.{c.id}' # not useful, but should be consistent
+				if not topic:
+					topic = 'private chat - ' + ', '.join(user_names)
+					if len(topic) > 200: topic = topic[:200] + ' ...'
 
 			if name_old and name != name_old:
 				self.discord.cmd_chan_rename(self.t, cc, name)
@@ -1762,13 +1764,6 @@ class DiscordSession:
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
-
-	def op_ev_chans_priv_name(self, user_names, max_len=32):
-		n = max_len
-		while True:
-			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
-			if n <= 1 or len(name) <= max_len: return name[:max_len]
-			n -= 1
 
 	def op_ev_chans_update_disambiguation(self, cs, name):
 		irc_name, irc_chans = self.discord.bridge.irc_name(name).lower(), list()
