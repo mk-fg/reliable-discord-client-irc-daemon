@@ -179,8 +179,8 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
   #rdircd.debug        0  rdircd: debug logging channel, read-only
   #rdircd.monitor      0  rdircd: read-only catch-all channel with messages from everywhere
   #rdircd.monitor.jvpp 0  rdircd: read-only catch-all channel for messages from one discord
-  #me.692247801935849  1  me: private chat - SomeUser
-  #me.692247801952164  1  me: private chat - some-other-user
+  #me.chat.5gupog9fyk  1  me: private chat - SomeUser
+  #me.chat.x2s456gl0t  1  me: private chat - some-other-user, another-user, user3
   #jvpp.announcements  0  Server-A: Please keep this channel unmuted
   #jvpp.info           0  Server-A:
   #jvpp.rules          0  Server-A:
@@ -200,6 +200,7 @@ Notes on information here:
   something to a channel, as discord has no concept of "joining" for publics.
 
 ``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
+Channels joins/parts in IRC side do not affect discord in any way.
 
 Run ``/t`` (/topic) command to show more info on channel-specific commands,
 e.g. ``/t log`` to fetch and replay backlog starting from last event before last

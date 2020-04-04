@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.126' # git-version: py-str
+	version = '1.127' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1744,10 +1744,9 @@ class DiscordSession:
 				dict_update( cc.users,
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
-				user_names = list(u.name for u in cc.users.values())
-				name = f'chat.{c.id}' # not useful, but should be consistent
+				name = f'chat.{str_hash(c.id, 10)}' # not descriptive, but should stay the same
 				if not topic:
-					topic = 'private chat - ' + ', '.join(user_names)
+					topic = 'private chat - ' + ', '.join(u.name for u in cc.users.values())
 					if len(topic) > 200: topic = topic[:200] + ' ...'
 
 			if name_old and name != name_old:
