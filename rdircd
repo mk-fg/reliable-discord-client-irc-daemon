@@ -1907,10 +1907,14 @@ class DiscordSession:
 class RDIRCD:
 
 	class c:
-		chan_control = 'rdircd.control'
-		chan_debug = 'rdircd.debug'
-		chan_monitor = 'rdircd.monitor'
-		chan_monitor_guild_prefix = 'rdircd.monitor.'
+		chan_prefix = 'rdircd.'
+
+		chan_control = f'{chan_prefix}control'
+		chan_debug = f'{chan_prefix}debug'
+		chan_sys_list = [chan_control, chan_debug]
+
+		chan_monitor = f'{chan_prefix}monitor'
+		chan_monitor_guild_prefix = f'{chan_prefix}monitor.'
 
 	def __init__(self, loop, conf):
 		self.loop, self.conf, self.init = loop, conf, None
@@ -2214,7 +2218,9 @@ class RDIRCD:
 
 
 	def cmd_chan_sys(self, name, conn, chan, line):
-		cmd_func = getattr(self, f'cmd_chan_sys_{name}', None)
+		if name not in self.c.chan_sys_list: return
+		cmd_func = name[len(self.c.chan_prefix):]
+		cmd_func = getattr(self, f'cmd_chan_sys_{cmd_func}', None)
 		if cmd_func: cmd_func(conn, chan, line)
 
 	def cmd_chan_sys_log_counts(self):
