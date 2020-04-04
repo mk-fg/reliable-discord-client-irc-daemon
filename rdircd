@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.123' # git-version: py-str
+	version = '1.125' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -32,8 +32,8 @@ class RDIRCDConfigBase:
 	irc_len_hwm = 450 # will probably still work with most clients
 	irc_len_lwm = 300
 	irc_len_topic = 300 # cannot be split, so is truncated instead
-	irc_len_monitor = 350 # to tuncate long lines in #monitor
-	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #monitor
+	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor
+	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #rdircd.monitor
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 
 	discord_auto_connect = True
@@ -111,7 +111,7 @@ class LogEmptyMsgFilter(logging.Filter):
 log_empty_filter = LogEmptyMsgFilter()
 
 class LogProtoDebugFilter(logging.Filter):
-	debug_re = re.compile(b'^:core (PRIVMSG|NOTICE) #debug :')
+	debug_re = re.compile(rb'^:core (PRIVMSG|NOTICE) #rdircd\.debug :')
 	def filter(self, record):
 		try: st, msg = record.extra
 		except: return True
@@ -1553,8 +1553,8 @@ class DiscordSession:
 	def ws_close(self):
 		# Makes sure that only one ws_close_task()
 		#  is scheduled at a time, and only if needed
-		if self.ws_closed.is_set()
-			or not self.ws_closed_clean.is_set(): return asyncio.sleep(0)
+		if ( self.ws_closed.is_set()
+			or not self.ws_closed_clean.is_set() ): return asyncio.sleep(0)
 		self.ws_closed_clean.clear()
 		return self.ws_close_task()
 
@@ -1913,10 +1913,10 @@ class DiscordSession:
 class RDIRCD:
 
 	class c:
-		chan_control = 'control'
-		chan_debug = 'debug'
-		chan_monitor = 'monitor'
-		chan_monitor_guild_prefix = 'monitor.'
+		chan_control = 'rdircd.control'
+		chan_debug = 'rdircd.debug'
+		chan_monitor = 'rdircd.monitor'
+		chan_monitor_guild_prefix = 'rdircd.monitor.'
 
 	def __init__(self, loop, conf):
 		self.loop, self.conf, self.init = loop, conf, None
@@ -2373,8 +2373,8 @@ class RDIRCD:
 			name = self.c.chan_monitor_guild_prefix + gid
 			gid = conn.chan_spec(name)
 			if name not in self.chans_mon: # kinda bad: never removed, invisible until activity
-				self.chans_mon[name] = ( 'rdircd: read-only catch-all'
-					' channel for messages posted within discord server/guild' )
+				self.chans_mon[name] = ( 'rdircd: read-only'
+					' catch-all channel for messages from one discord' )
 		for s in lines:
 			s = f'{pre}{str_repr(s, n, len_bytes=True)}'
 			conn.cmd_msg_synth(nick, c, s, notice=notice)

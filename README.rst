@@ -88,7 +88,7 @@ Features
   advanced features, and should be compatible with any clients.
 
 - Extensive protocol and debug logging options, some accessible at runtime via
-  #debug channel.
+  #rdircd.debug channel.
 
 - Single python3 script that only requires aiohttp module, trivial to run or
   deploy anywhere.
@@ -175,27 +175,27 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
 
   Channel          Users Topic
   -------          ----- -----
-  #control            0  rdircd: control channel, type "help" for more info
-  #debug              0  rdircd: debug logging channel, read-only
-  #monitor            0  rdircd: read-only catch-all channel with messages from everywhere
-  #monitor.jvpp       0  rdircd: read-only catch-all channel for messages posted within discord server/guild
-  #me.SomeUser        1  me: private chat - SomeUser
-  #me.some-other-user 1  me: private chat - some-other-user
-  #jvpp.announcements 0  Server-A: Please keep this channel unmuted
-  #jvpp.info          0  Server-A:
-  #jvpp.rules         0  Server-A:
-  #jvpp.welcome       0  Server-A: Mute unless you like notification spam
+  #rdircd.control      0  rdircd: control channel, type "help" for more info
+  #rdircd.debug        0  rdircd: debug logging channel, read-only
+  #rdircd.monitor      0  rdircd: read-only catch-all channel with messages from everywhere
+  #rdircd.monitor.jvpp 0  rdircd: read-only catch-all channel for messages from one discord
+  #me.SomeUser         1  me: private chat - SomeUser
+  #me.some-other-user  1  me: private chat - some-other-user
+  #jvpp.announcements  0  Server-A: Please keep this channel unmuted
+  #jvpp.info           0  Server-A:
+  #jvpp.rules          0  Server-A:
+  #jvpp.welcome        0  Server-A: Mute unless you like notification spam
   ...
-  #axsd.intro         0  Server-B: Server info and welcomes.
-  #axsd.offtopic      0  Server-B: Anything goes. Civility is expected.
+  #axsd.intro          0  Server-B: Server info and welcomes.
+  #axsd.offtopic       0  Server-B: Anything goes. Civility is expected.
 
 Notes on information here:
 
 - Short base64 channel prefix is a persistent id of the discord guild that it belongs to.
 - Full guild name (e.g. "Server-A") is used as a prefix for every channel topic.
 - "#me." is a prefix of discord @me guild, where all private channels are.
-- #control and #debug are special channels, send "help" there for more info.
-- There's #monitor catch-all channel and guild-specific ones (see notes below).
+- #rdircd.control and #rdircd.debug are special channels, send "help" there for more info.
+- There's #rdircd.monitor catch-all channel and guild-specific ones (see notes below).
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
 
@@ -207,9 +207,9 @@ rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tra
 or ``/t log 2h`` to fetch/dump channel log for/from specific time(stamp/span)
 (iso8601 or a simple relative format).
 
-Discord-global commands are available in #control channel, #debug chan can be
-used to tweak various logging and inspect daemon state and protocols more
-closely, send "help" there to list available commands.
+Discord-global commands are available in #rdircd.control channel, #rdircd.debug
+chan can be used to tweak various logging and inspect daemon state and protocols
+more closely, send "help" there to list available commands.
 
 
 Requirements
@@ -246,7 +246,7 @@ anytime anyway.
 Channel Commands
 ````````````````
 
-| In special channels like #control and #debug: send "h" or "help".
+| In special channels like #rdircd.control and #rdircd.debug: send "h" or "help".
 | All discord channels - send "/t" or "/topic".
 
 Local Name Aliases
@@ -262,19 +262,19 @@ easily readable::
 
 Currently only implemented for guild IDs in IRC channel names.
 
-#monitor channels
-`````````````````
+#rdircd.monitor channels
+````````````````````````
 
-#monitor can be used to check on activity from all connected servers -
+#rdircd.monitor can be used to check on activity from all connected servers -
 gets all messages, prefixed by the relevant irc channel name.
 
-#monitor.guild (where "guild" is a hash or alias, see above)
+#rdircd.monitor.guild (where "guild" is a hash or alias, see above)
 is a similar catch-all channels for specific discord server/guild.
 
 They are currently created on-first-message, so might not be listed initially,
 but can be joined anytime (same as with any other channels).
-Joining #monitor.me can be useful in particular to monitor any private chats
-and messages for the account.
+Joining #rdircd.monitor.me can be useful in particular to monitor any private
+chats and messages for the account.
 
 Messages in these channels are limited to specific length/lines
 to avoid excessive flooding of these by multi-line msgs.
@@ -290,8 +290,9 @@ Discord private messages create and get posted to channels in "me" server/guild,
 same as they do in discord webui, and can be interacted with in the same way as
 any other guild/channels (list, join/part, send/recv msgs, etc).
 
-Join #monitor.me (or #monitor, see above) to get all new msgs/chats there,
-as well as relationship change notifications (friend requests/adds/removes) as notices.
+Join #rdircd.monitor.me (or #rdircd.monitor, see above) to get all new
+msgs/chats there, as well as relationship change notifications (friend
+requests/adds/removes) as notices.
 
 Accepting friend requests and adding/removing these can be done via regular
 discord webui and is not implemented in this client in any special way.
@@ -320,8 +321,9 @@ suffixes, regardless of any ordering quirks.
 
 Renaming conflicting channels will rename IRC chans to unsuffixed ones as well.
 
-Note that when channels are renamed (incl. during such conflicts), IRC notice lines
-about it are always issued in both affected channels and relevant #monitor channels.
+Note that when channels are renamed (incl. during such conflicts), IRC notice
+lines about it are always issued in both affected channels and relevant
+#rdircd.monitor channels.
 
 WARNING :: Session/auth rejected unexpectedly - disabling connection
 ````````````````````````````````````````````````````````````````````
@@ -392,7 +394,7 @@ Never encountered this problem myself so far.
 Anything unknown or unexpected
 ``````````````````````````````
 
-Can be seen in #debug channel with warning/error level, as well as logged to stderr.
+Can be seen in #rdircd.debug channel with warning/error level, as well as logged to stderr.
 
 These should not normally occur though, unless there's a bug or - more likely -
 missing handling for some new/uncommon events (either can be reported as a
