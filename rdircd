@@ -1253,7 +1253,9 @@ class DiscordSession:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
-		self.rate_limits, self.ws_closed = adict(), asyncio.Event()
+		self.ws_closed, self.ws_closed_clean = asyncio.Event(), asyncio.Event()
+		self.ws_closed_clean.set()
+		self.rate_limits = adict()
 		self.st = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict() )})
 		self.st.me = self.st.guilds[1]
@@ -1286,6 +1288,8 @@ class DiscordSession:
 		return self.tasks.add(self.ws_close())
 
 	def state(self, st):
+		'''This is purely informative, and should never
+			actually be checked - use class flags for that, not strings here.'''
 		st_old, self.st.state = self.st.get('state', 'none'), st
 		if st == st_old: return
 		self.log_ws.debug( '--- state: {} -> {}',
@@ -1412,7 +1416,7 @@ class DiscordSession:
 			except Exception as err:
 				self.log.exception( 'Unexpected error,'
 					' stopping reconnection loop: {}', err_fmt(err) )
-				self.tasks.add(self.ws_close())
+				await self.ws_close()
 				break
 			ts0 = self.loop.time()
 			await self.ws_closed.wait()
@@ -1431,6 +1435,9 @@ class DiscordSession:
 
 	async def ws_connect(self):
 		if self.ws_ctx: return
+		if not self.ws_closed_clean.is_set():
+			self.log.warning('BUG: ws_connect issued before old websocket is closed')
+			await self.ws_closed_clean.wait()
 		self.state('connecting.init')
 		self.ws_ctx = ctx = contextlib.AsyncExitStack()
 		self.ws, self.ws_tasks, self.ws_handlers = None, StacklessContext(self.log), dict()
@@ -1480,7 +1487,7 @@ class DiscordSession:
 		self.ws_add_handler(self.c.reconnect, self.op_reconnect)
 		self.ws_add_handler(self.c.hello, self.op_hello)
 		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session_retry)
-		self.ws_tasks.add(self.ws_poller()).add_done_callback(self.ws_poller_done)
+		self.ws_tasks.add(self.ws_poller())
 
 	_ws_handler = cs.namedtuple('ws_handler', 'op t func')
 	def ws_add_handler(self, op=None, func=None, t=None, replace=False, remove=False):
@@ -1493,6 +1500,12 @@ class DiscordSession:
 		self.ws_handlers[wsh] = wsh
 
 	async def ws_poller(self):
+		try: await self.ws_poller_loop()
+		except Exception as err:
+			self.log.exception('Unhandled ws handler failure, aborting: {}', err_fmt(err))
+		await self.ws_close()
+
+	async def ws_poller_loop(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
 		# {op=...[, d={...}]}
 		async for msg in self.ws:
@@ -1526,35 +1539,46 @@ class DiscordSession:
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
 
-	def ws_poller_done(self, fut):
-		err = fut.exception()
-		if err:
-			self.log.exception( 'Unhandled ws handler'
-				' failure, aborting: {}', err_fmt(err), exc_info=err )
-		self.tasks.add(self.ws_close())
-
 	def ws_send(self, op, d):
 		msg_data = json.dumps(dict(op=op, d=d))
 		self.log_ws.debug( ' >> text {}',
 			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
 		self.tasks.add(self.ws.send_str(msg_data))
 
-	async def ws_close(self):
-		if self.ws_closed.is_set(): return
-		self.log_ws.debug('--- -close-', extra=('---', 'close'))
-		self.state('disconnected')
-		if self.ws_tasks: await self.ws_tasks.close()
-		if self.ws: await self.ws.close()
-		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
-		self.ws_closed.set()
+	def ws_close_later(self):
+		'Wrapper to schedule ws_close() from one of ws_tasks or synchronously.'
+		# Idea here is just to avoid ws_close_task() cancelling itself
+		self.tasks.add(self.ws_close())
+
+	def ws_close(self):
+		# Makes sure that only one ws_close_task()
+		#  is scheduled at a time, and only if needed
+		if self.ws_closed.is_set()
+			or not self.ws_closed_clean.is_set(): return asyncio.sleep(0)
+		self.ws_closed_clean.clear()
+		return self.ws_close_task()
+
+	async def ws_close_task(self):
+		try:
+			if self.ws_closed.is_set():
+				return self.log.warning('BUG: ws_close with websocket already closed')
+			self.log_ws.debug('--- -close-', extra=('---', 'close'))
+			self.state('closing')
+			if self.ws_tasks: await self.ws_tasks.close()
+			if self.ws: await self.ws.close()
+			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = None
+			self.state('disconnected')
+			self.ws_closed.set()
+		finally: self.ws_closed_clean.set()
 
 
 	### Gateway Websocket protocol
 
 	def op_track_seq(self, m): self.st.seq = m.s
+
 	def op_reconnect(self, m):
 		self.log.info('Received reconnect event - closing connection')
-		self.tasks.add(self.ws_close)
+		self.ws_close_later()
 
 	async def op_hello(self, m):
 		self.state('hello')
@@ -1602,19 +1626,19 @@ class DiscordSession:
 		self.state('session.error')
 		await self.op_hello_auth()
 
-	async def op_invalid_session_fail(self, m):
+	def op_invalid_session_fail(self, m):
 		if self.conf.discord_ws_reconnect_on_auth_fail:
 			self.state('session.auth-fail-reconnect')
 		else:
 			self.log.warning('Session/auth rejected unexpectedly - disabling connection')
 			self.state('session.fail')
 			self.ws_enabled = False
-		await self.ws_close()
+		self.ws_close_later()
 
-	async def op_invalid_session_event(self, m):
+	def op_invalid_session_event(self, m):
 		self.log.warning('Unexpected "invalid session" event - reconnecting')
 		self.state('session.fail')
-		await self.ws_close()
+		self.ws_close_later()
 
 	def op_ready(self, m):
 		md = m.get('d')
@@ -1642,7 +1666,7 @@ class DiscordSession:
 			if self.st.hb_ts_ack < ts - interval*2:
 				self.state('heartbeat.fail')
 				self.log.error('Missing heartbeat ack, reconnecting')
-				return self.tasks.add(self.ws_close)
+				return self.ws_close_later()
 			while hb_ts <= ts: hb_ts += interval
 			delay = hb_ts - ts
 			await asyncio.sleep(delay)
