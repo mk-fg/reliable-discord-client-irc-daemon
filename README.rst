@@ -180,7 +180,7 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
   #rdircd.monitor      0  rdircd: read-only catch-all channel with messages from everywhere
   #rdircd.monitor.jvpp 0  rdircd: read-only catch-all channel for messages from one discord
   #me.chat.5gupog9fyk  1  me: private chat - SomeUser
-  #me.chat.x2s456gl0t  1  me: private chat - some-other-user, another-user, user3
+  #me.chat.x2s456gl0t  3  me: private chat - some-other-user, another-user, user3
   #jvpp.announcements  0  Server-A: Please keep this channel unmuted
   #jvpp.info           0  Server-A:
   #jvpp.rules          0  Server-A:
@@ -400,6 +400,30 @@ Can be seen in #rdircd.debug channel with warning/error level, as well as logged
 These should not normally occur though, unless there's a bug or - more likely -
 missing handling for some new/uncommon events (either can be reported as a
 github issue), so joining/monitoring either of these sources is recommended.
+
+
+Links
+-----
+
+Other third-party Discord clients that I'm aware of atm (2020-04-08),
+in no particular order:
+
+- bitlbee_ + bitlbee-discord_ - similar IRC interface
+- pidgin_ - popular cross-platform client, its libpurple can be used from bitlbee_ as well
+- gtkcord3_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
+- betterdiscord_ - alternative in-browser web interface/client
+- ripcord_ - cross-platform proprietary shareware client
+- `matrix bridges`_ - to use Discord from Matrix_ and vice-versa
+
+Not an exhaustive list by any means.
+
+.. _bitlbee: https://www.bitlbee.org/
+.. _pidgin: https://pidgin.im/
+.. _gtkcord3: https://github.com/diamondburned/gtkcord3/
+.. _PinePhone: https://www.pine64.org/pinephone/
+.. _ripcord: https://cancel.fm/ripcord/
+.. _matrix bridges: https://matrix.org/bridges/#discord
+.. _Matrix: https://matrix.org/
 
 
 API and Implementation Notes
