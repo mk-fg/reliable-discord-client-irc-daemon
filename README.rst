@@ -413,7 +413,6 @@ in no particular order:
 - gtkcord3_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
 - betterdiscord_ - alternative in-browser web interface/client
 - ripcord_ - cross-platform proprietary shareware client
-- `matrix bridges`_ - to use Discord from Matrix_ and vice-versa
 
 Not an exhaustive list by any means.
 
@@ -422,8 +421,6 @@ Not an exhaustive list by any means.
 .. _gtkcord3: https://github.com/diamondburned/gtkcord3/
 .. _PinePhone: https://www.pine64.org/pinephone/
 .. _ripcord: https://cancel.fm/ripcord/
-.. _matrix bridges: https://matrix.org/bridges/#discord
-.. _Matrix: https://matrix.org/
 
 
 API and Implementation Notes
