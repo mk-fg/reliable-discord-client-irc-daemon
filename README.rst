@@ -44,7 +44,7 @@ blocking of user account(s).
 
 Unrelated to this client, but one person reported getting following warning
 (2020-01-30) after being reported (by another user) for mentioning that
-they're using betterdiscord_ (which is mostly just custom css theme, afaik):
+they're using BetterDiscord_ (which is mostly just custom css theme, afaik):
 
 .. image:: discord-tos-violation-warning.jpg
 
@@ -52,7 +52,7 @@ they're using betterdiscord_ (which is mostly just custom css theme, afaik):
 | So if you don't get even that kind of warning, you're probably safe, but I'm no authority on that.
 
 .. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
-.. _betterdiscord: https://betterdiscord.net/
+.. _BetterDiscord: https://betterdiscord.net/
 
 
 Features
@@ -405,22 +405,46 @@ github issue), so joining/monitoring either of these sources is recommended.
 Links
 -----
 
-Other third-party Discord clients that I'm aware of atm (2020-04-08),
-in no particular order:
+Other third-party Discord clients that I'm aware of atm (2020-04-15),
+in no particular order.
+
+IRC-translation clients (like this one):
 
 - bitlbee_ + bitlbee-discord_ - similar IRC interface
-- pidgin_ - popular cross-platform client, its libpurple can be used from bitlbee_ as well
-- gtkcord3_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
-- betterdiscord_ - alternative in-browser web interface/client
-- ripcord_ - cross-platform proprietary shareware client
+- bitlbee_ + libpurple (from Pidgin_) - same idea, diff discord implementation
+
+Graphical UI (GUI) clients:
+
+- Pidgin_ - popular cross-platform client, its libpurple can be used from bitlbee_ as well
+- gtkcord_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
+- Ripcord_ - cross-platform proprietary shareware client, also supports slack
+
+Web UI (in-browser) clients:
+
+- BetterDiscord_ - alternative in-browser web interface/client
+
+Terminal UI (TUI, ncurses) clients:
+
+- Cordless_ - fairly mature Go TUI client
+- 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
+- Terminal-Discord_ - minimal JS/node terminal client
+- `Discord Terminal`_ - customizable JS/node client with IRC layout and Windows OS support
+- Discurses_ - python urwid/curses client
+- Discline_ - another python client with typical IRC looks, seem to be broken atm
 
 Not an exhaustive list by any means.
 
 .. _bitlbee: https://www.bitlbee.org/
-.. _pidgin: https://pidgin.im/
-.. _gtkcord3: https://github.com/diamondburned/gtkcord3/
+.. _Pidgin: https://pidgin.im/
+.. _gtkcord: https://github.com/diamondburned/gtkcord3/
 .. _PinePhone: https://www.pine64.org/pinephone/
-.. _ripcord: https://cancel.fm/ripcord/
+.. _Ripcord: https://cancel.fm/ripcord/
+.. _6cord: https://gitlab.com/diamondburned/6cord/
+.. _Cordless: https://github.com/Bios-Marcel/cordless
+.. _Terminal-Discord: https://github.com/xynxynxyn/terminal-discord
+.. _Discord Terminal: https://github.com/cloudrex/discord-term
+.. _Discurses: https://github.com/topisani/Discurses
+.. _Discline: https://github.com/MitchWeaver/Discline
 
 
 API and Implementation Notes
