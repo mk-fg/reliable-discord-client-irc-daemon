@@ -421,7 +421,10 @@ Graphical UI (GUI) clients:
 
 Web UI (in-browser) clients:
 
-- BetterDiscord_ - alternative in-browser web interface/client
+- BetterDiscord_ - alternative in-browser web interface/client (see also BandagedBD_ fork)
+- Powercord_ - privacy and client extension oriented mod/framework
+- Glasscord_ - discord client tweak for transparency and nicer looks
+- EnhancedDiscord_ (`joe27g/EnhancedDiscord`_) - JS plugin framework for extra client functionality
 
 Terminal UI (TUI, ncurses) clients:
 
@@ -439,6 +442,11 @@ Not an exhaustive list by any means.
 .. _gtkcord: https://github.com/diamondburned/gtkcord3/
 .. _PinePhone: https://www.pine64.org/pinephone/
 .. _Ripcord: https://cancel.fm/ripcord/
+.. _BandagedBD: https://github.com/rauenzi/BetterDiscordApp
+.. _Powercord: https://powercord.dev/
+.. _Glasscord: https://github.com/AryToNeX/Glasscord
+.. _EnhancedDiscord: https://enhanceddiscord.com/
+.. _joe27g/EnhancedDiscord: https://github.com/joe27g/EnhancedDiscord
 .. _6cord: https://gitlab.com/diamondburned/6cord/
 .. _Cordless: https://github.com/Bios-Marcel/cordless
 .. _Terminal-Discord: https://github.com/xynxynxyn/terminal-discord
