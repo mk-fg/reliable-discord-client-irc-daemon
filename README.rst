@@ -405,13 +405,14 @@ github issue), so joining/monitoring either of these sources is recommended.
 Links
 -----
 
-Other third-party Discord clients that I'm aware of atm (2020-04-15),
+Other third-party Discord clients that I'm aware of atm (2020-05-07),
 in no particular order.
 
 IRC-translation clients (like this one):
 
 - bitlbee_ + bitlbee-discord_ - similar IRC interface
 - bitlbee_ + libpurple (from Pidgin_) - same idea, diff discord implementation
+- ircdiscord_ - Go client proxy, based on same lib as gtkcord_ and 6cord_, quite basic atm
 
 Graphical UI (GUI) clients:
 
@@ -439,6 +440,7 @@ Not an exhaustive list by any means.
 
 .. _bitlbee: https://www.bitlbee.org/
 .. _Pidgin: https://pidgin.im/
+.. _ircdiscord: https://github.com/tadeokondrak/ircdiscord/
 .. _gtkcord: https://github.com/diamondburned/gtkcord3/
 .. _PinePhone: https://www.pine64.org/pinephone/
 .. _Ripcord: https://cancel.fm/ripcord/
