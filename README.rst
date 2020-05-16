@@ -411,8 +411,8 @@ in no particular order.
 IRC-translation clients (like this one):
 
 - bitlbee_ + bitlbee-discord_ - similar IRC interface
-- bitlbee_ + libpurple (from Pidgin_) - same idea, diff discord implementation
-- ircdiscord_ - Go client proxy, based on same lib as gtkcord_ and 6cord_, quite basic atm
+- bitlbee_ + libpurple (from Pidgin_) - diff discord implementation from above
+- ircdiscord_ - Go client proxy, based on same lib as gtkcord_ and 6cord_
 
 Graphical UI (GUI) clients:
 
