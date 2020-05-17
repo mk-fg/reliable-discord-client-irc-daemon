@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.131' # git-version: py-str
+	version = '1.132' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2663,6 +2663,8 @@ def main(args=None, conf=None):
 			Path to configuration file to use.
 			It will get updated with OAuth2 credentials ([auth] section)
 				and some state info ([state] section), so has to be writable.
+			Can be specified mutliple times to use multiple config files,
+				in which case only last one will be updated and has to be writable.
 			Default: {conf._conf_path}''')
 	group.add_argument('--conf-dump', action='store_true',
 		help='Print all configuration settings, which will be used with'
