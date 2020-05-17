@@ -760,19 +760,18 @@ class IRCProtocol:
 				self.log.exception('Error processing message: {}', m)
 
 	def check_access(self, cmd):
-		# Client connecton goes through following states:
-		#  - init - connection established, capability negotiation phase
-		#  - st.cap_neg=True - capabilities negotiated
-		#  - st.auth=True - authenticated, normal operation
-		# This controls which protocol commands are allowed in each state.
-		if self.st.cap_neg: return cmd in ['cap', 'quit', 'user', 'nick', 'pass']
 		if not self.st.auth:
 			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
 			if not res: self.send(451, ':You have not registered')
 			return res
-		res = cmd not in ['user', 'pass']
-		if not res: self.send(462, ':You may not reregister')
-		return res
+		elif cmd in ['user', 'pass']:
+			self.send(462, ':You may not reregister')
+			return False
+		if self.st.cap_neg:
+			# No commands other than auth allowed until capability negotiation ends
+			# Note that negotiation can be skipped entirely too
+			return cmd in ['cap', 'quit', 'ping']
+		return True # any commands allowed outside of phases above
 
 	# chan_spec=#lower(some-channel), chan_name=lower(some-channel)
 	_csc = lambda c: c.startswith('#')
