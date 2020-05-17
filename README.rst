@@ -21,6 +21,9 @@ notify about any issues in that regard and enforce strict
 all-in-same-order-or-nothing posting, which - somewhat surprisingly - other
 discord clients seem to be quite sloppy about.
 
+If you have any questions or difficulty, or just want to test this script,
+here's an ad-hoc discord for that: https://discord.gg/s2fbWZD
+
 .. _Discord: http://discord.gg/
 .. _"guilds" in API docs: https://discordapp.com/developers/docs/resources/guild
 
