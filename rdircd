@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.134' # git-version: py-str
+	version = '1.135' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1270,7 +1270,9 @@ class DiscordSession:
 		return self
 
 	async def __aexit__(self, *err):
-		if self.ws_enabled: self.ws_enabled = self.ws_enabled.cancel()
+		if self.ws_enabled:
+			self.ws_enabled.cancel()
+			self.ws_enabled = None
 		if self.ws_ctx: await self.ws_ctx.aclose()
 		if self.ctx: await self.ctx.aclose()
 		if self.tasks: await self.tasks.close()
@@ -1289,7 +1291,9 @@ class DiscordSession:
 		task = self.ws_enabled = self.loop.create_task(self.ws_connect_loop())
 		return self.tasks.add(task)
 	def disconnect(self):
-		if self.ws_enabled: self.ws_enabled = self.ws_enabled.cancel()
+		if self.ws_enabled:
+			self.ws_enabled.cancel()
+			self.ws_enabled = None
 		return self.tasks.add(self.ws_close())
 
 	def state(self, st):
