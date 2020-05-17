@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.135' # git-version: py-str
+	version = '1.136' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1149,10 +1149,10 @@ class Discord:
 			self.log.exception('Failed sending discord msg: {}', err_str)
 			raise IRCBridgeSignal(err_str)
 
-	def cmd_chan_rename(self, acc, cc, name_new):
+	def cmd_chan_rename(self, acc, cc, name_old=None, name_new=None):
 		if acc != 'main': return
-		name_old, name_new = (
-			self.bridge.irc_name(n).lower() for n in [cc.name, name_new] )
+		name_old, name_new = ( self.bridge.irc_name(n).lower()
+			for n in [name_old or cc.name, name_new or cc.name] )
 		self.bridge.cmd_msg_discord( cc, None,
 			f'-----== Discord channel renamed: #{name_old} -> #{name_new} ==-----' )
 
@@ -1742,6 +1742,8 @@ class DiscordSession:
 		gg = self.st.guilds.get(gid)
 		if not gg: return
 		cs, ct = dict(), self.c_chan_type
+		chan_name_changes = list() # for disambiguation checks
+
 		for c in force_list(chans):
 			if c.type in [ct.voice, ct.group, ct.news, ct.store]: continue
 
@@ -1760,8 +1762,6 @@ class DiscordSession:
 					topic = 'private chat - ' + ', '.join(u.name for u in cc.users.values())
 					if len(topic) > 200: topic = topic[:200] + ' ...'
 
-			if name_old and name != name_old:
-				self.discord.cmd_chan_rename(self.t, cc, name)
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
 				name_base=name, name=name, t=ct(c.get('type', 0)),
@@ -1771,29 +1771,40 @@ class DiscordSession:
 			if name_old and name_old != name_old_base:
 				# For already-disambiguated chans, all name_old_base channels might need update
 				# Might not affect cc if name was updated, but will change/remove suffix on others
-				self.op_ev_chans_update_disambiguation(cs, name_old_base)
-			# This also triggers for new chans with name_old=None
-			if name != name_old: self.op_ev_chans_update_disambiguation(cs, name)
+				chan_name_changes.append((cc, name_old_base, name_old))
+			if name != name_old: chan_name_changes.append((cc, name, name_old)) # new chans too
+
+		# Process channel name changes, if any, send notifications
+		cs_affected = dict() # other channels affected by disambiguation
+		for cc, name, name_old in chan_name_changes:
+			for cca, cca_name_old in self.op_ev_chans_update_disambiguation(cs, name):
+				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
+		for cc, name, name_old in chan_name_changes:
+			if not name_old: self.log.debug('New channel [{}]: {!r} ({!r})', cc.id, cc.name, cc.topic)
+			elif cc.name != name_old: self.discord.cmd_chan_rename(self.t, cc, name_old)
+			cs_affected.pop(cc.id, None)
+		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(self.t, cc, name_old)
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
 
 	def op_ev_chans_update_disambiguation(self, cs, name):
+		'Renames same-name channels to "chan.1" "chan.2" etc, yielding (cc, name_old) tuples'
+		# Must always yield same renames for same set(s) of channel names
 		irc_name, irc_chans = self.discord.bridge.irc_name(name).lower(), list()
 		for cc in cs.values():
 			if self.discord.bridge.irc_name(cc.name_base).lower() != irc_name: continue
 			irc_chans.append(cc)
-		if not irc_chans:
-			return self.log.error('update_disambiguation failed for name: {!r}', name)
+		if not irc_chans: return self.log.error('update_disambiguation failed for name: {!r}', name)
 		if len(irc_chans) == 1: # remove unnecessary disambiguation
 			cc = irc_chans[0]
 			if cc.name_base != cc.name:
-				self.discord.cmd_chan_rename(self.t, cc, cc.name_base)
+				yield cc, cc.name
 				cc.name = cc.name_base
 			return
 		for n, cc in enumerate(sorted(irc_chans, key=op.itemgetter('did')), 1):
 			name = f'{cc.name_base}.{n}'
-			if name != cc.name: self.discord.cmd_chan_rename(self.t, cc, name)
+			if name != cc.name: yield cc, cc.name
 			cc.name = name
 
 	def op_ev_recipient(self, m, act):
