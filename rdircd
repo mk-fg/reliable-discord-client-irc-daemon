@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.133' # git-version: py-str
+	version = '1.134' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1151,10 +1151,10 @@ class Discord:
 
 	def cmd_chan_rename(self, acc, cc, name_new):
 		if acc != 'main': return
-		chan_old, chan_new = (
+		name_old, name_new = (
 			self.bridge.irc_name(n).lower() for n in [cc.name, name_new] )
 		self.bridge.cmd_msg_discord( cc, None,
-			f'-----== Discord channel renamed: #{chan_old} -> #{chan_new} ==-----' )
+			f'-----== Discord channel renamed: #{name_old} -> #{name_new} ==-----' )
 
 	def cmd_guild_ban(self, acc, act, gid, guild_name, name):
 		if acc != 'main': return
