@@ -149,9 +149,52 @@ Limitations
 Usage
 -----
 
-Install script dependencies (see Requirements section below)::
+Requirements
+````````````
 
-  % pip3 install --user aiohttp
+* `Python 3.7+ <http://python.org/>`_
+* `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
+
+Installation
+````````````
+
+Simpliest way might be to use package for/from your linux distribution,
+if it is available.
+
+Currently known distro packages (as of 2020-05-17):
+
+- Arch Linux (AUR): https://aur.archlinux.org/packages/rdircd-git/
+
+It should be easy to install this one script and its few dependencies manually
+though, e.g. by doing something roughly like this::
+
+  root # useradd -m rdircd
+  root # su - rdircd
+
+  rdircd % python -m ensurepip --user
+  rdircd % python -m pip install --user aiohttp
+  rdircd % curl https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd > rdircd
+  rdircd % chmod +x rdircd
+
+  rdircd % ./rdircd --help
+   ...to test if it runs...
+
+  rdircd % ./rdircd --conf-dump-defaults
+   ...for a full list of all supported options...
+  rdircd % nano rdircd.ini
+   ...see below for configuration file info/example...
+
+  rdircd % ./rdircd --debug -c rdircd.ini
+   ...drop --debug and use init system for a regular daemon...
+
+This assumes that only python3 is installed (see Requirements above) and will
+setup script and everything it needs in an rdircd user home directory.
+
+Note that it's generally better to use OS packages for as many steps above as
+possible, so that they get updates and avoid such extra local maintenance burden.
+
+Setup and actual usage
+``````````````````````
 
 Create configuration file with discord and ircd auth credentials in ~/.rdircd.ini
 (see all --conf\* opts wrt these)::
@@ -166,7 +209,8 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
 Note: IRC password can be omitted, but be sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
-Start rdircd daemon: ``./rdircd --debug``
+| Start rdircd daemon: ``./rdircd --debug``
+| (note: if installed from dis
 
 Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
 or -i/--irc-bind option for using diff host/port).
@@ -213,15 +257,8 @@ chan can be used to tweak various logging and inspect daemon state and protocols
 more closely, send "help" there to list available commands.
 
 
-Requirements
-------------
-
-* `Python 3.7+ <http://python.org/>`_
-* `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
-
-
-Misc Features
--------------
+Misc Feature Info
+-----------------
 
 | Notes on various optional and less obvious features are collected here.
 | See "Usage" section for a more general information.
