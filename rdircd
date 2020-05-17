@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.129' # git-version: py-str
+	version = '1.131' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -760,7 +760,12 @@ class IRCProtocol:
 				self.log.exception('Error processing message: {}', m)
 
 	def check_access(self, cmd):
-		if self.st.cap_neg: return cmd in ['cap', 'quit']
+		# Client connecton goes through following states:
+		#  - init - connection established, capability negotiation phase
+		#  - st.cap_neg=True - capabilities negotiated
+		#  - st.auth=True - authenticated, normal operation
+		# This controls which protocol commands are allowed in each state.
+		if self.st.cap_neg: return cmd in ['cap', 'quit', 'user', 'nick', 'pass']
 		if not self.st.auth:
 			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
 			if not res: self.send(451, ':You have not registered')
@@ -813,7 +818,6 @@ class IRCProtocol:
 	def check_auth_done(self):
 		# Delay is to avoid trivial bruteforcing
 		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
-
 	def check_auth_done_delayed(self):
 		if self.st.auth: return
 		if not (self.st.nick and self.st.user): return
