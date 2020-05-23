@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.136' # git-version: py-str
+	version = '1.137' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -38,7 +38,8 @@ class RDIRCDConfigBase:
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discordapp.com/api/v{api_ver}/'
-	discord_msg_confirm_timeout = 25.0
+	discord_api_user_agent = ( f'rdircd/{version}'
+		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
 	discord_ws_reconnect_min = '65.0'
@@ -46,13 +47,23 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_factor = 1.6
 	discord_ws_reconnect_warn = '3600:3' # to filter-out expected reconnects
 	discord_ws_reconnect_on_auth_fail = False # useful for discord service disruptions
-	discord_user_agent = ( f'rdircd/{version}'
-		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_http_delay_padding = 10.0 # added to retry_after
 	discord_http_timeout_conn = 40.0
 	discord_http_timeout_conn_sock = 30.0
 	discord_gateway = ''
 
+	discord_sync_chan_users = False # XXX: to auto-populate /names for irc, not used yet
+	discord_sync_tbf = '10:1' # for channel-names-sync requests
+
+	# discord_msg_mention_re should match only discord user mentions.
+	# "nick" group must be irc nick, to be replaced with
+	#  discord user-id tag, all other capturing groups are replaced by "".
+	# Don't use repeating/overlapping capturing groups (w/o "?:"). Empty value - disable.
+	discord_msg_mention_re = ''
+	# discord_msg_mention_re = r'(?:^|\s)(@)(?P<nick>[^\s,;@+]+)'
+	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
+
+	# XXX: rename to just "auth"
 	auth_main_email = ''
 	auth_main_password = ''
 	auth_main_token = ''
@@ -209,7 +220,7 @@ def sockopt_resolve(prefix, v):
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
 
-# str_norm is not used in irc, where ascii-only casefold is more traditional
+# str_norm is NOT used in irc, where ascii-only casefold is more traditional
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 def str_part(s, sep, default=None):
@@ -320,7 +331,7 @@ def token_bucket(spec, negative_tokens=False):
 		if min(interval, burst) < 0: raise ValueError()
 	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
 	# log.debug('tbf parameters: interval={:.1f}, burst={:.1f}', interval, burst)
-	tokens, rate, ts_sync = burst, interval**-1, time.monotonic()
+	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
 	val = (yield) or 1
 	while True:
 		ts = time.monotonic()
@@ -344,6 +355,10 @@ async def aio_task_cancel(task_list):
 		with contextlib.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
 		with contextlib.suppress(asyncio.CancelledError): await task
+
+async def aio_delay(delay, task):
+	if delay: await asyncio.sleep(delay)
+	return await aio_await_wrap(task)
 
 
 class StacklessContext:
@@ -1042,7 +1057,7 @@ class Discord:
 
 	def __init__(self, rdircd):
 		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
-		self.log = get_logger('rdircd.discord.main')
+		self.log = get_logger('rdircd.discord')
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
@@ -1051,10 +1066,18 @@ class Discord:
 			self.log.error('Disabling discord due to missing access credentials')
 			self.session = None
 		else:
-			s = self.session = DiscordSession(self, 'main')
+			s = self.session = DiscordSession(self)
 			s.task = self.loop.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
+		self.user_mention_re = self.conf.discord_msg_mention_re
+		if self.user_mention_re:
+			self.user_mention_re = re.compile(self.user_mention_re)
+			if 'nick' not in self.user_mention_re.groupindex:
+				raise ValueError( 'Missing "nick" group in'
+					f' discord-mentions regexp: {self.conf.discord_msg_mention_re!r}' )
+		# user_map = {guild_id: {irc_name: discord_uid, discord_uid: irc_name, ...}}
+		self.user_wait, self.user_map = irc_name_dict(), cs.defaultdict(irc_name_dict)
 		return self
 
 	async def __aexit__(self, *err):
@@ -1107,15 +1130,13 @@ class Discord:
 		except DiscordHTTPError as err: return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
-	def cmd_msg_recv(self, acc, cc, nick, line,
+	def cmd_msg_recv(self, cc, nick, line,
 			tags=None, flake=None, nonce=None, notice=None ):
-		self.log.debug( 'MSG: {} {} {} :: {} :: {} {}',
-			acc, cc.gid, cc.name, nick, line, tags or '' )
-		if acc != 'main': return
+		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gid, cc.name, nick, line, tags or '')
 		if nonce and flake:
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut:
-				self.log.debug('MSG: {} confirm nonce={} flake={}', acc, nonce, flake)
+				self.log.debug('MSG: confirm nonce={} flake={}', nonce, flake)
 				return fut.set_result(flake)
 		self.bridge.cmd_msg_discord( cc, nick, line,
 			tags, notice=notice, ts=self.flake_parse(flake) )
@@ -1124,6 +1145,8 @@ class Discord:
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 		try:
 			nonce = self.flake_build(time.time())
+			self.log.debug('MSG:  >> :: {} {} {} :: {}', cc.gid, cc.name, nonce, line)
+			line = await self.cmd_msg_send_annotate(cc, line)
 			res = self.loop.create_task(self.session.req(
 				f'channels/{cc.id}/messages',
 				m='post', json=dict(content=line, nonce=nonce) ))
@@ -1149,19 +1172,64 @@ class Discord:
 			self.log.exception('Failed sending discord msg: {}', err_str)
 			raise IRCBridgeSignal(err_str)
 
-	def cmd_chan_rename(self, acc, cc, name_old=None, name_new=None):
-		if acc != 'main': return
+	async def cmd_msg_send_annotate(self, cc, line):
+		'''Translate IRC nick mentions matched by
+				"user_mention_re" replaced with Discord mention-tags, if any.
+			Either returns line with all mentioned translated or fails with DiscordError.'''
+		# Regexp group replacements are made from the end to start,
+		#  with line/tag parts lists containing reversed str parts to reassemble.
+		# https://discord.com/developers/docs/reference#message-formatting
+		if not self.user_mention_re: return line
+		line_parts, nick_idx = [line], self.user_mention_re.groupindex['nick']
+		for m in reversed(list(self.user_mention_re.finditer(line))):
+			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
+			nick, (na, nb) = m.group(nick_idx), m.span(nick_idx)
+			if not (tag and nick): tag = [tag]
+			else:
+				subs = list( (ga-a, gb-a, '') for ga, gb in
+					(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
+				uid = self.user_map[cc.gid].get(nick)
+				if uid: nick = f'<@{uid}>'
+				else:
+					if ( not self.conf.discord_sync_chan_users
+							and not (cc.synced or self.user_wait) ): # run on-demand sync
+						if nick not in self.user_wait: self.user_wait[nick] = asyncio.Future()
+						try:
+							self.session.ws_req_sync(cc)
+							uid = await self.user_wait[nick]
+						finally: self.user_wait.pop(nick).cancel()
+					if uid: nick = f'<@{uid}>'
+					else:
+						raise DiscordError( 'Could not translate'
+							f' irc->discord mention [mention={nick!r} irc-nick={tag!r}]' )
+				tag = [tag]
+				for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
+					part = tag.pop()
+					tag.extend([part[sb:], s, part[:sa]])
+			line_parts.extend([line[b:], *tag, line[:a]])
+		return ''.join(reversed(line_parts))
+
+	def cmd_user_update(self, gid, uid, name):
+		'Updates user_map with discord-name or deletes it with name=None'
+		users = self.user_map[gid]
+		nick = users.pop(uid, None)
+		if nick: del users[nick]
+		if not name: return
+		nick = self.bridge.irc_name(name)
+		users[uid], users[nick] = nick, uid
+		fut = self.user_wait.get(nick)
+		if fut and not fut.done(): fut.set_result(uid)
+
+	def cmd_chan_rename(self, cc, name_old=None, name_new=None):
 		name_old, name_new = ( self.bridge.irc_name(n).lower()
 			for n in [name_old or cc.name, name_new or cc.name] )
 		self.bridge.cmd_msg_discord( cc, None,
 			f'-----== Discord channel renamed: #{name_old} -> #{name_new} ==-----' )
 
-	def cmd_guild_ban(self, acc, act, gid, guild_name, name):
-		if acc != 'main': return
+	def cmd_guild_ban(self, act, gid, guild_name, name):
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
 
-	def cmd_relationship(self, acc, uid, t, act, name):
-		if acc != 'main': return
+	def cmd_relationship(self, uid, t, act, name):
 		name = '' if not name else f' name={name}'
 		self.bridge.cmd_msg_monitor(f'--- relationship: [uid={uid}{name}] {act} {t}', gid=1)
 
@@ -1183,6 +1251,10 @@ class DiscordSession:
 		invalid_session = 9
 		hello = 10
 		heartbeat_ack = 11
+		request_sync = 12
+		client_disconnected = 13
+		request_sync_chan = 14
+
 		unknown_error = 4000
 		unknown_opcode = 4001
 		decode_error = 4002
@@ -1194,6 +1266,7 @@ class DiscordSession:
 		session_timeout = 4009
 		invalid_shard = 4010
 		sharding_required = 4011
+
 		oneshot = 10_000
 
 	class c_chan_type(enum.IntEnum):
@@ -1232,17 +1305,17 @@ class DiscordSession:
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
-	def __init__(self, discord, t): # t = this session/acc type, for multiple sessions
-		self.discord, self.loop, self.conf, self.t = discord, discord.loop, discord.conf, t
+	def __init__(self, discord):
+		self.discord, self.loop, self.conf = discord, discord.loop, discord.conf
 		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
-		self.log = get_logger(f'rdircd.discord.{self.t}')
-		self.log_ws = get_logger(f'proto.ws.{self.t}')
-		self.log_http = get_logger(f'proto.http.{self.t}')
+		self.log = get_logger(f'rdircd.discord')
+		self.log_ws = get_logger(f'proto.ws')
+		self.log_http = get_logger(f'proto.http')
 		self.log_http_reqres = get_logger(f'proto.http.reqres')
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_proto_cut)
 
 	def get_auth(self, k, default=ValueError):
-		try: return getattr(self.conf, f'auth_{self.t}_{k}')
+		try: return getattr(self.conf, f'auth_main_{k}')
 		except AttributeError as err:
 			if default is ValueError: raise
 			return default
@@ -1359,8 +1432,8 @@ class DiscordSession:
 			if res.get('mfa'):
 				raise DiscordAbort( 'Multi-factor auth'
 					' requirement detected, but is not supported by rdircd' )
-			setattr(self.conf, f'auth_{self.t}_token', res['token'])
-			self.conf.update_file_section(f'auth_{self.t}', 'token')
+			setattr(self.conf, f'auth_main_token', res['token'])
+			self.conf.update_file_section(f'auth_main', 'token')
 			self.auth_token.set()
 			self.auth_token = self.get_auth('token')
 		return self.auth_token
@@ -1370,7 +1443,7 @@ class DiscordSession:
 		if not re.search(r'^https?:', url): url = urllib.parse.urljoin(self.api_url, url)
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
-			'User-Agent', self.conf.discord_user_agent )
+			'User-Agent', self.conf.discord_api_user_agent )
 		for att in 'normal', 'token_refresh':
 			if auth:
 				token = await self.req_auth_token()
@@ -1473,7 +1546,7 @@ class DiscordSession:
 			self.state('connecting.ws')
 			try:
 				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
-					headers={'User-Agent': self.conf.discord_user_agent},
+					headers={'User-Agent': self.conf.discord_api_user_agent},
 					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
 			except aiohttp.ClientError as err:
 				err_str = err_fmt(err)
@@ -1492,6 +1565,7 @@ class DiscordSession:
 			await self.ws_close()
 			raise DiscordSessionError('Failed to connect to discord')
 		self.state('connected')
+		self.ws_sync_tbf = token_bucket(self.conf.discord_sync_tbf)
 		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
 		self.ws_add_handler(self.c.reconnect, self.op_reconnect)
 		self.ws_add_handler(self.c.hello, self.op_hello)
@@ -1581,7 +1655,18 @@ class DiscordSession:
 		finally: self.ws_closed_clean.set()
 
 
-	### Gateway Websocket protocol
+	### Gateway Websocket request wrappers (rare)
+
+	def ws_req_sync(self, cc):
+		if cc.synced: return
+		# XXX: "0,99" should probably be repeated for large discords, need to request pages
+		sync = ft.partial( self.ws_send, self.c.request_sync_chan,
+			dict(guild_id=cc.gid, typing=False, activities=False, channels={cc.id: [[0, 99]]}) )
+		self.ws_tasks.add(aio_delay(next(self.ws_sync_tbf), sync))
+		cc.synced = True
+
+
+	### Gateway Websocket event handlers
 
 	def op_track_seq(self, m): self.st.seq = m.s
 
@@ -1693,7 +1778,11 @@ class DiscordSession:
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
-		elif o == 'guild_member': return # not tracking per-guild users in any way
+		elif mt.startswith('guild_member_'):
+			act = mt[13:]
+			if act == 'list_update': return self.op_ev_member_ops(m.d)
+			elif act in ['add', 'update']: return self.op_ev_member(m.d)
+			elif act == 'remove': return self.op_ev_member(m.d, delete=True)
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'channel':
@@ -1708,11 +1797,21 @@ class DiscordSession:
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
-		elif o in [ 'presences', 'presence', 'typing', 'channel_pins', 'webhooks',
-			'guild_emojis', 'guild_integrations', 'guild_member', 'guild_role' ]: return
+		elif o in [ 'presences', 'presence', 'typing',
+			'channel_pins', 'webhooks', 'guild_emojis', 'guild_integrations', 'guild_role' ]: return
 		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
 		self.log.warning('Unhandled event: {}', self._repr(m))
+
+	def op_ev_member_ops(self, d):
+		for o in d.get('ops', list()):
+			for item in o.get('items') or list():
+				m = item.get('member', dict())
+				if m: self.op_ev_member(m, d.guild_id, delete=o.op=='DELETE')
+
+	def op_ev_member(self, m, guild_id=None, delete=False):
+		if not guild_id: guild_id = m.guild_id
+		self.discord.cmd_user_update(guild_id, m.user.id, m.user.username)
 
 	def op_ev_delete(self, gid=None, chan=...):
 		gg = self.st.guilds.get(gid)
@@ -1763,10 +1862,12 @@ class DiscordSession:
 					if len(topic) > 200: topic = topic[:200] + ' ...'
 
 			cc.update(
-				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
+				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', synced=None,
 				name_base=name, name=name, t=ct(c.get('type', 0)),
 				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
+			# XXX: change this to only run on /join, not for every single channel
+			if self.conf.discord_sync_chan_users: self.ws_req_sync(cc)
 
 			if name_old and name_old != name_old_base:
 				# For already-disambiguated chans, all name_old_base channels might need update
@@ -1781,9 +1882,9 @@ class DiscordSession:
 				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
 		for cc, name, name_old in chan_name_changes:
 			if not name_old: self.log.debug('New channel [{}]: {!r} ({!r})', cc.id, cc.name, cc.topic)
-			elif cc.name != name_old: self.discord.cmd_chan_rename(self.t, cc, name_old)
+			elif cc.name != name_old: self.discord.cmd_chan_rename(cc, name_old)
 			cs_affected.pop(cc.id, None)
-		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(self.t, cc, name_old)
+		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
@@ -1810,23 +1911,22 @@ class DiscordSession:
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
-		# XXX: check if channel_update gets sent along with these, otherwise chan user list here
 		cc = self.st.guilds[1].chans.get(m.channel_id)
-		self.discord.cmd_msg_recv( self.t, cc,
+		self.discord.cmd_msg_recv( cc,
 			m.get('user', dict()).get('username'), f'--- recipient {act.lower()}' )
 
 	def op_ev_ban(self, m, act):
 		gg, name = self.st.guilds.get(m.guild_id), m.get('user', dict())
 		guild_name = gg.name if gg else f'%{m.guild_id}'
 		name = name.get('username') or f'@{name.get("id", "???")}'
-		self.discord.cmd_guild_ban(self.t, act, m.guild_id, guild_name, name)
+		self.discord.cmd_guild_ban(act, m.guild_id, guild_name, name)
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
 		try: t = self.c_rel_type(t).name
 		except ValueError: t = f'unknown[{t}]'
 		if name: name = name.get('username')
-		self.discord.cmd_relationship(self.t, m.get('id', '?'), t, act, name)
+		self.discord.cmd_relationship(m.get('id', '?'), t, act, name)
 
 	def op_msg(self, m, act):
 		gid = m.get('guild_id', 1)
@@ -1837,7 +1937,7 @@ class DiscordSession:
 				' id: msg_id={} guild_id={} channel_id={}', m.id, gid, m.channel_id )
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
-			return self.discord.cmd_msg_recv( self.t, cc,
+			return self.discord.cmd_msg_recv( cc,
 				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
 		flake, author = None, m.get('author')
 		if not author:
@@ -1848,11 +1948,12 @@ class DiscordSession:
 		if not line: return # joins/parts/pins and such
 		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else: flake = m.id
-		self.discord.cmd_msg_recv( self.t, cc,
+		self.discord.cmd_msg_recv( cc,
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
 		# Note: must produce non-empty message for any relevant msg type
+		# Note: also used for parsing history query responses, not just events
 		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
 		line = line.replace('\u200b', '') # unicode zero-width-space junk
 		try:
@@ -1891,6 +1992,7 @@ class DiscordSession:
 		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, users, chans, roles):
+		# https://discord.com/developers/docs/reference#message-formatting
 		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&)(\d+)>', line))
 		if tags_raw:
 			mt, users = self.c_msg_tags, dict((m.id, m.username) for m in force_list(users))
@@ -1925,7 +2027,7 @@ class DiscordSession:
 		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
 		try: nick = m['member']['user']['username']
 		except: nick = None # notice from nick_sys
-		self.discord.cmd_msg_recv(self.t, cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
+		self.discord.cmd_msg_recv(cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
 
 
 
@@ -1953,6 +2055,7 @@ class RDIRCD:
 		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_names_timeout = parse_duration(self.conf.irc_names_timeout)
+		self.irc_msg_queue = asyncio.Queue()
 		self.nick_sys = 'core'
 		self.chans_sys = adict({
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
@@ -1972,7 +2075,6 @@ class RDIRCD:
 		boot_id = pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 		self.uid_start = '.'.join( str_hash(v, c)
 			for c, v in zip([3, 3, 6], [self.uid_seed, boot_id, os.urandom(6)]) )
-		self.irc_msg_queue = asyncio.Queue()
 		self.cmd_delay(self.irc_msg_queue_proc)
 		self.init = True
 		return self
@@ -2055,11 +2157,14 @@ class RDIRCD:
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
 		return self.cache.d2i[name]
 
+	def irc_name_revert(self, nick):
+		return self.cache.i2d.get(nick)
+
 	def irc_chan_info(self, name):
 		# Note: internal name (cc.name) must always be passed, not lowercased irc one
 		if '.' not in name: return
 		gid, name = name.split('.', 1)
-		(t, gid), chan_name = self.uid(gid), self.cache.i2d.get(name)
+		(t, gid), chan_name = self.uid(gid), self.irc_name_revert(name)
 		if t != 'guild': return
 		gg = self.discord.st.get('guilds', dict()).get(gid)
 		if not gg: return
@@ -2069,6 +2174,7 @@ class RDIRCD:
 		return adict(gg=gg, cc=cc)
 
 	async def irc_topic_cmd(self, conn, name, line=''):
+		# XXX: "/t sync" command support for manual channel/guild-users sync
 		chan = conn.chan_spec(name)
 		notice_cmd = ft.partial( conn.cmd_msg_synth,
 			self.nick_sys, chan, notice=True, direct=True )
@@ -2189,6 +2295,7 @@ class RDIRCD:
 		for conn in self.irc_conns.values():
 			if conn.chan_name(name) in conn.st.chans: yield conn
 
+	@iter_gather(list)
 	def cmd_chan_names_discord(self, name):
 		'''List nicks from discord, in most recently
 			active first order, doing auto-cleanup on these.'''
@@ -2197,7 +2304,7 @@ class RDIRCD:
 		users, ts_cutoff = info.cc.get('users', dict()), time.time() - self.irc_names_timeout
 		for u in sorted(users.values(), key=op.itemgetter('ts'), reverse=True):
 			if u.ts < ts_cutoff: users.pop(u.name, None)
-			else: yield self.irc_name(u.name)
+			else: yield u.name, self.irc_name(u.name)
 
 	@iter_gather(list)
 	def cmd_chan_names(self, name):
@@ -2205,8 +2312,8 @@ class RDIRCD:
 		conn_nicks = irc_name_dict.value_map(
 			conn.st.nick for conn in self.cmd_chan_conns(name) )
 		yield from sorted(conn_nicks.values())
-		for nick in self.cmd_chan_names_discord(name):
-			if nick not in conn_nicks: yield nick
+		for nick_discord, nick_irc in self.cmd_chan_names_discord(name):
+			if nick_irc not in conn_nicks: yield nick_irc
 
 	@iter_gather(adict, cache=True)
 	def cmd_chan_map(self, cache_track):
