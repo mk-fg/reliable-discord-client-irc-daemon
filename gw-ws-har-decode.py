@@ -47,6 +47,7 @@ def main(args=None):
 	inflator = zlib.decompressobj()
 	buff, buff_end = bytearray(), b'\x00\x00\xff\xff'
 
+	ts_start = ts_last = 0
 	for msg in ws_entry['_webSocketMessages']:
 		if msg['type'] == 'receive':
 			data = base64.b64decode(msg['data'])
@@ -55,9 +56,15 @@ def main(args=None):
 			msg['data'] = inflator.decompress(buff).decode()
 			buff.clear()
 		data = json.loads(msg['data'])
-		msg = dict( ws_t=msg['type'],
-			ws_ts=msg['time'], ws_op=msg['opcode'], ws_data=data )
-		json.dump(msg, sys.stdout)
+		msg_line = dict(
+			ws_t=msg['type'], ws_op=msg['opcode'],
+			ws_ts=msg['time'],
+			ws_ts_diff=ts_last and msg['time'] - ts_last,
+			ws_ts_rel=ts_start and msg['time'] - ts_start,
+			ws_data=data )
+		ts_last = msg['time']
+		if not ts_start: ts_start = ts_last
+		json.dump(msg_line, sys.stdout)
 		sys.stdout.write('\n')
 
 if __name__ == '__main__': sys.exit(main())
