@@ -503,7 +503,7 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2019-09-28
+Last updated: 2020-05-23
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   which likely means that such use is not officially supported or endorsed.
@@ -531,8 +531,8 @@ Last updated: 2019-09-28
   This is done to ensure that all messages either arrive in the same strict
   order they've been sent or not posted at all.
 
-- Some events coming from websocket gateway are undocumented, maybe due to lag
-  of docs behind implementation, or due to them not being deemed that useful to bots, idk.
+- Some events on gateway websocket are undocumented, maybe due to lag of docs
+  behind implementation, or due to them not being deemed that useful to bots, idk.
 
 - Discord allows channels (and probably users) to have exactly same name, which is not
   a big deal for users (due to one-way translation), but have to be disambiguated for channels.
@@ -543,3 +543,10 @@ Last updated: 2019-09-28
 
   At least in my experience so far, discord servers seem to fail like that for a
   few minutes to an hour or two pretty much every other week.
+
+- Gateway websocket `can use zlib compression`_, which makes inspecting protocol in
+  browser devtools a bit inconvenient, `gw-ws-har-decode.py <gw-ws-har-decode.py>`_
+  script in this repo can be used to decompress/decode websocket messages saved
+  from chromium-engine browser devtools (pass -h/--help option for info on how to do it).
+
+.. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
