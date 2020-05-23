@@ -26,6 +26,12 @@ def main(args=None):
 				all traffic in that session (incl. websocket data) to a HAR file for this script.
 			- Pretty-print ws data: ./gw-ws-har-decode.py discord.com.har | jq -C . | less'''))
 	parser.add_argument('har_file', nargs='?', help='HAR dump from websocket connection to process.')
+	parser.add_argument('-n', '--pick', type=int, metavar='n',
+		help='Only pick and print message with specified "ws_seq" sequential number.')
+	parser.add_argument('-m', '--pick-to', type=int, metavar='n',
+		help=dd('''
+			Modifies -n/--pick option to also print' all msgs that come
+				after it, up to and including specified one (0 - to the end).'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	src = sys.stdin if not opts.har_file else open(opts.har_file)
@@ -45,9 +51,9 @@ def main(args=None):
 	if not ws_entry: parser.error('No wss:// connections found within HAR file')
 
 	inflator = zlib.decompressobj()
-	buff, buff_end = bytearray(), b'\x00\x00\xff\xff'
-
+	n, buff, buff_end = 1, bytearray(), b'\x00\x00\xff\xff'
 	ts_start = ts_last = 0
+
 	for msg in ws_entry['_webSocketMessages']:
 		if msg['type'] == 'receive':
 			data = base64.b64decode(msg['data'])
@@ -55,16 +61,26 @@ def main(args=None):
 			if data[-4:] != buff_end: continue # partial data
 			msg['data'] = inflator.decompress(buff).decode()
 			buff.clear()
-		data = json.loads(msg['data'])
-		msg_line = dict(
-			ws_t=msg['type'], ws_op=msg['opcode'],
-			ws_ts=msg['time'],
-			ws_ts_diff=ts_last and msg['time'] - ts_last,
-			ws_ts_rel=ts_start and msg['time'] - ts_start,
-			ws_data=data )
+
+		msg_print = True
+		if opts.pick:
+			msg_print = (
+				opts.pick == n if opts.pick_to is None
+				else opts.pick <= n <= (opts.pick_to or 2**30) )
+		if msg_print:
+			data = json.loads(msg['data'])
+			msg_line = dict(
+				ws_seq=n, ws_t=msg['type'], ws_op=msg['opcode'],
+				ws_ts=msg['time'],
+				ws_ts_diff=ts_last and msg['time'] - ts_last,
+				ws_ts_rel=ts_start and msg['time'] - ts_start,
+				ws_data=data )
+			json.dump(msg_line, sys.stdout)
+			sys.stdout.write('\n')
+			if opts.pick: break
+
 		ts_last = msg['time']
 		if not ts_start: ts_start = ts_last
-		json.dump(msg_line, sys.stdout)
-		sys.stdout.write('\n')
+		n += 1
 
 if __name__ == '__main__': sys.exit(main())
