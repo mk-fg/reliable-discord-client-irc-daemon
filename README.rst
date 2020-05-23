@@ -68,6 +68,8 @@ Features
 
 - Per-server and global catch-all channels to check on general activity.
 
+- Some quirky translation for discord user mentions, see below for specifics.
+
 - Configurable local name aliases.
 
 - Simple and consistent discord to irc guild/channel/user name translation.
@@ -107,8 +109,8 @@ Features
 Limitations
 -----------
 
-- Mentions for users/channels/roles and such in messages coming from IRC are not
-  parsed or translated to discord tags in any way, all text is sent as-is.
+- Only user mentions are translated into discord tags (if enabled and with some
+  quirks, see below) - not channels, roles or emojis.
 
 - No support for sending attachments or embeds of any kind - use WebUI for that,
   not IRC.
@@ -127,6 +129,9 @@ Limitations
 
 - Completely ignores all non-text-chat stuff in general
   (e.g. voice, user profiles, games library, store, friend lists, etc).
+
+- Does not use or expose discord-server-specific nicknames in any way,
+  only global usernames.
 
 - Discord tracks "read_state" server-side, which is not used here in any way -
   triggering history replay is only done manually (/t commands in chans).
@@ -337,6 +342,47 @@ requests/adds/removes) as notices.
 
 Accepting friend requests and adding/removing these can be done via regular
 discord webui and is not implemented in this client in any special way.
+
+Discord user mentions
+`````````````````````
+
+These are "@username" tags, designed to alert someone to direct message.
+
+rdircd translates whatever matches "msg-mention-re" regexp configuration
+option into discord mentions. Default for it is::
+
+  [discord]
+  msg-mention-re = (?:^|\s)(@)(?P<nick>[^\s,;@+]+)
+
+Which would match any word-like space- or punctuation-separated "@nick" mention
+in sent lines.
+
+Regexp (python "re" module syntax) must have named "nick" group with
+nick/username lookup string, which will be replaced by discord mention tag,
+and all other capturing groups (i.e. without "?:") will be stripped
+(like "@" in above regexp).
+
+To ID specific discord user, "nick" will be used in the following ways:
+
+- Case-insensitive match against all recent guild-related irc names
+  (message authors, reactions, private channel users, etc).
+
+- Lookup unique name completion by prefix, same as in webui after @.
+
+- If no cached or unique match found - error notice will be issued
+  and message not sent.
+
+Such strict behavior is designed to avoid any unintentional mis-translations,
+and highlighting wrong person should only be possible via typo.
+
+Will also make it impossible to send any string matching specified regexp that
+is not intended to be a discord user mention.
+
+"msg-mention-re" can be set to an empty value to disable this translation entirely.
+
+Note that discord user lists can be quite massive (10K+ users), are not split
+by-channel, and are not designed to be pre-fetched on the client, only queried
+for completions or visible parts.
 
 Lookup Discord IDs
 ``````````````````
