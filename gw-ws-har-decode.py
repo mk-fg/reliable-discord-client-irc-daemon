@@ -77,7 +77,6 @@ def main(args=None):
 				ws_data=data )
 			json.dump(msg_line, sys.stdout)
 			sys.stdout.write('\n')
-			if opts.pick: break
 
 		ts_last = msg['time']
 		if not ts_start: ts_start = ts_last
