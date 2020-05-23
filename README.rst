@@ -346,10 +346,10 @@ discord webui and is not implemented in this client in any special way.
 Discord user mentions
 `````````````````````
 
-These are "@username" tags, designed to alert someone to direct message.
+| These are "@username" tags, designed to alert someone to direct-ish message.
+| rdircd translates whatever matches "msg-mention-re" regexp conf-option into them.
 
-rdircd translates whatever matches "msg-mention-re" regexp configuration
-option into discord mentions. Default for it is::
+Default value for it should look like this::
 
   [discord]
   msg-mention-re = (?:^|\s)(@)(?P<nick>[^\s,;@+]+)
@@ -357,12 +357,20 @@ option into discord mentions. Default for it is::
 Which would match any word-like space- or punctuation-separated "@nick" mention
 in sent lines.
 
-Regexp (python "re" module syntax) must have named "nick" group with
+Regexp (`python "re" syntax`_) must have named "nick" group with
 nick/username lookup string, which will be replaced by discord mention tag,
-and all other capturing groups (i.e. without "?:") will be stripped
+and all other capturing groups (i.e. ones without "?:") will be stripped
 (like "@" in above regexp).
 
-To ID specific discord user, "nick" will be used in the following ways:
+So, for example, to have classic irc-style highlights at the start of the line,
+regexp like this one can be used::
+
+  msg-mention-re = ^(?P<nick>[^\s,;@+]+)(:)
+
+And should translate e.g. "mk-fg: some msg" into "@mk-fg some msg"
+(with @-part being mention-tag).
+
+To ID specific discord user, "nick" will be used in following ways:
 
 - Case-insensitive match against all recent guild-related irc names
   (message authors, reactions, private channel users, etc).
@@ -373,16 +381,17 @@ To ID specific discord user, "nick" will be used in the following ways:
   and message not sent.
 
 Such strict behavior is designed to avoid any unintentional mis-translations,
-and highlighting wrong person should only be possible via typo.
+and highlighting wrong person should generally only be possible via misspelling.
+Will also make it impossible to send any string matching specified regexp,
+yet not intended to be a discord user mention, so pick regexp carefully.
 
-Will also make it impossible to send any string matching specified regexp that
-is not intended to be a discord user mention.
-
-"msg-mention-re" can be set to an empty value to disable this translation entirely.
+"msg-mention-re" can be set to an empty value to disable such translation entirely.
 
 Note that discord user lists can be quite massive (10K+ users), are not split
-by-channel, and are not designed to be pre-fetched on the client, only queried
-for completions or visible parts.
+by channel, and are not designed to be pre-fetched on the client, only queried
+for completions or visible parts, which doesn't map well to irc clients.
+
+.. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
 
 Lookup Discord IDs
 ``````````````````
@@ -591,8 +600,8 @@ Last updated: 2020-05-23
   few minutes to an hour or two pretty much every other week.
 
 - Gateway websocket `can use zlib compression`_, which makes inspecting protocol in
-  browser devtools a bit inconvenient, `gw-ws-har-decode.py <gw-ws-har-decode.py>`_
-  script in this repo can be used to decompress/decode websocket messages saved
+  browser devtools a bit inconvenient. `gw-ws-har-decode.py <gw-ws-har-decode.py>`_
+  helper script in this repo can be used to decompress/decode websocket messages saved
   from chromium-engine browser devtools (pass -h/--help option for info on how to do it).
 
 .. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
