@@ -13,7 +13,7 @@ def main(args=None):
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter,
 		description=dd('''
-			Decode "Save all as HAR with content"' dump
+			Decode "Save all as HAR with content" dump
 				from Discord gateway websocket into JSON lines.
 			Reads HAR file either from argument path or stdin, outputs JSON to stdout.
 
@@ -30,7 +30,7 @@ def main(args=None):
 		help='Only pick and print message with specified "ws_seq" sequential number.')
 	parser.add_argument('-m', '--pick-to', type=int, metavar='n',
 		help=dd('''
-			Modifies -n/--pick option to also print' all msgs that come
+			Modifies -n/--pick option to also print all msgs that come
 				after it, up to and including specified one (0 - to the end).'''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 

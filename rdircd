@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.142' # git-version: py-str
+	version = '1.143' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -58,7 +58,9 @@ class RDIRCDConfigBase:
 	#  discord user-id tag, all other capturing groups are replaced by "".
 	# Don't use repeating/overlapping capturing groups (w/o "?:"). Empty value - disable.
 	discord_msg_mention_re = r'(?:^|\s)(@)(?P<nick>[^\s,;@+]+)'
-	discord_msg_mention_re_ignore = r'^@(?:everyone|here)$'
+	# discord_msg_mention_re_ignore is matched
+	#  against full capture of the regexp above, not full line.
+	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 
 	# XXX: rename to just "auth"
@@ -1189,12 +1191,15 @@ class Discord:
 		# https://discord.com/developers/docs/reference#message-formatting
 		if not self.user_mention_re: return line
 		line_parts, nick_idx = [line], self.user_mention_re.groupindex['nick']
-		for m in reversed(list(self.user_mention_re.finditer(line))):
+		matches = list(self.user_mention_re.finditer(line))
+		for n, m in enumerate(reversed(matches)):
 			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
-			tag_parts = (
-				self.cmd_msg_annotate_ignore_strip(tag, mx)
-				if (mx := self.user_mention_re_ignore.search(tag))
-				else await self.cmd_msg_annotate_translate_tag(cc, m, nick_idx) )
+			mx = self.user_mention_re_ignore.search(tag)
+			self.log.debug(
+				'Discord mention match [{}/{}]: {!r} [{}-{}]{}',
+				n+1, len(matches), tag, a, b, ' + ignore-pattern match' if mx else '' )
+			tag_parts = ( self.cmd_msg_annotate_ignore_strip(tag, mx)
+				if mx else await self.cmd_msg_annotate_translate_tag(cc, m, nick_idx) )
 			line_parts.extend([line[b:], *tag_parts, line[:a]])
 		return ''.join(reversed(line_parts))
 

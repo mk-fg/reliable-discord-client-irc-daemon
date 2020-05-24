@@ -387,15 +387,15 @@ To ID specific discord user, "nick" group will be used in following ways:
 Such strict behavior is designed to avoid any unintentional mis-translations,
 and highlighting wrong person should generally only be possible via misspelling.
 
-Related ``msg-mention-re-ignore`` option can also be used to skip some
-non-mention things from being treated as such, that'd otherwise be picked-up by
-first regexp, stripping capturing groups from them too, which can be used to
-e.g. undo escaping.
+Related ``msg-mention-re-ignore`` option (regexp to match against full capture
+of pattern above) can also be used to skip some non-mention things from being
+treated as such, that'd otherwise be picked-up by first regexp, stripping
+capturing groups from them too, which can be used to e.g. undo escaping.
 
 Set ``msg-mention-re`` to an empty value to disable all this translation entirely.
 
 Note that discord user lists can be quite massive (10K+ users), are not split
-by channel, and are not intended to be pre-fetched on the client, only queried
+by channel, and are intended to be pre-fetched by the client, only queried
 for completions or visible parts, which doesn't map well to irc, hence all this magic.
 
 .. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
