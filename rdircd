@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.138' # git-version: py-str
+	version = '1.139' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1760,8 +1760,8 @@ class DiscordSession:
 			self.ws_send(self.c.heartbeat, self.st.get('seq'))
 			ts = self.loop.time()
 			if self.st.hb_ts_ack < ts - interval*2:
+				self.log.info('Missing heartbeat ack, reconnecting')
 				self.state('heartbeat.fail')
-				self.log.error('Missing heartbeat ack, reconnecting')
 				return self.ws_close_later()
 			while hb_ts <= ts: hb_ts += interval
 			delay = hb_ts - ts
