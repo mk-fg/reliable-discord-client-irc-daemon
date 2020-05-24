@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.140' # git-version: py-str
+	version = '1.141' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -58,6 +58,7 @@ class RDIRCDConfigBase:
 	#  discord user-id tag, all other capturing groups are replaced by "".
 	# Don't use repeating/overlapping capturing groups (w/o "?:"). Empty value - disable.
 	discord_msg_mention_re = r'(?:^|\s)(@)(?P<nick>[^\s,;@+]+)'
+	discord_msg_mention_re_ignore = r'^@(?:everyone|here)$'
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 
 	# XXX: rename to just "auth"
@@ -1074,12 +1075,14 @@ class Discord:
 			s.task = self.loop.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
-		self.user_mention_re = self.conf.discord_msg_mention_re
-		if self.user_mention_re:
-			self.user_mention_re = re.compile(self.user_mention_re)
-			if 'nick' not in self.user_mention_re.groupindex:
+		rx = self.user_mention_re = self.conf.discord_msg_mention_re
+		if rx:
+			rx = self.user_mention_re = re.compile(rx)
+			if 'nick' not in rx.groupindex:
 				raise ValueError( 'Missing "nick" group in'
 					f' discord-mentions regexp: {self.conf.discord_msg_mention_re!r}' )
+			rx = self.user_mention_re_ignore = self.conf.discord_msg_mention_re_ignore
+			if rx: self.user_mention_re_ignore = re.compile(rx)
 		self.user_mention_cache = cs.defaultdict(irc_name_dict)
 		self.user_mention_cache_ts_cleanup = 0
 		return self
@@ -1188,32 +1191,48 @@ class Discord:
 		line_parts, nick_idx = [line], self.user_mention_re.groupindex['nick']
 		for m in reversed(list(self.user_mention_re.finditer(line))):
 			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
-			nick, (na, nb) = m.group(nick_idx), m.span(nick_idx)
-			if not (tag and nick): tag = [tag]
-			else:
-				subs = list( (ga-a, gb-a, '') for ga, gb in
-					(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
-				uid = self.user_mention_cache[cc.gid].get(nick)
-				if uid: # exact match
-					nick = f'<@{uid}>'
-					self.cmd_user_cache(cc.gid, uid, replace=False)
-				else:
-					user_map = await self.session.ws_req_users_query(cc.gid, nick, 6)
-					if not user_map: raise IRCBridgeSignal(f'{nick}=no-matches')
-					elif len(user_map) > 1:
-						nicks = list(user_map.values())
-						nicks = ' '.join(map(repr, nicks[:5])) + (' +' if len(nicks) > 5 else '')
-						raise IRCBridgeSignal(f'{nick}=[{nicks}]')
-					else: # successful server-lookup with unique result
-						uid = next(iter(user_map.keys()))
-						self.cmd_user_cache(cc.gid, uid, nick, replace=False, query=True)
-						nick = f'<@{uid}>'
-				tag = [tag]
-				for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
-					part = tag.pop()
-					tag.extend([part[sb:], s, part[:sa]])
-			line_parts.extend([line[b:], *tag, line[:a]])
+			tag_parts = (
+				self.cmd_msg_annotate_ignore_strip(tag, mx)
+				if (mx := self.user_mention_re_ignore.search(tag))
+				else await self.cmd_msg_annotate_translate_tag(cc, m, nick_idx) )
+			line_parts.extend([line[b:], *tag_parts, line[:a]])
 		return ''.join(reversed(line_parts))
+
+	def cmd_msg_annotate_ignore_strip(self, tag, mx):
+		'Strips all capture groups in match from tag-string'
+		tag, subs = [tag], (mx.span(n) for n, s in enumerate(mx.groups(), 1))
+		for a, b in sorted(subs, reverse=True):
+			part = tag.pop()
+			tag.extend([part[b:], part[:a]])
+		return tag
+
+	async def cmd_msg_annotate_translate_tag(self, cc, m, nick_idx):
+		tag, (a, b) = m.group(), m.span()
+		nick, (na, nb) = m.group(nick_idx), m.span(nick_idx)
+		if not (tag and nick): tag = [tag]
+		else:
+			subs = list( (ga-a, gb-a, '') for ga, gb in
+				(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
+			uid = self.user_mention_cache[cc.gid].get(nick)
+			if uid: # exact match
+				nick = f'<@{uid}>'
+				self.cmd_user_cache(cc.gid, uid, replace=False)
+			else:
+				user_map = await self.session.ws_req_users_query(cc.gid, nick, 6)
+				if not user_map: raise IRCBridgeSignal(f'{nick}=no-matches')
+				elif len(user_map) > 1:
+					nicks = list(user_map.values())
+					nicks = ' '.join(map(repr, nicks[:5])) + (' +' if len(nicks) > 5 else '')
+					raise IRCBridgeSignal(f'{nick}=[{nicks}]')
+				else: # successful server-lookup with unique result
+					uid = next(iter(user_map.keys()))
+					self.cmd_user_cache(cc.gid, uid, nick, replace=False, query=True)
+					nick = f'<@{uid}>'
+			tag = [tag]
+			for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
+				part = tag.pop()
+				tag.extend([part[sb:], s, part[:sa]])
+		return tag
 
 	def cmd_user_cache(self, gid, uid, name=None, replace=True, query=False):
 		'''Updates user_mention_cache for discord-user-id, as nick_or_query=uid mapping.

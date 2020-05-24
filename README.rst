@@ -346,31 +346,35 @@ discord webui and is not implemented in this client in any special way.
 Discord user mentions
 `````````````````````
 
-| These are "@username" tags, designed to alert someone to direct-ish message.
-| rdircd translates whatever matches "msg-mention-re" regexp conf-option into them.
+| These are ``@username`` tags, designed to alert someone to direct-ish message.
+| rdircd translates whatever matches ``msg-mention-re`` regexp conf-option into them.
 
 Default value for it should look like this::
 
   [discord]
   msg-mention-re = (?:^|\s)(@)(?P<nick>[^\s,;@+]+)
 
-Which would match any word-like space- or punctuation-separated "@nick" mention
-in sent lines.
+Which would match any word-like space- or punctuation-separated ``@nick``
+mention in sent lines.
 
 Regexp (`python "re" syntax`_) must have named "nick" group with
 nick/username lookup string, which will be replaced by discord mention tag,
-and all other capturing groups (i.e. ones without "?:") will be stripped
-(like "@" in above regexp).
+and all other capturing groups (i.e. ones without ``?:``) will be stripped
+(like ``@`` in above regexp).
 
-So, for example, to have classic irc-style highlights at the start of the line,
-regexp like this one can be used::
+Default regexp above should still allow to send e.g. ``\@something`` to appear
+non-highlighted in webapp (and without ``\`` due to markdown), as it won't be
+matched by ``(?:^|\s)`` part due to that backslash prefix.
+
+As another example, to have classic irc-style highlights at the start of the
+line, regexp like this one can be used::
 
   msg-mention-re = ^(?P<nick>[^\s,;@+]+)(:)
 
-And should translate e.g. "mk-fg: some msg" into "@mk-fg some msg"
+And should translate e.g. ``mk-fg: some msg`` into ``@mk-fg some msg``
 (with @-part being mention-tag).
 
-To ID specific discord user, "nick" will be used in following ways:
+To ID specific discord user, "nick" group will be used in following ways:
 
 - Case-insensitive match against all recent guild-related irc names
   (message authors, reactions, private channel users, etc).
@@ -382,14 +386,17 @@ To ID specific discord user, "nick" will be used in following ways:
 
 Such strict behavior is designed to avoid any unintentional mis-translations,
 and highlighting wrong person should generally only be possible via misspelling.
-Will also make it impossible to send any string matching specified regexp,
-yet not intended to be a discord user mention, so pick regexp carefully.
 
-"msg-mention-re" can be set to an empty value to disable such translation entirely.
+Related ``msg-mention-re-ignore`` option can also be used to skip some
+non-mention things from being treated as such, that'd otherwise be picked-up by
+first regexp, stripping capturing groups from them too, which can be used to
+e.g. undo escaping.
+
+Set ``msg-mention-re`` to an empty value to disable all this translation entirely.
 
 Note that discord user lists can be quite massive (10K+ users), are not split
 by channel, and are not intended to be pre-fetched on the client, only queried
-for completions or visible parts, which doesn't map well to irc.
+for completions or visible parts, which doesn't map well to irc, hence all this magic.
 
 .. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
 
