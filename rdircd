@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.139' # git-version: py-str
+	version = '1.140' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -50,6 +50,7 @@ class RDIRCDConfigBase:
 	discord_http_delay_padding = 10.0 # added to retry_after
 	discord_http_timeout_conn = 40.0
 	discord_http_timeout_conn_sock = 30.0
+	discord_user_mention_cache_timeout = 3 * 24 * 3600
 	discord_gateway = ''
 
 	# discord_msg_mention_re should match only discord user mentions.
@@ -1079,9 +1080,8 @@ class Discord:
 			if 'nick' not in self.user_mention_re.groupindex:
 				raise ValueError( 'Missing "nick" group in'
 					f' discord-mentions regexp: {self.conf.discord_msg_mention_re!r}' )
-		# XXX: add some kind of cleanup for these
-		# user_map = {guild_id: {irc_name: discord_uid, discord_uid: irc_name, ...}}
-		self.user_map = cs.defaultdict(irc_name_dict)
+		self.user_mention_cache = cs.defaultdict(irc_name_dict)
+		self.user_mention_cache_ts_cleanup = 0
 		return self
 
 	async def __aexit__(self, *err):
@@ -1122,7 +1122,7 @@ class Discord:
 				line, tags = self.session.op_msg_parse(m, gg)
 				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
-				self.cmd_user_update(gg.id, m.author.id, m.author.username, replace=False)
+				self.cmd_user_cache(gg.id, m.author.id, m.author.username, replace=False)
 				msg_list.append(adict( nick=m.author.username,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 				if int(m.id) > int(flake): flake = m.id
@@ -1193,8 +1193,10 @@ class Discord:
 			else:
 				subs = list( (ga-a, gb-a, '') for ga, gb in
 					(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
-				uid = self.user_map[cc.gid].get(nick)
-				if uid: nick = f'<@{uid}>' # exact match
+				uid = self.user_mention_cache[cc.gid].get(nick)
+				if uid: # exact match
+					nick = f'<@{uid}>'
+					self.cmd_user_cache(cc.gid, uid, replace=False)
 				else:
 					user_map = await self.session.ws_req_users_query(cc.gid, nick, 6)
 					if not user_map: raise IRCBridgeSignal(f'{nick}=no-matches')
@@ -1202,7 +1204,10 @@ class Discord:
 						nicks = list(user_map.values())
 						nicks = ' '.join(map(repr, nicks[:5])) + (' +' if len(nicks) > 5 else '')
 						raise IRCBridgeSignal(f'{nick}=[{nicks}]')
-					else: nick = f'<@{next(iter(user_map.keys()))}>'
+					else: # successful server-lookup with unique result
+						uid = next(iter(user_map.keys()))
+						self.cmd_user_cache(cc.gid, uid, nick, replace=False, query=True)
+						nick = f'<@{uid}>'
 				tag = [tag]
 				for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
 					part = tag.pop()
@@ -1210,15 +1215,27 @@ class Discord:
 			line_parts.extend([line[b:], *tag, line[:a]])
 		return ''.join(reversed(line_parts))
 
-	def cmd_user_update(self, gid, uid, name, replace=True):
-		'Updates user_map with discord-name or deletes it with name=None'
-		users = self.user_map[gid]
-		if not replace and uid in users: return # e.g. for old data
-		nick = users.pop(uid, None)
-		if nick: del users[nick]
+	def cmd_user_cache(self, gid, uid, name=None, replace=True, query=False):
+		'''Updates user_mention_cache for discord-user-id, as nick_or_query=uid mapping.
+			name is auto-translated to irc nick, unless query=True.
+			name=None replace=True deletes the entry.
+			name=None replace=False resets entry timestamp, so it stays for timeout from now.'''
+		users, ts = self.user_mention_cache[gid], time.monotonic()
+		uid_key = f'\0{uid}' if not query else f'\t{uid}' # so that queries can co-exist with users
+		if not replace and uid_key in users:
+			if not name: users[uid_key] = users[uid_key][0], ts
+			return
+		name_old, ts_old = users.pop(uid_key, (None, 0))
+		if name_old: del users[name_old]
 		if not name: return
-		nick = self.bridge.irc_name(name)
-		users[uid], users[nick] = nick, uid
+		if not query: name = self.bridge.irc_name(name)
+		users[name], users[uid_key] = uid, (name, ts)
+		if ( (ts - self.user_mention_cache_ts_cleanup)
+				> self.conf.discord_user_mention_cache_timeout / 2 ):
+			ts -= self.conf.discord_user_mention_cache_timeout
+			for uid_key in list(users.keys()):
+				if uid_key[0] in '\0\t': continue
+				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
 
 	def cmd_chan_rename(self, cc, name_old=None, name_new=None):
 		name_old, name_new = ( self.bridge.irc_name(n).lower()
@@ -1822,7 +1839,8 @@ class DiscordSession:
 
 	def op_ev_member(self, m, gid=None, delete=False):
 		if not gid: gid = m.guild_id
-		self.discord.cmd_user_update(gid, m.user.id, m.user.username)
+		self.discord.cmd_user_cache(
+			gid, m.user.id, m.user.username if not delete else None )
 		return m.user.id, m.user.username # used in queries
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -1863,7 +1881,7 @@ class DiscordSession:
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
 			if c.type in [ct.private, ct.private_group]:
 				ts, users= time.time(), c.get('recipients') or list()
-				for u in users: self.discord.cmd_user_update(gid, u.id, u.username)
+				for u in users: self.discord.cmd_user_cache(gid, u.id, u.username)
 				dict_update( cc.users,
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
@@ -1923,7 +1941,7 @@ class DiscordSession:
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
 		cc, u = self.st.guilds[1].chans.get(m.channel_id), m.get('user', dict())
-		if u: self.discord.cmd_user_update(1, u.id, u.username)
+		if u: self.discord.cmd_user_cache(1, u.id, u.username)
 		self.discord.cmd_msg_recv(cc, u.get('username'), f'--- recipient {act.lower()}')
 
 	def op_ev_ban(self, m, act):
@@ -1955,7 +1973,7 @@ class DiscordSession:
 			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
 			else: self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 			return
-		else: self.discord.cmd_user_update(gg.id, author.id, author.username)
+		else: self.discord.cmd_user_cache(gg.id, author.id, author.username)
 		line, tags = self.op_msg_parse(m, gg)
 		if not line: return # joins/parts/pins and such
 		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
@@ -2040,7 +2058,7 @@ class DiscordSession:
 		try: u = m.member.user
 		except: nick = None # notice from nick_sys
 		else:
-			self.discord.cmd_user_update(gg.id, u.id, u.username)
+			self.discord.cmd_user_cache(gg.id, u.id, u.username)
 			nick = u.username
 		self.discord.cmd_msg_recv(cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
 

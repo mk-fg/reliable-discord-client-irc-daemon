@@ -388,8 +388,8 @@ yet not intended to be a discord user mention, so pick regexp carefully.
 "msg-mention-re" can be set to an empty value to disable such translation entirely.
 
 Note that discord user lists can be quite massive (10K+ users), are not split
-by channel, and are not designed to be pre-fetched on the client, only queried
-for completions or visible parts, which doesn't map well to irc clients.
+by channel, and are not intended to be pre-fetched on the client, only queried
+for completions or visible parts, which doesn't map well to irc.
 
 .. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
 
