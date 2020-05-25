@@ -395,7 +395,7 @@ capturing groups from them too, which can be used to e.g. undo escaping.
 Set ``msg-mention-re`` to an empty value to disable all this translation entirely.
 
 Note that discord user lists can be quite massive (10K+ users), are not split
-by channel, and are intended to be pre-fetched by the client, only queried
+by channel, and are not intended to be pre-fetched by the client, only queried
 for completions or visible parts, which doesn't map well to irc, hence all this magic.
 
 .. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
