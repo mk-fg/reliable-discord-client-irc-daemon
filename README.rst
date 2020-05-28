@@ -112,14 +112,13 @@ Limitations
 - Only user mentions are translated into discord tags (if enabled and with some
   quirks, see below) - not channels, roles or emojis.
 
-- No support for sending attachments or embeds of any kind - use WebUI for that,
-  not IRC.
+- No support for sending attachments or embeds of any kind - use WebUI for that, not IRC.
 
   Discord automatically annotates links though, so posting images is as simple as that.
 
 - No discord-specific actions beyond all kinds of reading and sending messages
-  to existing channels are supported - i.e. no creating new channels on discord,
-  managing roles, bans, timeouts, etc - use proper discord bots for that.
+  to existing channels are supported - i.e. no creating accounts or channels on discord,
+  managing roles, bans, timeouts, etc - use WebUI, Harmony_ or proper discord bots.
 
 - Does not track user presence (online, offline, afk, playing game, etc) at all.
 
@@ -538,6 +537,10 @@ Terminal UI (TUI, ncurses) clients:
 - Discurses_ - python urwid/curses client
 - Discline_ - another python client with typical IRC looks, seem to be broken atm
 
+Command-line clients:
+
+- Harmony_ - tool for discord account manipulation - e.g. create, change settings, accept invites, etc
+
 Not an exhaustive list by any means.
 
 .. _bitlbee: https://www.bitlbee.org/
@@ -557,6 +560,7 @@ Not an exhaustive list by any means.
 .. _Discord Terminal: https://github.com/cloudrex/discord-term
 .. _Discurses: https://github.com/topisani/Discurses
 .. _Discline: https://github.com/MitchWeaver/Discline
+.. _Harmony: https://github.com/nickolas360/harmony
 
 
 API and Implementation Notes
