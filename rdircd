@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.143' # git-version: py-str
+	version = '1.144' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2011,8 +2011,9 @@ class DiscordSession:
 		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
 		line = line.replace('\u200b', '') # unicode zero-width-space junk
 		try:
-			if not mt and m.get('author', dict()).get('bot') and m.get('embeds'):
-				mt = self.c_msg_type.bot_embeds
+			if not mt and m.get('author', dict()).get('bot'):
+				if m.get('embeds'): mt = self.c_msg_type.bot_embeds
+				# Otherwise empty message_update bumps and/or something webhook-related?
 			else:
 				mt = self.c_msg_type(int(mt))
 				if mt != self.c_msg_type.default: line = ''
