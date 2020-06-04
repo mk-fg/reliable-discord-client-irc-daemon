@@ -2199,19 +2199,21 @@ class RDIRCD:
 			if conn.st.auth: yield conn.st.nick
 
 	def irc_name(self, name):
-		# Must be deterministic but not create collisions by stripping too much
-		# Assuming that discord doesn't allow same names in diff case
+		# Must be deterministic but ideally not create collisions by stripping too much
+		# General idea is to replace all irc-problematic chars by lookalike unicode
 		if name not in self.cache.d2i:
-			name_irc, sub_chars = '', '°×·„∂'
+			name_irc, sub_chars = '', '°×·„∂¦◄►'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
 			if name_clean != name: name = name_clean + '×' + self.uid('name', name)
 			for n, c in enumerate(name):
 				if ord(c) < 32: name_irc += f'°{ord(c):02d}'
 				elif c == ' ': name_irc += '·'
 				elif c == ',': name_irc += '„'
-				elif c == ':': name_irc += '⋮'
+				elif c == ':': name_irc += '¦'
 				elif c == '@': name_irc += '∂'
 				elif c == '+': name_irc += '×'
+				elif c == '<': name_irc += '◄'
+				elif c == '>': name_irc += '►'
 				else: name_irc += c
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
 		return self.cache.d2i[name]
