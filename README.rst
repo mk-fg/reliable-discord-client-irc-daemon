@@ -569,7 +569,7 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2020-05-23
+Last updated: 2020-06-06
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   which likely means that such use is not officially supported or endorsed.
@@ -596,6 +596,21 @@ Last updated: 2020-05-23
 
   This is done to ensure that all messages either arrive in the same strict
   order they've been sent or not posted at all.
+
+- Fetching list of users for discord channel or even guild does not seem to be
+  well-supported or intended by the API design.
+
+  There are multiple opcodes that allow doing that in a limited way, none of
+  which work well for large discords (e.g. 10k+ users).
+
+  request_guild_members (8) doesn't return any results, request_sync (12)
+  doesn't work, request_sync_chan (14) can be used to request small slice of the
+  list, but only one at a time (disconnects on concurrent requests).
+
+  Latter is intended to only keep part of userlist that is visible synced in the client,
+  doesn't support proper paging through whole thing,
+  and only gets updates for last-requested part with indexes in it -
+  basically "I'm in this guild/channel, what should I see?" request from the client.
 
 - Some events on gateway websocket are undocumented, maybe due to lag of docs
   behind implementation, or due to them not being deemed that useful to bots, idk.
