@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.147' # git-version: py-str
+	version = '1.148' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2211,6 +2211,7 @@ class RDIRCD:
 				elif c == ',': name_irc += '„'
 				elif c == ':': name_irc += '¦'
 				elif c == '@': name_irc += '∂'
+				elif c == '!': name_irc += '¡'
 				elif c == '+': name_irc += '×'
 				elif c == '<': name_irc += '◄'
 				elif c == '>': name_irc += '►'
