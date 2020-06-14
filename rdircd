@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.148' # git-version: py-str
+	version = '1.149' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1995,7 +1995,8 @@ class DiscordSession:
 				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
 		flake, author = None, m.get('author')
 		if not author:
-			if act == 'update' and m.get('embeds'): pass # XXX: description for msg embeds
+			if ( act == 'update' and not m.get('embeds')
+				and not set('id embeds channel_id guild_id'.split()).difference(m.keys()) ): pass
 			else: self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 			return
 		else: self.discord.cmd_user_cache(gg.id, author.id, author.username)
