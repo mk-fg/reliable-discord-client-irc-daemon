@@ -1818,7 +1818,8 @@ class DiscordSession:
 		except ValueError: o = act = None
 		try: gid = m.d.guild_id
 		except: gid = None
-		# Known stuff must be explicitly skipped here to not generate "Unhandled event"
+
+		# Events with some handling needed
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(guild=m.d)
 			elif act == 'delete': return self.op_ev_delete(gid)
@@ -1842,10 +1843,14 @@ class DiscordSession:
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
+
+		# Ignored events
 		elif o in [ 'presences', 'presence', 'typing',
 			'channel_pins', 'webhooks', 'guild_emojis', 'guild_integrations', 'guild_role' ]: return
-		elif mt == 'sessions_replace': return # tracks browsers and other clients' conns
 		elif mt.startswith('voice_'): return
+		elif mt in ['sessions_replace', 'user_settings_update', 'invite_create']: return
+
+		# Known stuff must be explicitly handled above to not generate "Unhandled event"
 		self.log.warning('Unhandled event: {}', self._repr(m))
 
 	def op_ev_member_chunk(self, d):
