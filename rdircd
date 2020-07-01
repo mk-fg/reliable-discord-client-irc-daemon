@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.151' # git-version: py-str
+	version = '1.152' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1259,7 +1259,7 @@ class Discord:
 				> self.conf.discord_user_mention_cache_timeout / 2 ):
 			ts -= self.conf.discord_user_mention_cache_timeout
 			for uid_key in list(users.keys()):
-				if uid_key[0] not in '\0\t': continue
+				if uid_key[0] not in '\0\t' or uid_key not in users: continue
 				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
 
 	def cmd_chan_rename(self, cc, name_old=None, name_new=None):
