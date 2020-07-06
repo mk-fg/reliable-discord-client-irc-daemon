@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.152' # git-version: py-str
+	version = '1.154' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1164,10 +1164,10 @@ class Discord:
 						f'channels/{cc.id}/messages',
 						m='post', json=dict(content=line, nonce=nonce) ))
 					fut = self.msg_confirms[nonce] = asyncio.Future()
-					flake_gw, res = await asyncio.gather(fut, res)
+					res = asyncio.gather(fut, res)
+					flake_gw, res = await res
 			except asyncio.TimeoutError:
-				await aio_task_cancel(res)
-				with contextlib.suppress(asyncio.CancelledError): await fut_res
+				if res: await aio_task_cancel(res)
 				raise IRCBridgeSignal('msg-confirm-timed-out')
 			finally: self.msg_confirms.pop(nonce, None)
 			try: flake_res = res['id']
