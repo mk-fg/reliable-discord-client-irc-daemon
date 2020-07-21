@@ -1317,7 +1317,7 @@ class DiscordSession:
 		voice = 2
 		private_group = 3
 		group = 4 # header for a group of channels
-		news = 5 # some inter-discord-guild thing
+		news = 5 # announcements channels
 		store = 6
 
 	class c_msg_type(enum.IntEnum):
@@ -1904,7 +1904,7 @@ class DiscordSession:
 		chan_name_changes = list() # for disambiguation checks
 
 		for c in force_list(chans):
-			if c.type in [ct.voice, ct.group, ct.news, ct.store]: continue
+			if c.type in [ct.voice, ct.group, ct.store]: continue
 
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
 			name, topic = c.get('name'), c.get('topic')
