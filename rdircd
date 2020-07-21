@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.154' # git-version: py-str
+	version = '1.155' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2001,7 +2001,7 @@ class DiscordSession:
 		flake, author = None, m.get('author')
 		if not author:
 			if ( act == 'update'
-					and not set(m.keys()).difference('id embeds channel_id guild_id'.split()) ):
+					and not set(m.keys()).difference('id flags embeds channel_id guild_id'.split()) ):
 				return # type=rich/image updates, latter with same exact links - not useful
 			self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 			return
