@@ -25,7 +25,7 @@ If you have any questions or difficulty, or just want to test this script,
 here's an ad-hoc discord for that: https://discord.gg/s2fbWZD
 
 .. _Discord: http://discord.gg/
-.. _"guilds" in API docs: https://discordapp.com/developers/docs/resources/guild
+.. _"guilds" in API docs: https://discord.com/developers/docs/resources/guild
 
 
 WARNING
@@ -54,7 +54,7 @@ they're using BetterDiscord_ (which is mostly just custom css theme, afaik):
 | Which seem to emphasize "automating" language in ToS.
 | So if you don't get even that kind of warning, you're probably safe, but I'm no authority on that.
 
-.. _Bot vs User Accounts: https://discordapp.com/developers/docs/topics/oauth2#bot-vs-user-accounts
+.. _Bot vs User Accounts: https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
 .. _BetterDiscord: https://betterdiscord.net/
 
 
