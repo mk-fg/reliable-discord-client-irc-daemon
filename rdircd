@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, re, time, secrets, enum, json
+import os, sys, io, stat, re, time, secrets, enum, json, zlib
 import contextlib, asyncio, socket, signal, inspect, traceback
 import hashlib, base64, random, unicodedata, urllib.parse
 import configparser, tempfile, datetime as dt, pathlib as pl
@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.157' # git-version: py-str
+	version = '1.158' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1582,7 +1582,7 @@ class DiscordSession:
 				self.conf.update_file_section('discord', 'gateway')
 			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
 			query = urllib.parse.parse_qs(parts.query)
-			query.update(v=str(self.api_ver), encoding='json')
+			query.update(v=str(self.api_ver), encoding='json', compress='zlib-stream')
 			parts.query = urllib.parse.urlencode(query)
 			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
 			self.log_ws.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
@@ -1634,18 +1634,24 @@ class DiscordSession:
 	async def ws_poller_loop(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
 		# {op=...[, d={...}]}
+		inflator, buff, buff_end = zlib.decompressobj(), bytearray(), b'\x00\x00\xff\xff'
 		async for msg in self.ws:
-			msg_type = aiohttp.WSMsgType(msg.type).name.lower()
-			msg_data = getattr(msg, 'data', '')
-			self.log_ws.debug( '<<  {} {}', msg_type,
-				self._repr(msg_data), extra=('<< ', f'{msg_type} {msg_data}') )
-			if msg.type == aiohttp.WSMsgType.text:
-				msg_data, hs_discard, handled = adict(json.loads(msg.data)), set(), False
+			msg_type, msg_data = msg.type, getattr(msg, 'data', '')
+			if msg_type == aiohttp.WSMsgType.binary:
+				buff.extend(msg_data or b'')
+				if msg_data[-4:] != buff_end: continue # partial data
+				msg_data = inflator.decompress(buff).decode()
+				msg_type = aiohttp.WSMsgType.text
+				buff.clear()
+			if msg_type == aiohttp.WSMsgType.text:
+				self.log_ws.debug( '<<  {} {}', msg_type.name.lower(),
+					self._repr(msg_data), extra=('<< ', f'{msg_type} {msg_data}') )
+				msg_data, hs_discard, handled = adict(json.loads(msg_data)), set(), False
 				if self.conf.ws_dump_filter and self.conf.ws_dump_file:
 					chk = self.conf.ws_dump_filter
 					if ( chk.get('op') == msg_data.get('op')
 							and chk.get('t') == msg_data.get('t') ):
-						with open(self.conf.ws_dump_file, 'w') as dst: dst.write(msg.data)
+						with open(self.conf.ws_dump_file, 'w') as dst: dst.write(msg_data)
 				for k, h in list(self.ws_handlers.items()):
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
@@ -1658,8 +1664,8 @@ class DiscordSession:
 					self.log_ws.debug( 'xxx {} {}', err,
 						msg_repr, extra=('xxx', f'{err} {msg_data}') )
 					self.log.debug('Unhandled ws event: {}', msg_repr)
-			elif msg.type == aiohttp.WSMsgType.closed: break
-			elif msg.type == aiohttp.WSMsgType.error:
+			elif msg_type == aiohttp.WSMsgType.closed: break
+			elif msg_type == aiohttp.WSMsgType.error:
 				self.log_ws.debug('err {}', msg, extra=('err', msg))
 				self.log.error('ws protocol error, aborting: {}', msg)
 				break
