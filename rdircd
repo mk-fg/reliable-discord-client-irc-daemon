@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.156' # git-version: py-str
+	version = '1.157' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1588,9 +1588,10 @@ class DiscordSession:
 			self.log_ws.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
 			self.state('connecting.ws')
 			try:
-				self.ws = await ctx.enter_async_context(self.http.ws_connect( ws_url,
+				self.ws = await ctx.enter_async_context(self.http.ws_connect(
+					ws_url, heartbeat=self.conf.discord_ws_heartbeat,
 					headers={'User-Agent': self.conf.discord_api_user_agent},
-					heartbeat=self.conf.discord_ws_heartbeat, timeout=self.conf.discord_ws_timeout ))
+					timeout=self.conf.discord_ws_timeout, max_msg_size=20 * 2**20 ))
 			except aiohttp.ClientError as err:
 				err_str = err_fmt(err)
 				self.log_ws.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
