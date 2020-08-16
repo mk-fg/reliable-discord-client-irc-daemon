@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.158' # git-version: py-str
+	version = '1.159' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -229,7 +229,7 @@ def str_part(s, sep, default=None):
 	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
-def str_repr(s, max_len=50, len_bytes=False, prefix=False, ext=' ...[{s_len}]'):
+def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]'):
 	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
 	if not isinstance(s, str): s = str(s)
 	s_len, s_repr, ext_tpl = f'{len(s):,d}', repr(s)[1:-1], ext.format(s_len='12/345')
@@ -239,7 +239,7 @@ def str_repr(s, max_len=50, len_bytes=False, prefix=False, ext=' ...[{s_len}]'):
 		else:
 			n = max_len - len(ext_tpl.encode())
 			s_repr = s_repr.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
-	return (s_len, s_repr) if prefix else s_repr
+	return s_repr
 
 irc_name_eq = lambda a, b: a.lower() == b.lower()
 
@@ -644,7 +644,7 @@ class IRCProtocol:
 		while b'\n' in self.buff:
 			line, self.buff = self.buff.split(b'\n', 1)
 			if not line.strip(): continue
-			line_len, line_repr = self._repr(line, True)
+			line_len, line_repr = self._repr_bin(line, True)
 			self.log_proto.debug( '<<  [{} {}] {}',
 				self.st.nick or '---', line_len, line_repr, extra=('<< ', line) )
 			if not line.strip(): continue
@@ -661,13 +661,13 @@ class IRCProtocol:
 		self.bridge.irc_conn_lost(self)
 
 	def data_send(self, data):
-		data_len, data_repr = self._repr(data, True)
+		data_len, data_repr = self._repr_bin(data, True)
 		self.log_proto.debug( ' >> [{} {}] {}',
 			self.st.nick or '---', data_len, data_repr, extra=(' >>', data) )
 		self.transport.write(data)
 
 
-	def _repr(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
+	def _repr_bin(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
 		'Binary-only version of str_repr().'
 		if isinstance(data, str): data = data.encode()
 		if max_len is None: max_len = self.conf.debug_proto_cut
@@ -715,7 +715,7 @@ class IRCProtocol:
 				m = self._parse(line)
 				if m.cmd in ['privmsg', 'notice']: return self.send_split_msg(m)
 			if len(line) > max_len:
-				self.log.info('Sending line with >{}B: {!r}', max_len, self._repr(line))
+				self.log.info('Sending line with >{}B: {!r}', max_len, self._repr_bin(line))
 		if b'\n' in line: raise IRCProtocolError(f'Line with newlines: {line!r}')
 		line += b'\r\n'
 		self.data_send(line)
@@ -750,10 +750,10 @@ class IRCProtocol:
 		else:
 			try: line = line_raw.decode().strip()
 			except UnicodeDecodeError:
-				return self.log.error('Failed to decode line as utf-8: {!r}', self._repr(line_raw))
+				return self.log.error('Failed to decode line as utf-8: {!r}', self._repr_bin(line_raw))
 		try: m = self._parse(line)
 		except IRCProtocolLineError:
-			return self.log.error('Line protocol error: {!r}', self._repr(line_raw))
+			return self.log.error('Line protocol error: {!r}', self._repr_bin(line_raw))
 		cmd_cache = self._cmd_cache.get(m.cmd)
 		if cmd_cache: cmd_func, cmd_ps_n = cmd_cache
 		else:
@@ -765,16 +765,16 @@ class IRCProtocol:
 				else: cmd_ps_n = cmd_ps_n - sum(1 for p in args if p.default is not p.empty), cmd_ps_n
 			self._cmd_cache[m.cmd] = cmd_func, cmd_ps_n
 		if not cmd_func:
-			self.log.error('Unhandled cmd: {!r}', self._repr(line_raw))
+			self.log.error('Unhandled cmd: {!r}', self._repr_bin(line_raw))
 			return self.send(421, ':Unknown command')
 		if not self.check_access(m.cmd):
-			return self.log.error('Out-of-order cmd: {!r}', self._repr(line_raw))
+			return self.log.error('Out-of-order cmd: {!r}', self._repr_bin(line_raw))
 		if cmd_ps_n is None: await aio_await_wrap(cmd_func(m))
 		else:
 			(a, b), n = cmd_ps_n, len(m.params)
 			if not a <= n <= b:
 				self.log.error( 'Command/args'
-					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr(line) )
+					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr_bin(line) )
 				return self.send(461, ':Incorrect command parameters')
 			try: await aio_await_wrap(cmd_func(*m.params))
 			except Exception as err:
