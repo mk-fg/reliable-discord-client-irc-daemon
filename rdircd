@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.159' # git-version: py-str
+	version = '1.160' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1849,6 +1849,7 @@ class DiscordSession:
 		elif mt == 'message_delete_bulk': # can maybe shorten notice-spam here somehow
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
+		elif mt == 'gift_code_update': return self.op_gift_code(m.d)
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 
 		# Ignored events
@@ -2101,6 +2102,13 @@ class DiscordSession:
 			self.discord.cmd_user_cache(gg.id, u.id, u.username)
 			nick = u.username
 		self.discord.cmd_msg_recv(cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
+
+	def op_gift_code(self, m):
+		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
+		if gg: cc = gg.chans.get(m.channel_id)
+		if not cc: return
+		self.discord.cmd_msg_recv( cc, None,
+			f'--- gift-code: uses={m.uses} sku={m.sku_id} code={m.code}' )
 
 
 
