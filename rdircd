@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.160' # git-version: py-str
+	version = '1.161' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1108,7 +1108,9 @@ class Discord:
 
 	@property
 	def st(self):
-		try: return self.session.st
+		try:
+			if not self.session: raise KeyError
+			return self.session.st
 		except KeyError: return adict(guilds=dict())
 
 	def cmd_chan_map_update(self):
