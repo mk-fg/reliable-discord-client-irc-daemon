@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.161' # git-version: py-str
+	version = '1.162' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -70,6 +70,7 @@ class RDIRCDConfigBase:
 	auth_main_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	debug_verbose = False
+	debug_asyncio = False
 	debug_msg_cut = 50
 	debug_proto_cut = 90
 	debug_proto_log_shared = True
@@ -358,7 +359,7 @@ async def aio_task_cancel(task_list):
 
 class aio_timeout:
 	def __init__(self, timeout):
-		loop = asyncio.get_event_loop()
+		loop = asyncio.get_running_loop()
 		self._timeout, self._timeout_call = False, loop.call_at(
 			loop.time() + timeout, self._timeout_set, asyncio.current_task() )
 	def _timeout_set(self, task): self._timeout = task.cancel() or True
@@ -613,7 +614,7 @@ class IRCProtocol:
 		return _wrapper
 
 	def __init__(self, rdircd):
-		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
+		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.irc.init')
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
@@ -1063,7 +1064,7 @@ class DiscordSessionError(Exception): pass
 class Discord:
 
 	def __init__(self, rdircd):
-		self.bridge, self.loop, self.conf = rdircd, rdircd.loop, rdircd.conf
+		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.discord')
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
@@ -1074,7 +1075,7 @@ class Discord:
 			self.session = None
 		else:
 			s = self.session = DiscordSession(self)
-			s.task = self.loop.create_task(s.run_async())
+			s.task = asyncio.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
 		rx = self.user_mention_re = self.conf.discord_msg_mention_re
@@ -1162,7 +1163,7 @@ class Discord:
 				res = None
 				async with aio_timeout(self.conf.discord_msg_confirm_timeout):
 					line = await self.cmd_msg_send_annotate(cc, line)
-					res = self.loop.create_task(self.session.req(
+					res = asyncio.create_task(self.session.req(
 						f'channels/{cc.id}/messages',
 						m='post', json=dict(content=line, nonce=nonce) ))
 					fut = self.msg_confirms[nonce] = asyncio.Future()
@@ -1350,7 +1351,7 @@ class DiscordSession:
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
 
 	def __init__(self, discord):
-		self.discord, self.loop, self.conf = discord, discord.loop, discord.conf
+		self.discord, self.conf = discord, discord.conf
 		self.api_url = self.conf.discord_api_url.format(api_ver=self.api_ver)
 		self.log = get_logger(f'rdircd.discord')
 		self.log_ws = get_logger(f'proto.ws')
@@ -1396,7 +1397,7 @@ class DiscordSession:
 
 	async def run(self):
 		self.log.debug('Initializing discord session...')
-		try: await asyncio.Future()
+		try: await asyncio.Future() # run forever
 		except asyncio.CancelledError: pass
 		self.log.debug('Finished')
 
@@ -1405,7 +1406,7 @@ class DiscordSession:
 
 	def connect(self):
 		if self.ws_enabled and not self.ws_enabled.done(): return
-		task = self.ws_enabled = self.loop.create_task(self.ws_connect_loop())
+		task = self.ws_enabled = asyncio.create_task(self.ws_connect_loop())
 		return self.tasks.add(task)
 	def disconnect(self):
 		if self.ws_enabled:
@@ -1524,7 +1525,7 @@ class DiscordSession:
 			f'discord_ws_reconnect_{k}' ))) for k in ['min', 'max'])
 		opts.factor = self.conf.discord_ws_reconnect_factor
 		reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
-		interval = opts.min
+		interval, loop = opts.min, asyncio.get_running_loop()
 		self.log.debug('Starting ws_connect_loop...')
 		while self.ws_enabled:
 			if next(reconn_warn_tb):
@@ -1544,10 +1545,10 @@ class DiscordSession:
 					' stopping reconnection loop: {}', err_fmt(err) )
 				await self.ws_close()
 				break
-			ts0 = self.loop.time()
+			ts0 = loop.time()
 			await self.ws_closed.wait()
 			if not self.ws_enabled: break
-			ts_diff = self.loop.time() - ts0
+			ts_diff = loop.time() - ts0
 			if ts_diff > interval:
 				interval = opts.min
 				self.log.info('Disconnected, reconnecting immediately')
@@ -1754,7 +1755,7 @@ class DiscordSession:
 		# "expected to wait a random amount of time -
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
 		self.state('session.error.delay')
-		delay = self.loop.create_task(asyncio.sleep(1 + random.random() * 4))
+		delay = asyncio.create_task(asyncio.sleep(1 + random.random() * 4))
 		if not m.get('d') and self.st.get('session_id'):
 			self.log.info('Session+auth rejected - trying new session')
 			self.st.session_id = self.st.seq = None
@@ -1805,11 +1806,12 @@ class DiscordSession:
 		return self.c.oneshot
 
 	async def op_heartbeat_task(self, interval):
-		self.st.hb_ts_ack = hb_ts = self.loop.time() + interval
+		loop = asyncio.get_running_loop()
+		self.st.hb_ts_ack = hb_ts = loop.time() + interval
 		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
 		while not self.ws_closed.is_set():
 			self.ws_send(self.c.heartbeat, self.st.get('seq'))
-			ts = self.loop.time()
+			ts = loop.time()
 			if self.st.hb_ts_ack < ts - interval*2:
 				self.log.info('Missing heartbeat ack, reconnecting')
 				self.state('heartbeat.fail')
@@ -1819,7 +1821,7 @@ class DiscordSession:
 			await asyncio.sleep(delay)
 
 	def op_heartbeat_ack(self, m):
-		self.st.hb_ts_ack = self.loop.time()
+		self.st.hb_ts_ack = asyncio.get_running_loop().time()
 
 	def op_ev(self, m):
 		mt = (m.get('t') or '').lower()
@@ -2126,8 +2128,8 @@ class RDIRCD:
 		chan_monitor = f'{chan_prefix}monitor'
 		chan_monitor_guild_prefix = f'{chan_prefix}monitor.'
 
-	def __init__(self, loop, conf):
-		self.loop, self.conf, self.init = loop, conf, None
+	def __init__(self, conf):
+		self.conf, self.init = conf, None
 		self.log = get_logger('rdircd.bridge')
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
@@ -2182,7 +2184,8 @@ class RDIRCD:
 		return self.cache.uid[k]
 
 	async def run(self):
-		ircd = await self.loop.create_server(
+		loop = asyncio.get_running_loop()
+		ircd = await loop.create_server(
 			IRCProtocol.factory_for_bridge(self),
 			self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False )
@@ -2194,7 +2197,8 @@ class RDIRCD:
 				ircd_task = self.tasks.add(ircd.serve_forever())
 				if self.conf.discord_auto_connect:
 					self.log.debug('Auto-connecting discord...')
-					self.loop.call_soon(discord.connect)
+					loop.call_soon(discord.connect)
+				else: self.log.debug('Note: discord session auto-connect disabled')
 				await ircd_task
 		except DiscordAbort as err:
 			self.log.error('Discord init failure - {}', err_fmt(err))
@@ -2895,6 +2899,8 @@ def main(args=None, conf=None):
 	group = parser.add_argument_group('Logging and debug opts')
 	group.add_argument('-d', '--debug',
 		action='store_true', help='Verbose operation mode.')
+	group.add_argument('--debug-asyncio',
+		action='store_true', help='Run asyncio event loop in debug mode. Very verbose.')
 	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
 		help='Truncate long strings in protocol dumps to specified length.'
 			' Set to <=0 to disable truncation (default).')
@@ -2932,6 +2938,7 @@ def main(args=None, conf=None):
 		return
 
 	if opts.debug: conf.debug_verbose = True
+	if opts.debug_asyncio: conf.debug_asyncio = True
 	if opts.debug_log: conf.debug_log_file = opts.debug_log
 	if opts.proto_cut: conf.debug_proto_cut = opts.proto_cut
 	if opts.proto_log: conf.debug_proto_log_file = opts.proto_log
@@ -3000,10 +3007,8 @@ def main(args=None, conf=None):
 		and sock_p == socket.IPPROTO_TCP ), [sock_t, sock_p]
 	conf.irc_host_af, (conf.irc_host, conf.irc_port) = sock_af, sock_addr[:2]
 
-	log.debug('Starting eventloop...')
-	with contextlib.closing(asyncio.get_event_loop()) as loop:
-		# if conf.debug_verbose: loop.set_debug(True)
-		rdircd = RDIRCD(loop, conf)
+	async def run_rdircd():
+		loop, rdircd = asyncio.get_running_loop(), RDIRCD(conf)
 
 		log_handler = conf._debug_chan = LogFuncHandler(rdircd.cmd_log)
 		log_handler.setLevel(logging.DEBUG if conf.debug_verbose else logging.WARNING)
@@ -3013,11 +3018,13 @@ def main(args=None, conf=None):
 		log_handler.addFilter(log_proto_debug_filter)
 		logging.root.addHandler(log_handler)
 
-		rdircd_task = loop.create_task(rdircd.run_async())
+		rdircd_task = asyncio.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
-		with contextlib.suppress(asyncio.CancelledError):
-			return loop.run_until_complete(rdircd_task)
+		with contextlib.suppress(asyncio.CancelledError): return await rdircd_task
+
+	log.debug('Starting eventloop...')
+	return asyncio.run(run_rdircd(), debug=conf.debug_asyncio)
 	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
