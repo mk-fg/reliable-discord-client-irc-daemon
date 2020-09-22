@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.162' # git-version: py-str
+	version = '1.164' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1005,6 +1005,9 @@ class IRCProtocol:
 			if not notice: c = self.req_chan_info(chan)
 			else: c = self.bridge.cmd_chan_map().get(name)
 			if not c: return
+			if c.t == c.t.mon:
+				self.send( f':monitor NOTICE {chan} :WARNING:'
+					' this is one of the monitor-channels, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name):
 				if skip_self and conn is self: continue
 				conn.send(f':{src} {msg_type} {chan} :{text}')
@@ -2128,6 +2131,8 @@ class RDIRCD:
 		chan_monitor = f'{chan_prefix}monitor'
 		chan_monitor_guild_prefix = f'{chan_prefix}monitor.'
 
+	c_chan_type = enum.Enum('c_chan_type', 'sys mon proxy')
+
 	def __init__(self, conf):
 		self.conf, self.init = conf, None
 		self.log = get_logger('rdircd.bridge')
@@ -2411,11 +2416,13 @@ class RDIRCD:
 			updating misc minor .cache.* maps used elsewhere in the process.'''
 		cache_track(self.chans_sys)
 		for name, topic in self.chans_sys.items():
-			yield (name, adict( name=name,
+			yield (name, adict(
+				t=self.c_chan_type.sys, name=name,
 				topic=topic, ts_created=self.server_ts.timestamp() ))
 		cache_track(self.chans_mon)
 		for name, topic in sorted(self.chans_mon.items(), key=op.itemgetter(0)):
-			yield (name, adict( name=name,
+			yield (name, adict(
+				t=self.c_chan_type.mon, name=name,
 				topic=topic, ts_created=self.server_ts.timestamp() ))
 		cache_track(self.discord.st.guilds)
 		for gg in sorted(
@@ -2434,7 +2441,8 @@ class RDIRCD:
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.did_chan[cc.did] = name
 				# Note: lowercase translation is handled by using different (proper) internal name
-				yield (name.lower(), adict( name=name,
+				yield (name.lower(), adict(
+					t=self.c_chan_type.proxy, name=name,
 					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 
 
