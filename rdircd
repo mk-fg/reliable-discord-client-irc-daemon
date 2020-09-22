@@ -993,23 +993,23 @@ class IRCProtocol:
 		self.send_feats()
 
 	def recv_cmd_privmsg(self, target, text):
-		self.cmd_msg(self.st.nick, target, text, skip_self=True)
+		self.cmd_msg(self.st.nick, target, text, from_self=True)
 
 	def recv_cmd_notice(self, target, text):
-		self.cmd_msg(self.st.nick, target, text, notice=True, skip_self=True)
+		self.cmd_msg(self.st.nick, target, text, notice=True, from_self=True)
 
-	def cmd_msg(self, src, target, text, notice=False, skip_self=False, msg_type=None):
+	def cmd_msg(self, src, target, text, notice=False, from_self=False, msg_type=None):
 		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if self.chan_spec_check(target):
 			chan, name = target, self.chan_name(target)
 			if not notice: c = self.req_chan_info(chan)
 			else: c = self.bridge.cmd_chan_map().get(name)
 			if not c: return
-			if c.t == c.t.mon:
+			if from_self and c.t == c.t.mon:
 				self.send( f':monitor NOTICE {chan} :WARNING:'
 					' this is one of the monitor-channels, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name):
-				if skip_self and conn is self: continue
+				if from_self and conn is self: continue
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
