@@ -2,8 +2,8 @@
 
 import itertools as it, operator as op, functools as ft
 import os, sys, io, stat, re, time, secrets, enum, json, zlib
-import contextlib, asyncio, socket, signal, inspect, traceback
-import hashlib, base64, random, unicodedata, urllib.parse
+import asyncio, socket, signal, inspect, traceback, contextlib as cl
+import hashlib, base64, random, unicodedata, ast, urllib.parse
 import configparser, tempfile, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
 import logging, logging.handlers
@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.167' # git-version: py-str
+	version = '1.168' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -88,6 +88,15 @@ class RDIRCDConfigBase:
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
+
+	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '^$')
+	_conv_discord_msg_mention_re_ignore = lambda s, v: v and re.compile(v)
+	def _conv_discord_msg_mention_re(self, v):
+		if not v: return
+		rx = re.compile(v)
+		if 'nick' not in rx.groupindex:
+			raise ValueError(f'Missing "nick" group in discord-mentions regexp: {v!r}')
+		return rx
 
 
 
@@ -177,7 +186,7 @@ log_proto_root = logging.getLogger('proto')
 def setup_aiohttp_trace_logging(log):
 	tc = aiohttp.TraceConfig()
 
-	@contextlib.contextmanager
+	@cl.contextmanager
 	def log_req(part, ident=None, t='req'):
 		if not log.isEnabledFor(logging.DEBUG): return
 		try:
@@ -279,7 +288,7 @@ def dict_update(d, du_iter=None, sync=True):
 	d.update(du)
 	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
-@contextlib.contextmanager
+@cl.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
 	path = str(path)
 	if mode is None:
@@ -355,9 +364,9 @@ async def aio_task_cancel(task_list):
 	if inspect.isawaitable(task_list): task_list = [task_list]
 	task_list = list(filter(None, task_list))
 	for task in task_list:
-		with contextlib.suppress(asyncio.CancelledError): task.cancel()
+		with cl.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
-		with contextlib.suppress(asyncio.CancelledError): await task
+		with cl.suppress(asyncio.CancelledError): await task
 
 class aio_timeout:
 	def __init__(self, timeout):
@@ -627,9 +636,6 @@ class IRCProtocol:
 			salt = os.urandom(8)
 			self.st.pw_hash = salt, hashlib.blake2b(
 				self.conf.irc_password.encode(), salt=salt ).digest()
-		# XXX: split this into configurable bit from the control channel
-		rx = self.chan_auto_join_re = self.conf.irc_chan_auto_join_re
-		if rx: rx = self.chan_auto_join_re = re.compile(rx)
 
 
 	def connection_made(self, tr):
@@ -1035,8 +1041,8 @@ class IRCProtocol:
 		if not self.chan_spec_check(chan): raise ValueError(chan)
 		name, msg_type = self.chan_name(chan), 'PRIVMSG' if not notice else 'NOTICE'
 		if direct: # on this conn only
-			if name not in self.st.chans and (
-					self.chan_auto_join_re and self.chan_auto_join_re.search(name) ):
+			if ( name not in self.st.chans and
+					self.conf._irc_chan_auto_join_re.search(name) ):
 				self.cmd_join(chan)
 			return self.send(f':{src} {msg_type} {chan} :{text}')
 		cm = self.bridge.cmd_chan_map()
@@ -1092,8 +1098,8 @@ class Discord:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
-		if not ( self.conf.get(f'auth_main_email')
-				and self.conf.get(f'auth_main_password') ):
+		if not ( self.conf.get('auth_main_email')
+				and self.conf.get('auth_main_password') ):
 			self.log.error('Disabling discord due to missing access credentials')
 			self.session = None
 		else:
@@ -1101,15 +1107,6 @@ class Discord:
 			s.task = asyncio.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
-		# XXX: split this into configurable bit from the control channel
-		rx = self.user_mention_re = self.conf.discord_msg_mention_re
-		if rx:
-			rx = self.user_mention_re = re.compile(rx)
-			if 'nick' not in rx.groupindex:
-				raise ValueError( 'Missing "nick" group in'
-					f' discord-mentions regexp: {self.conf.discord_msg_mention_re!r}' )
-			rx = self.user_mention_re_ignore = self.conf.discord_msg_mention_re_ignore
-			if rx: self.user_mention_re_ignore = re.compile(rx)
 		self.user_mention_cache = cs.defaultdict(irc_name_dict)
 		self.user_mention_cache_ts_cleanup = 0
 		return self
@@ -1211,17 +1208,17 @@ class Discord:
 
 	async def cmd_msg_send_annotate(self, cc, line):
 		'''Translate IRC nick mentions matched by
-				"user_mention_re" replaced with Discord mention-tags, if any.
+				"discord_msg_mention_re" replaced with Discord mention-tags, if any.
 			Either returns line with all mentioned translated or fails with DiscordError.'''
 		# Regexp group replacements are made from the end to start,
 		#  with line/tag parts lists containing reversed str parts to reassemble.
 		# https://discord.com/developers/docs/reference#message-formatting
-		if not self.user_mention_re: return line
-		line_parts, nick_idx = [line], self.user_mention_re.groupindex['nick']
-		matches = list(self.user_mention_re.finditer(line))
+		if not self.conf._discord_msg_mention_re: return line
+		line_parts, nick_idx = [line], self.conf._discord_msg_mention_re.groupindex['nick']
+		matches = list(self.conf._discord_msg_mention_re.finditer(line))
 		for n, m in enumerate(reversed(matches)):
 			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
-			mx = self.user_mention_re_ignore.search(tag)
+			mx = self.conf._discord_msg_mention_re_ignore.search(tag)
 			self.log.debug(
 				'Discord mention match [{}/{}]: {!r} [{}-{}]{}',
 				n+1, len(matches), tag, a, b, ' + ignore-pattern match' if mx else '' )
@@ -1384,7 +1381,7 @@ class DiscordSession:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_proto_cut)
 
 	def get_auth(self, k, default=ValueError):
-		try: return getattr(self.conf, f'auth_main_{k}')
+		try: return self.conf.get(f'auth_main_{k}')
 		except AttributeError as err:
 			if default is ValueError: raise
 			return default
@@ -1392,7 +1389,7 @@ class DiscordSession:
 	async def __aenter__(self):
 		if not (self.get_auth('email') and self.get_auth('password')):
 			raise DiscordSessionError('Missing account auth credentials')
-		self.ctx, self.tasks = contextlib.AsyncExitStack(), StacklessContext(self.log)
+		self.ctx, self.tasks = cl.AsyncExitStack(), StacklessContext(self.log)
 		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
 			connect=self.conf.discord_http_timeout_conn,
 			sock_connect=self.conf.discord_http_timeout_conn_sock ))
@@ -1501,8 +1498,8 @@ class DiscordSession:
 			if res.get('mfa'):
 				raise DiscordAbort( 'Multi-factor auth'
 					' requirement detected, but is not supported by rdircd' )
-			setattr(self.conf, f'auth_main_token', res['token'])
-			self.conf.update_file_section(f'auth_main', 'token')
+			self.conf.set('auth_main_token', res['token'])
+			self.conf.update_file_section('auth_main', 'token')
 			self.auth_token.set()
 			self.auth_token = self.get_auth('token')
 		return self.auth_token
@@ -1545,8 +1542,8 @@ class DiscordSession:
 	### Gateway Websocket wrappers
 
 	async def ws_connect_loop(self):
-		opts = adict((k, parse_duration(getattr( self.conf,
-			f'discord_ws_reconnect_{k}' ))) for k in ['min', 'max'])
+		opts = adict((k, parse_duration(
+			self.conf.get(f'discord_ws_reconnect_{k}') )) for k in ['min', 'max'] )
 		opts.factor = self.conf.discord_ws_reconnect_factor
 		reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
 		interval, loop = opts.min, asyncio.get_running_loop()
@@ -1590,7 +1587,7 @@ class DiscordSession:
 			self.log.warning('BUG: ws_connect issued before old websocket is closed')
 			await self.ws_closed_clean.wait()
 		self.state('connecting.init')
-		self.ws_ctx = ctx = contextlib.AsyncExitStack()
+		self.ws_ctx = ctx = cl.AsyncExitStack()
 		self.ws, self.ws_tasks = None, StacklessContext(self.log)
 		self.ws_handlers, self.ws_nonces = dict(), dict()
 		ctx.push_async_callback(self.ws_close)
@@ -2415,8 +2412,8 @@ class RDIRCD:
 		'Get list of irc connections for users in a channel'
 		for conn in self.irc_conns.values():
 			chan_name = conn.chan_name(name)
-			if chan_name in conn.st.chans or (
-					conn.chan_auto_join_re and conn.chan_auto_join_re.search(chan_name) ):
+			if ( chan_name in conn.st.chans
+					or self.conf._irc_chan_auto_join_re.search(chan_name) ):
 				yield conn
 
 	@iter_gather(list)
@@ -2495,8 +2492,8 @@ class RDIRCD:
 			f'  discord-state: {sess_state}',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ]))
 
-	def cmd_chan_sys_control(self, conn, chan, line):
-		line = line.strip().lower().split()
+	def cmd_chan_sys_control(self, conn, chan, line_raw):
+		line = line_raw.strip().lower().split()
 		if not line: return
 		cmd, send = line[0],\
 			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
@@ -2507,6 +2504,9 @@ class RDIRCD:
 				'  status - (alias: st) show whether discord is connected and working',
 				'  connect - (alias: on) connect/login to discord',
 				'  disconnect - (alias: off) disconnect from discord',
+				'  set [-s|--save] [option value] - set config option value,'
+						' saving it to the last ini file if -s/--save is specified.'
+					'\n    Run without args to get full list of options with their current values.',
 				'Only immediate response to sent commands is logged here - no noise over time.' ]))
 		elif cmd in ['status', 'st']: self.cmd_chan_sys_control_status(send)
 		elif cmd in ['connect', 'on']:
@@ -2515,10 +2515,52 @@ class RDIRCD:
 		elif cmd in ['disconnect', 'off']:
 			send('discord: disconnecting')
 			self.discord.disconnect()
+		elif cmd == 'set':
+			sec_re = re.compile('^({})_(.*)$'.format('|'.join(map(re.escape, self.conf._conf_sections))))
+			if len(line) == 1:
+				send(f'Current config options/values:')
+				val_types = [str, bool, int, float]
+				for k in sorted(dir(self.conf)):
+					if not sec_re.search(k): continue
+					k_ini, v = k.replace('_', '-'), self.conf.get(k, raw=True)
+					for vt in val_types:
+						if isinstance(v, vt): break
+					else: continue
+					v = ['no', 'yes'][v] if vt is bool else repr(v)
+					if vt is str and k.startswith('auth_') or 'password' in k: v = '<hidden>'
+					send(f'  {k_ini} = {v} [{vt.__name__}]')
+				send( 'Note: string values must be quoted when setting'
+					' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
+				return send('Note: not all option changes take effect without full restart')
+			conf_save = line[1] in ['-s', '--save']
+			line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
+			if not 1 <= len(line) <= 2:
+				return send('ERROR: "set" command needs "option [value]" arguments')
+			v_conf = None
+			try:
+				k_ini, v_raw = line if len(line) != 1 else (line[0], '""')
+				k, v = k_ini.replace('-', '_'), v_raw
+				v_conf, sec = self.conf.get(k, raw=True), sec_re.search(k)
+				if not sec: raise KeyError(k)
+				vt, (sec, k_sec) = type(v_conf), sec.groups()
+				if isinstance(v_conf, str):
+					v = ast.literal_eval(v)
+					if not isinstance(v, str): raise ValueError(v)
+				v = self.conf.get_val_conv_func(v_conf)(v)
+				if vt is not type(v): raise TypeError(v)
+			except Exception as err:
+				vt = f' ({vt.__name__})' if v_conf is not None else ''
+				return send(f'ERROR: failed to parse {k_ini} = [{v_raw}]{vt} - {err_fmt(err)}')
+			self.conf.set(k, v)
+			if conf_save:
+				save = self.conf.update_file_section(sec, k_sec)
+				save = f' [saved to a file: {save}]'
+			else: save = ''
+			send(f'Updated conf value: {k_ini} = {v!r}{save}')
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
-		pt_n, pt_cut = (getattr(self.conf, f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
+		pt_n, pt_cut = (self.conf.get(f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
 		if not line: return
 		send = ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
 		if line[0] in ['h', 'help', 'st', 'status']:
@@ -2551,7 +2593,7 @@ class RDIRCD:
 				f'  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines',
 				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).',
 				'  cache stats - (alias: cs) print hit/miss info on some internal caches' ]))
-		with contextlib.suppress(KeyError):
+		with cl.suppress(KeyError):
 			line = dict(
 				i='level info', d='level debug', w='level warning',
 				cs='cache stats', px='proto off', ps='proto share',
@@ -2689,10 +2731,22 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	def __init__(self):
 		self.state, self.aliases = dict(), dict()
 		self.log = get_logger('rdircd.state')
+		for k in dir(self):
+			if k.startswith('_conv_'): k = k[6:]
+			else: continue
+			self.set(k, self.get(k))
 
 	def __repr__(self): return repr(vars(self))
-	def get(self, *k): return getattr(self, '_'.join(k))
-	def set(self, k, v): setattr(self, k, v)
+	def get(self, *k, raw=False):
+		k = '_'.join(k).replace('-', '_')
+		if not raw:
+			with cl.suppress(AttributeError): return getattr(self, f'_{k}')
+		return getattr(self, k)
+	def set(self, k, v):
+		k = k.replace('-', '_')
+		k_conv, v_conv = f'_{k}', getattr(self, f'_conv_{k}', None)
+		if v_conv: setattr(self, k_conv, v_conv(v))
+		setattr(self, k, v)
 
 	def read(self, func, section, k, conf_k=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
@@ -2710,7 +2764,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		for k in sorted(dir(self)):
 			m = chk.search(k)
 			if not m: continue
-			v = self.get(k)
+			v = self.get(k, raw=True)
 			if not empty_vals and not v: continue
 			cat_chk = m.group(1).replace('_', '-')
 			if cat_chk != cat:
@@ -2741,6 +2795,20 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if '.' not in k: continue
 				self.aliases[tuple(k.lower().split('.', 1))] = v
 
+	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
+		if v is str or isinstance(v, str): return lambda *a: str(conf_get(*a, raw=True))
+		elif v is bool or isinstance(v, bool):
+			bool_map = {
+				'1': True, 'yes': True, 'y': True, 'true': True, 'on': True,
+				'0': False, 'no': False, 'n': False, 'false': False, 'off': False }
+			def bool_get(*a):
+				v = conf_get(*a)
+				try: return bool_map[str(v).strip().lower()]
+				except KeyError: raise ValueError(v)
+			return bool_get
+		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
+		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
+
 	def update_from_file_section(self, config, section='default', prefix=None):
 		section = section.replace('_', '-')
 		for k in dir(self):
@@ -2750,11 +2818,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			elif k.startswith('_'): continue
 			else: conf_k = k
 			v = getattr(self, conf_k)
-			if isinstance(v, str): get_val = lambda *a: str(config.get(*a, raw=True))
-			elif isinstance(v, bool): get_val = config.getboolean
-			elif isinstance(v, int): get_val = lambda *a: int(re.sub(r'[ _]', '', config.get(*a)))
-			elif isinstance(v, float): get_val = lambda *a: float(config.get(*a))
-			else: continue # values with other types cannot be specified in config
+			get_val = self.get_val_conv_func(v, config.get)
+			if not get_val: continue # other types cannot be specified in config
 			self.read(get_val, section, k, conf_k)
 
 	def update_file_section(self, section, keys=None, path=None):
@@ -2771,7 +2836,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			else: v = ...
 			k = k.replace('_', '-')
 			if not k.startswith(sec_prefix): k = sec_prefix + k
-			if v is ...: v = self.get(k)
+			if v is ...: v = self.get(k, raw=True)
 			k = k[len(sec_prefix):]
 			if isinstance(v, bool): v = ['no', 'yes'][v]
 			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*=')
@@ -2802,6 +2867,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if v is None: continue
 				dst.write(f'{k} = {v}\n')
 		self._state_source_flush()
+		return path
 
 	### Timestamps in [state] section are updated in-place,
 	###  overwriting short timestamp values without tmp files.
@@ -3059,7 +3125,7 @@ def main(args=None, conf=None):
 		rdircd_task = asyncio.create_task(rdircd.run_async())
 		for sig in 'INT TERM'.split():
 			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
-		with contextlib.suppress(asyncio.CancelledError): return await rdircd_task
+		with cl.suppress(asyncio.CancelledError): return await rdircd_task
 
 	log.debug('Starting eventloop...')
 	return asyncio.run(run_rdircd(), debug=conf.debug_asyncio)

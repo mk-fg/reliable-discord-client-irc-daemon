@@ -259,9 +259,9 @@ rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tra
 or ``/t log 2h`` to fetch/dump channel log for/from specific time(stamp/span)
 (iso8601 or a simple relative format).
 
-Discord-global commands are available in #rdircd.control channel, #rdircd.debug
-chan can be used to tweak various logging and inspect daemon state and protocols
-more closely, send "help" there to list available commands.
+Daemon control/config commands are available in #rdircd.control channel,
+#rdircd.debug chan can be used to tweak various logging and inspect daemon state
+and protocols more closely, send "help" there to list available commands.
 
 
 Misc Feature Info
@@ -276,6 +276,7 @@ Multiple Config Files
 Multiple ini files can be specified with -c option, overriding each other in sequence.
 
 Last one will be updated wrt [state], token= and similar runtime stuff,
+as well as any values set via #rdircd.control channel commands,
 so it can be useful to specify persistent config with auth and options,
 and separate (initially empty) one for such dynamic state.
 
@@ -285,8 +286,8 @@ and separate (initially empty) one for such dynamic state.
 |
 
 Frequent state timestamp updates are done in-place (small fixed-length values),
-but checking ctime before writes, so should be safe to tweak any of these files
-anytime anyway.
+but checking ctime before writes, so should be safe to edit any of these files
+manually anytime anyway.
 
 Channel Commands
 ````````````````
@@ -341,6 +342,27 @@ requests/adds/removes) as notices.
 
 Accepting friend requests and adding/removing these can be done via regular
 discord webui and is not implemented in this client in any special way.
+
+Auto-joining channels
+`````````````````````
+
+"chan-auto-join-re" setting in "[irc]" section allows to specify regexp to match
+channel name (without # prefix) to auto-join when any messages appear in them.
+
+For example, to auto-join any #me.\* channels (direct messages), following
+regular expression value (`python "re" syntax`_) can be used::
+
+  [irc]
+  chan-auto-join-re = ^me\.
+
+| Or to have irc client auto-join all channels, use ``chan-auto-join-re = .``.
+| Empty value for this option (default) will match nothing.
+
+This can be used as an alternative to tracking new stuff via #rdircd.monitor channels.
+
+Note that this regexp can be tweaked at runtime via "set" command in
+#rdircd.control channel, same as any other values, to e.g. temporary enable/disable
+this feature for specific discords or channels.
 
 Discord user mentions
 `````````````````````
