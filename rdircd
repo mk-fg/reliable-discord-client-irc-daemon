@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.166' # git-version: py-str
+	version = '1.167' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -36,6 +36,7 @@ class RDIRCDConfigBase:
 	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor
 	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #rdircd.monitor
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
+	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -626,6 +627,9 @@ class IRCProtocol:
 			salt = os.urandom(8)
 			self.st.pw_hash = salt, hashlib.blake2b(
 				self.conf.irc_password.encode(), salt=salt ).digest()
+		# XXX: split this into configurable bit from the control channel
+		rx = self.chan_auto_join_re = self.conf.irc_chan_auto_join_re
+		if rx: rx = self.chan_auto_join_re = re.compile(rx)
 
 
 	def connection_made(self, tr):
@@ -901,14 +905,17 @@ class IRCProtocol:
 	def recv_cmd_join(self, chan, key=None):
 		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans.values()))
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
-		for chan in chan_list:
-			c = self.req_chan_info(chan, cm=chan_map, check=False)
-			name = c.name if c else self.chan_name(chan)
-			self.send(f':{self.st.nick} JOIN {chan}')
-			self.send_topic(chan, c=c)
-			self.send_names(chan, own=True, c=c)
-			self.send(f'MODE {chan} +v {self.st.nick}')
-			self.st.chans.add(name)
+		for chan in chan_list: self.cmd_join(chan, cm=chan_map)
+
+	def cmd_join(self, chan, cm=None):
+		if not cm: cm = self.bridge.cmd_chan_map()
+		c = self.req_chan_info(chan, cm=cm, check=False)
+		name = c.name if c else self.chan_name(chan)
+		self.send(f':{self.st.nick} JOIN {chan}')
+		self.send_topic(chan, c=c)
+		self.send_names(chan, own=True, c=c)
+		self.send(f'MODE {chan} +v {self.st.nick}')
+		self.st.chans.add(name)
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
@@ -945,13 +952,12 @@ class IRCProtocol:
 
 	def send_names(self, chan, own=False, c=..., msg_len_max=200):
 		if c is ...: c = self.req_chan_info(chan)
-		name_line, names = list(), filter( None,
-			self.bridge.cmd_chan_names(c.name) ) if c else list()
+		name_line, names = list(), self.bridge.cmd_chan_names(c.name) if c else list()
 		for name in it.chain(names, [None]):
 			if name:
 				if irc_name_eq(name, self.st.nick): own = False
 				name_line.append(name)
-			elif own: name_line.append(self.st.nick)
+			elif own and self.st.nick: name_line.append(self.st.nick)
 			if name_line and (
 					not name or sum(len(n)+1 for n in name_line) > msg_len_max ):
 				self.send(353, '=', chan, ':' + ' '.join(name_line))
@@ -999,8 +1005,10 @@ class IRCProtocol:
 	def recv_cmd_notice(self, target, text):
 		self.cmd_msg(self.st.nick, target, text, notice=True, from_self=True)
 
-	def cmd_msg(self, src, target, text, notice=False, from_self=False, msg_type=None):
-		if not msg_type: msg_type = 'PRIVMSG' if not notice else 'NOTICE'
+	def cmd_msg(self, src, target, text, notice=False, from_self=False):
+		'''Handler for messages posted from irc.
+			With notice=True message is only handled in irc, without proxying it to discord.'''
+		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if self.chan_spec_check(target):
 			chan, name = target, self.chan_name(target)
 			if not notice: c = self.req_chan_info(chan)
@@ -1011,6 +1019,7 @@ class IRCProtocol:
 					' this is one of the monitor-channels, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name):
 				if from_self and conn is self: continue
+				if name not in conn.st.chans: self.cmd_join(chan) # from chan_auto_join_re
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
@@ -1019,12 +1028,22 @@ class IRCProtocol:
 				if not notice: self.send(401, target, ':No such nick/channel')
 			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
-	def cmd_msg_synth(self, src, target, text, notice=False, direct=False):
+	def cmd_msg_synth(self, src, chan, text, notice=False, direct=False):
 		'''Synthetic PRIVMSG which avoids any self-reaction loops like notices
+				or sending it back to discord and such - for generating one-way messages to irc chanels.
 			Channel target must be prefixed by #. direct=True msg only goes to self.'''
-		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
-		if direct: return self.send(f':{src} {msg_type} {target} :{text}')
-		self.cmd_msg(src, target, text, notice=True, msg_type=msg_type)
+		if not self.chan_spec_check(chan): raise ValueError(chan)
+		name, msg_type = self.chan_name(chan), 'PRIVMSG' if not notice else 'NOTICE'
+		if direct: # on this conn only
+			if name not in self.st.chans and (
+					self.chan_auto_join_re and self.chan_auto_join_re.search(name) ):
+				self.cmd_join(chan)
+			return self.send(f':{src} {msg_type} {chan} :{text}')
+		cm = self.bridge.cmd_chan_map()
+		if not cm.get(name): return
+		for conn in self.bridge.cmd_chan_conns(name):
+			if name not in conn.st.chans: self.cmd_join(chan, cm=cm) # from chan_auto_join_re
+			conn.send(f':{src} {msg_type} {chan} :{text}')
 
 	def cmd_msg_self(self, src, text, notice=True):
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
@@ -1082,6 +1101,7 @@ class Discord:
 			s.task = asyncio.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
+		# XXX: split this into configurable bit from the control channel
 		rx = self.user_mention_re = self.conf.discord_msg_mention_re
 		if rx:
 			rx = self.user_mention_re = re.compile(rx)
@@ -2384,6 +2404,7 @@ class RDIRCD:
 			if conn.st.nick: yield (conn.st.nick, conn)
 
 	def cmd_conn(self, name=None):
+		'Get irc connection for sending a direct message'
 		try:
 			if not name: return next(iter(self.irc_conns.values()))
 			return self.cmd_conn_map()[name]
@@ -2391,8 +2412,12 @@ class RDIRCD:
 
 	@iter_gather(list)
 	def cmd_chan_conns(self, name):
+		'Get list of irc connections for users in a channel'
 		for conn in self.irc_conns.values():
-			if conn.chan_name(name) in conn.st.chans: yield conn
+			chan_name = conn.chan_name(name)
+			if chan_name in conn.st.chans or (
+					conn.chan_auto_join_re and conn.chan_auto_join_re.search(chan_name) ):
+				yield conn
 
 	@iter_gather(list)
 	def cmd_chan_names_discord(self, name):
@@ -2407,9 +2432,9 @@ class RDIRCD:
 
 	@iter_gather(list)
 	def cmd_chan_names(self, name):
-		'Returns persistent mutable list of names for specified channel.'
+		'Returns persistent mutable list of users (/names) for specified channel.'
 		conn_nicks = irc_name_dict.value_map(
-			conn.st.nick for conn in self.cmd_chan_conns(name) )
+			conn.st.nick for conn in self.cmd_chan_conns(name) if conn.st.nick )
 		yield from sorted(conn_nicks.values())
 		for nick_discord, nick_irc in self.cmd_chan_names_discord(name):
 			if nick_irc not in conn_nicks: yield nick_irc
