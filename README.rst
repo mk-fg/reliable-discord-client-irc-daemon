@@ -355,14 +355,14 @@ regular expression value (`python "re" syntax`_) can be used::
   [irc]
   chan-auto-join-re = ^me\.
 
-| Or to have irc client auto-join all channels, use ``chan-auto-join-re = .``.
+| Or to have irc client auto-join all channels, use ``chan-auto-join-re = .``
 | Empty value for this option (default) will match nothing.
 
 This can be used as an alternative to tracking new stuff via #rdircd.monitor channels.
 
-Note that this regexp can be tweaked at runtime via "set" command in
-#rdircd.control channel, same as any other values, to e.g. temporary enable/disable
-this feature for specific discords or channels.
+This regexp can be tweaked at runtime using "set" command in #rdircd.control
+channel, same as any other values, to e.g. temporary enable/disable this feature
+for specific discords or channels.
 
 Discord user mentions
 `````````````````````

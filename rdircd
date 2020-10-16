@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.168' # git-version: py-str
+	version = '1.170' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1881,7 +1881,8 @@ class DiscordSession:
 		elif o in [ 'presences', 'presence', 'typing', 'integration',
 			'channel_pins', 'webhooks', 'guild_emojis', 'guild_integrations', 'guild_role' ]: return
 		elif mt.startswith('voice_'): return
-		elif mt in ['sessions_replace', 'user_settings_update', 'invite_create']: return
+		elif mt in [ 'sessions_replace',
+			'user_note_update', 'user_settings_update', 'invite_create' ]: return
 
 		# Known stuff must be explicitly handled above to not generate "Unhandled event"
 		self.log.warning('Unhandled event: {}', self._repr(m))
@@ -2531,7 +2532,7 @@ class RDIRCD:
 					send(f'  {k_ini} = {v} [{vt.__name__}]')
 				send( 'Note: string values must be quoted when setting'
 					' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
-				return send('Note: not all option changes take effect without full restart')
+				return send('Note: not all option changes take effect without reconnect or full restart')
 			conf_save = line[1] in ['-s', '--save']
 			line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
 			if not 1 <= len(line) <= 2:
