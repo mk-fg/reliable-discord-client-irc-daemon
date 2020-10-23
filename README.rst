@@ -51,8 +51,16 @@ they're using BetterDiscord_ (which is mostly just custom css theme, afaik):
 
 .. image:: discord-tos-violation-warning.jpg
 
-| Which seem to emphasize "automating" language in ToS.
-| So if you don't get even that kind of warning, you're probably safe, but I'm no authority on that.
+Which seem to emphasize "automating" language in ToS.
+
+So if you don't get even that kind of warning, account is probably safe, but I'm
+no authority on that, and trying to ask discord staff about it only got me bot
+responses with same links to an unclear ToS ``¯\_(ツ)_/¯``
+
+Another thing you might want to keep in mind, is that if specific discord
+community has a "Follow Discord Terms of Service" rule, then using client like
+this one would might be in violation of those community rules as well (again, if
+3p clients are indeed against ToS), and can/should get you banned there.
 
 .. _Bot vs User Accounts: https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
 .. _BetterDiscord: https://betterdiscord.net/
