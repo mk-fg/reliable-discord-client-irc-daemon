@@ -32,35 +32,72 @@ WARNING
 -------
 
 While I wouldn't call this app a "bot" exactly - intent here is not to post any
-automated messages or scrape anything - Discord staff might, and Discord
-requires bots to use special second-class API and for every account of such to
-be approved by admins on every connected discord server/guild, making it
+automated messages or scrape anything - Discord staff considers all third-party
+clients to be "bots", and requires them to use special second-class API
+(see `Bot vs User Accounts`_ section in API docs), where every account has to be
+separately approved by admins on every connected discord server/guild, making it
 effectively unusable for a random non-admin user.
 
-As this app does not present itself as a "bot" and doesn't use bot-specific
-endpoints, if Discord staff would classify it as such, it might result in
-blocking of user account(s).
+This app does not present itself as a "bot" and does not use bot-specific endpoints,
+so using it can result in an account termination if discovered.
 
-| See `Bot vs User Accounts`_ in dev docs for more information on the distinction.
-| Will update this warning blurb if I'll ever get any trouble for using this client myself.
-|
+I did ask discord staff for clarification on the matter,
+and got this response around Nov 2020:
 
-Unrelated to this client, but one person reported getting following warning
-(2020-01-30) after being reported (by another user) for mentioning that
-they're using BetterDiscord_ (which is mostly just custom css theme, afaik):
+    Is third-party discord client that uses same API as webapp that does not
+    have any kind meaningful automation beyond what official discord app
+    considered a "self-bot" or "user-bot"?
+
+    I.e. are absolutely all third-party clients not using Bot API in violation
+    of discord ToS, period?
+
+    Or does that "self-bot" or "user-bot" language applies only to a specific
+    sub-class of clients that are intended to automate client/user behavior,
+    beyond just allowing a person to connect and chat on discord normally?
+
+  Discord does not allow any form of third party client, and using a client like
+  this can result in your account being disabled.  Our API documentation
+  explicitly states that a bot account is required to use our API: "Automating
+  normal user accounts (generally called "self-bots") outside of the OAuth2/bot
+  API is forbidden, and can result in an account termination if found."
+
+Another thing you might want to keep in mind, is that apparently it's also
+considered to be responsibility of discord admins to enforce its Terms of
+Service, or - presumably - be at risk of whole guild/community being shut down.
+
+Got clarification on this issue in the same email (Nov 2020):
+
+    Are discord server admins under obligation to not just follow discord Terms
+    of Service themselves (obviously), but also enforce them within the server
+    to the best of their knowledge?
+
+    I.e. if discord server admin knows that some user is in violation of the
+    ToS, are they considered to be under obligation to either report them to
+    discord staff or take action to remove (ban) them from the server?
+
+    Should failing to do so (i.e. not taking action on known ToS violation)
+    result in discord server (and maybe admins' account) termination or some
+    similar punitive action, according to current discord ToS or internal
+    policies?
+
+  Server owners and admin are responsible for moderating their servers in
+  accordance with our Terms of Service and Community Guidelines. If content that
+  violates our Terms or Guidelines is posted in your server, it is your
+  responsibility to moderate it appropriately.
+
+So unless something changes or I misread discord staff position, using this
+client can get your discord account terminated, and any discord admins seem to
+be under obligation to ban/report its usage, if they are aware of it.
+
+Also, unrelated to this client, one person received following warning (2020-01-30)
+after being reported (by another user) for mentioning that they're using BetterDiscord_
+(which is/was mostly just a custom css theme at the time, afaik):
 
 .. image:: discord-tos-violation-warning.jpg
 
-Which seem to emphasize "automating" language in ToS.
+They didn't block my account yet though, so guess these rules aren't well-enforced.
 
-So if you don't get even that kind of warning, account is probably safe, but I'm
-no authority on that, and trying to ask discord staff about it only got me bot
-responses with same links to an unclear ToS ``¯\_(ツ)_/¯``
-
-Another thing you might want to keep in mind, is that if specific discord
-community has a "Follow Discord Terms of Service" rule, then using client like
-this one would might be in violation of those community rules as well (again, if
-3p clients are indeed against ToS), and can/should get you banned there.
+You have been warned :)
 
 .. _Bot vs User Accounts: https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
 .. _BetterDiscord: https://betterdiscord.net/
