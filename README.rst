@@ -44,9 +44,9 @@ so using it can result in an account termination if discovered.
 I did ask discord staff for clarification on the matter,
 and got this response around Nov 2020:
 
-    Is third-party discord client that uses same API as webapp that does not
-    have any kind meaningful automation beyond what official discord app
-    considered a "self-bot" or "user-bot"?
+    Is third-party discord client that uses same API as webapp, that does not
+    have any kind of meaningful automation beyond what official discord app has,
+    will be considered a "self-bot" or "user-bot"?
 
     I.e. are absolutely all third-party clients not using Bot API in violation
     of discord ToS, period?
@@ -77,13 +77,12 @@ Got clarification on this issue in the same email (Nov 2020):
 
     Should failing to do so (i.e. not taking action on known ToS violation)
     result in discord server (and maybe admins' account) termination or some
-    similar punitive action, according to current discord ToS or internal
-    policies?
+    similar punitive action, according to current discord ToS or internal policies?
 
   Server owners and admin are responsible for moderating their servers in
-  accordance with our Terms of Service and Community Guidelines. If content that
-  violates our Terms or Guidelines is posted in your server, it is your
-  responsibility to moderate it appropriately.
+  accordance with our Terms of Service and Community Guidelines.
+  If content that violates our Terms or Guidelines is posted in your server,
+  it is your responsibility to moderate it appropriately.
 
 So unless something changes or I misread discord staff position, using this
 client can get your discord account terminated, and any discord admins seem to
@@ -618,12 +617,13 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2020-06-06
+Last updated: 2020-11-28
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
-  which likely means that such use is not officially supported or endorsed.
+  because such use of its API is explicitly not supported, against their
+  Terms of Service, and presumably has repercussions if discovered.
 
-  See WARNING section above for what it might potentially imply.
+  See WARNING section above for more details.
 
 - Auth uses undocumented /api/auth/login endpoint for getting "token" value for
   email/password, which is not OAuth2 token and is usable for all other endpoints
