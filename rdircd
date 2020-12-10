@@ -37,6 +37,7 @@ class RDIRCDConfigBase:
 	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #rdircd.monitor
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
+	irc_disable_reactions = False # disables all "--- reacts" messages
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -2113,6 +2114,7 @@ class DiscordSession:
 		return tags
 
 	def op_react(self, m, act):
+		if self.conf.irc_disable_reactions: return
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
 		if gg: cc = gg.chans.get(m.channel_id)
 		if not cc: return
