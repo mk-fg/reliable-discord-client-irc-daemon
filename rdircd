@@ -1000,7 +1000,7 @@ class IRCProtocol:
 			names = self.bridge.cmd_chan_names(c.name)
 			topic = str_repr(c.topic, max_len=self.conf.irc_len_topic, len_bytes=True)
 			self.send(322, self.chan_spec(c.name), len(names), f':{topic}')
-		self.send(321, ':End of /LIST')
+		self.send(323, ':End of /LIST')
 
 	def recv_cmd_motd(self, target=None): self.send_motd()
 
