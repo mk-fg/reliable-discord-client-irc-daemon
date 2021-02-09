@@ -39,7 +39,7 @@ separately approved by admins on every connected discord server/guild, making it
 effectively unusable for a random non-admin user.
 
 This app does not present itself as a "bot" and does not use bot-specific endpoints,
-so using it can result in an account termination if discovered.
+so using it can result in account termination if discovered.
 
 I did ask discord staff for clarification on the matter,
 and got this response around Nov 2020:
@@ -106,22 +106,24 @@ Features
 --------
 
 - Reliable outgoing message ordering and delivery, with explicit notifications
-  for issues of any kind.
+  for detected issues of any kind.
 
 - Support for both private and public channels, channel ordering.
 
-- Per-server and global catch-all channels to check on general activity.
+- Per-server and global catch-all channels to track general activity.
 
 - Some quirky translation for discord user mentions, see below for specifics.
 
 - Configurable local name aliases.
+
+- Support for limited runtime reconfiguration via #rdircd.control channel.
 
 - Simple and consistent discord to irc guild/channel/user name translation.
 
   None of these will change after reconnection, channel or server reshuffling,
   etc - translation is mostly deterministic and does not depend on other names.
 
-- Translation for discord mentions, attachments and emojis in incoming msgs.
+- Translation for discord mentions, replies, attachments and emojis in incoming msgs.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
@@ -134,7 +136,7 @@ Features
 - Full unicode support everywhere.
 
 - IRC protocol is implemented from IRCv3 drafts, but doesn't use any of the
-  advanced features, and should be compatible with any clients.
+  advanced features, so should be compatible with any clients.
 
 - Extensive protocol and debug logging options, some accessible at runtime via
   #rdircd.debug channel.
@@ -142,7 +144,7 @@ Features
 - Single python3 script that only requires aiohttp module, trivial to run or
   deploy anywhere.
 
-- Runs in constant ~35M memory footprint on amd64, which is probably more than
+- Runs in constant ~40M memory footprint on amd64, which is probably more than
   e.g. bitlbee-discord_ but nothing like those leaky browser tabs.
 
 - Easy to tweak and debug without rebuilds, gdb, rust and such.
@@ -158,7 +160,7 @@ Limitations
 
 - No support for sending attachments or embeds of any kind - use WebUI for that, not IRC.
 
-  Discord automatically annotates links though, so posting images is as simple as that.
+  Discord automatically annotates links though, so posting media is as simple as that.
 
 - No discord-specific actions beyond all kinds of reading and sending messages
   to existing channels are supported - i.e. no creating accounts or channels on discord,
@@ -186,15 +188,12 @@ Limitations
 - No TLS mode for IRC - use bouncers like `ZNC <http://znc.in/>`_ for that
   (and for much more than that!).
 
-- Only tested on Linux, probably won't work on OSX/Windows, but idk.
-
-- Has only one known user (me!), so might be only tested and working for that
-  single and limited use-case.
+- I only run it on Linux, so it's unlikely to "just work" on OSX/Windows, but idk.
 
 - Custom ad-hoc implementation of both discord and irc, not benefitting from any
-  kind of exposure and testing on pypi and such wrt bugs and corner-cases.
+  kind of exposure and testing on pypi and such wrt compatibility, bugs and corner-cases.
 
-- No idea if even allowed by Discord ToS - see WARNING section above for more details.
+- Seem to be against Discord ToS to use it - see WARNING section above for more details.
 
 
 Usage
