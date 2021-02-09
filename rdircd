@@ -650,7 +650,7 @@ class IRCProtocol:
 		self.log = get_logger(f'rdircd.irc.{conn_id}')
 		self.log.debug('Connection from {} {} [{}]', host, port, conn_id)
 		self.transport, self.st.host = tr, host
-		self.send('NOTICE * :*** rdircd ready')
+		self.send('c','NOTICE * :*** rdircd ready')
 		self.bridge.irc_conn_new(self)
 		self.bridge.cmd_delay(self.recv_queue_proc)
 
@@ -719,6 +719,7 @@ class IRCProtocol:
 
 	def send(self, line_or_code, *args, max_len=None, auto_split=True):
 		line = line_or_code
+		if line == 'c': line = f':{self.bridge.server_host}'
 		if isinstance(line, int):
 			line = f':{self.bridge.server_host} {line:03d} {self.st.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
@@ -825,14 +826,14 @@ class IRCProtocol:
 	def recv_cmd_cap(self, sub, caps=''):
 		sub = sub.lower()
 		if sub == 'ls':
-			self.send('CAP * LS :')
+			self.send('c','CAP * LS :')
 			if caps == '302': self.st.cap_neg = True
-		elif sub == 'list': self.send('CAP * LIST :')
+		elif sub == 'list': self.send('c',f'CAP * LIST :')
 		elif sub == 'req':
 			self.st.cap_neg = True
 			reject = set(c for c in caps.split() if not c.startswith('-'))
-			if reject: self.send(f'CAP * NAK :{caps}')
-			else: self.send(f'CAP * ACK :{caps}')
+			if reject: self.send('c',f'CAP * NAK :{caps}')
+			else: self.send('c',f'CAP * ACK :{caps}')
 		elif sub == 'end': self.st.cap_neg = False
 
 	def recv_cmd_pass(self, pw):
@@ -863,7 +864,7 @@ class IRCProtocol:
 					hashlib.blake2b((self.st.pw or '').encode(), salt=salt).digest() ):
 				return self.send(464, ':Password incorrect')
 		self.st.auth = True
-		self.send('NOTICE * :*** registration completed')
+		self.send('c','NOTICE * :*** registration completed')
 		self.send(1, f':Welcome to the rdircd discord-irc bridge, {self.st.nick}')
 		self.send(2,
 			f':Your host is {self.bridge.server_host},'
