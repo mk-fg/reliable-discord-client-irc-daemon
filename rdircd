@@ -2049,8 +2049,8 @@ class DiscordSession:
 		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake = m.id
-			if ( self.conf.irc_inline_reply_quote_len > 0
-					and (ref := m.get('referenced_message')) ):
+			ref = m.get('referenced_message')
+			if self.conf.irc_inline_reply_quote_len > 0 and ref:
 				ref_user = ref.get('author', dict()).get('username')
 				ref_user = f'<{ref_user}>' if ref_user else ''
 				ref = ref.content.strip() if ref.content else ''
