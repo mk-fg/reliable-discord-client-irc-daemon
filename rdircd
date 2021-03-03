@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.175' # git-version: py-str
+	version = '1.176' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2048,8 +2048,7 @@ class DiscordSession:
 		if not line: return # joins/parts/pins and such
 		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
-			flake = m.id
-			ref = m.get('referenced_message')
+			flake, ref = m.id, m.get('referenced_message')
 			if self.conf.irc_inline_reply_quote_len > 0 and ref:
 				ref_user = ref.get('author', dict()).get('username')
 				ref_user = f'<{ref_user}>' if ref_user else ''
