@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.176' # git-version: py-str
+	version = '1.177' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -65,6 +65,7 @@ class RDIRCDConfigBase:
 	# discord_msg_mention_re_ignore is matched
 	#  against full capture of the regexp above, not full line.
 	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
+	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 
 	# XXX: rename to just "auth"
@@ -1246,6 +1247,10 @@ class Discord:
 		else:
 			subs = list( (ga-a, gb-a, '') for ga, gb in
 				(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
+			if self.conf.discord_msg_mention_irc_decode:
+				# This should make irc nicks usable for mention-tags as-is,
+				#  and fix matching e.g. discord names with spaces for default regexp.
+				nick = self.bridge.irc_name_revert(nick) or nick
 			uid = self.user_mention_cache[cc.gid].get(nick)
 			if uid: # exact match
 				nick = f'<@{uid}>'
@@ -2053,7 +2058,7 @@ class DiscordSession:
 				ref_user = ref.get('author', dict()).get('username')
 				ref_user = f'<{ref_user}>' if ref_user else ''
 				ref = ref.content.strip() if ref.content else ''
-				ref = str_repr(ref.strip(), self.conf.irc_inline_reply_quote_len)
+				ref = str_repr(ref, self.conf.irc_inline_reply_quote_len)
 				if ref_user and ref: line = f'-- re:{ref_user} {ref}\n{line.strip()}'
 		self.discord.cmd_msg_recv( cc,
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
