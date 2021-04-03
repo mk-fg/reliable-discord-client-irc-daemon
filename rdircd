@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.178' # git-version: py-str
+	version = '1.181' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1949,7 +1949,7 @@ class DiscordSession:
 
 		for c in force_list(chans):
 			name, topic = c.get('name'), c.get('topic')
-			if c.type in [ct.voice, ct.group, ct.store]: continue
+			if c.type in [ct.voice, ct.group, ct.store, ct.stage]: continue
 			try: cc_type = ct(c.get('type', 0))
 			except ValueError:
 				try:
