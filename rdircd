@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.181' # git-version: py-str
+	version = '1.183' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1950,16 +1950,16 @@ class DiscordSession:
 		for c in force_list(chans):
 			name, topic = c.get('name'), c.get('topic')
 			if c.type in [ct.voice, ct.group, ct.store, ct.stage]: continue
-			try: cc_type = ct(c.get('type', 0))
+			try: cc_type = ct(c.type)
 			except ValueError:
 				try:
-					gg_pre = (
+					gg_prefix = (
 						self.discord.bridge.cache.gid_prefix.get(gg.id)
 						or self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh')) )
-				except: gg_pre = '???' # digs a bit too far to get that debug info
+				except: gg_prefix = '???' # digs a bit too far to get that debug info
 				self.log.error( 'BUG - ignoring unknown channel'
 						' type={}: guild={!r} (id={} prefix={}) name={!r} topic={!r}',
-					c.get('type', 0), gg.name, gg.id, gg_pre, name, topic )
+					c.type, gg.name, gg.id, gg_prefix, name, topic )
 				continue
 
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
