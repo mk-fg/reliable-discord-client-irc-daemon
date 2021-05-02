@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
 
-	version = '1.183' # git-version: py-str
+	version = '1.184' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -42,10 +42,9 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # 0 = disable
 
-	irc_private_chat_min_others_to_use_id_name = 2 # for #me.user1+user2+... vs #me.<id>
+	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
 	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
-	irc_private_chat_topic_len = 200 # simply truncated without messing with usernames
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -1983,11 +1982,8 @@ class DiscordSession:
 					# Hash-name is not descriptive, but should stay the same
 					# Caveat: channel names are case-insensitive, even if hash is not
 					name = f'chat.{str_hash(c.id, 10)}'
-				else: name = self.op_ev_chans_priv_name(user_names)
-				if not topic:
-					topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
-					topic_len_max = self.conf.irc_private_chat_topic_len
-					if len(topic) > topic_len_max: topic = topic[:topic_len_max-4] + ' ...'
+				else: name = f'chat.{self.op_ev_chans_priv_name(user_names)}'
+				if not topic: topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
 
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',

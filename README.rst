@@ -273,7 +273,7 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
   #rdircd.debug        0  rdircd: debug logging channel, read-only
   #rdircd.monitor      0  rdircd: read-only catch-all channel with messages from everywhere
   #rdircd.monitor.jvpp 0  rdircd: read-only catch-all channel for messages from one discord
-  #me.chat.5gupog9fyk  1  me: private chat - SomeUser
+  #me.chat.SomeUser    1  me: private chat - SomeUser
   #me.chat.x2s456gl0t  3  me: private chat - some-other-user, another-user, user3
   #jvpp.announcements  0  Server-A: Please keep this channel unmuted
   #jvpp.info           0  Server-A:
