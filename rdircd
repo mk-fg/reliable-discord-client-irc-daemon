@@ -14,9 +14,9 @@ import aiohttp
 
 class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
-	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration below for that.
+	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.184' # git-version: py-str
+	version = '1.185' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -89,7 +89,7 @@ class RDIRCDConfigBase:
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
 	debug_proto_aiohttp = True
-	debug_log_file = '' # not affected by debug_verbose in any way
+	debug_log_file = '' # not affected by "verbose" option in any way
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
 	debug_chan_proto_tail = 50
@@ -2805,10 +2805,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			except configparser.NoSectionError: pass
 			except configparser.NoOptionError: pass
 
-	def pprint(self, title=None, empty_vals=False):
-		cat, chk = None, re.compile(
+	def pprint(self, title=None, empty_vals=False, comments=None):
+		cat, comms, chk = None, comments or dict(), re.compile(
 			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
 		if title: print(f';; {title}')
+		if '_notes' in comms: print(comms['_notes'])
 		for k in sorted(dir(self)):
 			m = chk.search(k)
 			if not m: continue
@@ -2820,6 +2821,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				print(f'\n[{cat}]')
 			if isinstance(v, bool): v = ['no', 'yes'][v]
 			k = m.group(2).replace('_', '-')
+			k_full = f'{cat}-{k}'
+			if k_full in comms:
+				comm = comms[k_full]
+				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
+				print(comm)
 			print(f'{k} = {v}')
 		if self.aliases:
 			print('\n[aliases]')
@@ -2997,6 +3003,45 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 
 
+def parse_conf_code_comments():
+	'Parses "class RDIRCDConfigBase" in __file__, returns {var: comment} dict'
+	def line_proc(line):
+		var = line.split(None, 1)[0] if re.search(r'^\S+\s+=', line) else ''
+		var, var_code = var.replace('_', '-'), var
+		try: pre, comm = line.split('#', 1)
+		except ValueError: comm = ''
+		if comm.lstrip().startswith('XXX:'): comm = ''
+		if comm.startswith(' '): comm = comm[1:]
+		return var, var_code, comm
+	comms = dict()
+	if __file__.endswith('.pyc'): return
+	try: src_file = open(__file__, errors='replace')
+	except OSError: return
+	with src_file as src:
+		if src.read(3) != '#!/': return
+		for line in src:
+			if line.startswith('class RDIRCDConfigBase'): break
+		comm_buffer = list()
+		for line in src:
+			ls = line.strip()
+			if ls and not line.startswith('\t'): break
+			var, var_code, comm = line_proc(ls)
+			if var_code.startswith('_'): break
+			if not var:
+				if comm: comm_buffer.append(comm)
+			else:
+				if comm_buffer: comm = ((comm or '') + '\n' + '\n'.join(comm_buffer)).strip()
+				if comm:
+					if var and re.search('^' + re.escape(var_code) + r'\s+', comm):
+						comm = var + comm[len(var_code):]
+					if not comm.startswith(var): comm = f'{var}: {comm}'
+					comms[var] = comm
+			if comm_buffer and (not comm or var):
+				if not comms: comms['_notes'] = '\n'.join(comm_buffer)
+				comm_buffer.clear()
+	for k, comm in comms.items(): comms[k] = '\n'.join(f'; {line}' for line in comm.split('\n'))
+	return comms
+
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
@@ -3033,8 +3078,8 @@ def main(args=None, conf=None):
 		help='Print all configuration settings, which will be used with'
 			' currently detected (and/or specified) configuration file(s), and exit.')
 	group.add_argument('--conf-dump-defaults', action='store_true',
-		help='Print all default settings, which would be used'
-			' if no configuration file(s) were overriding these, and exit.')
+		help='Print all default settings which would be used if no'
+			' configuration file(s) were overriding these, with some comments, and exit.')
 	group.add_argument('--conf-dump-state', action='store_true',
 		help='Print "state" section from the config file,'
 			' with keys corresponding to app startups and iso8601'
@@ -3068,7 +3113,8 @@ def main(args=None, conf=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.conf_dump_defaults:
-		conf.pprint('Default configuration options', empty_vals=True)
+		conf.pprint( 'Default configuration options',
+			empty_vals=True, comments=parse_conf_code_comments() )
 		return
 
 	conf_user_paths = list(map(
