@@ -30,15 +30,22 @@ class RDIRCDConfigBase:
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
 	irc_names_timeout = '1d' # time since last activity
+
 	irc_len_hwm = 450 # will probably still work with most clients
 	irc_len_lwm = 300
 	irc_len_topic = 300 # cannot be split, so is truncated instead
 	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor
 	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #rdircd.monitor
+
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # 0 = disable
+
+	irc_private_chat_min_others_to_use_id_name = 2 # for #me.user1+user2+... vs #me.<id>
+	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
+	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
+	irc_private_chat_topic_len = 200 # simply truncated without messing with usernames
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -1970,12 +1977,17 @@ class DiscordSession:
 				dict_update( cc.users,
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
-				# Hash-name is not descriptive, but should stay the same
-				# Caveat: channel names are case-insensitive, even if hash is not
-				name = f'chat.{str_hash(c.id, 10)}'
+
+				user_names = list(u.name for u in cc.users.values())
+				if len(user_names) >= self.conf.irc_private_chat_min_others_to_use_id_name:
+					# Hash-name is not descriptive, but should stay the same
+					# Caveat: channel names are case-insensitive, even if hash is not
+					name = f'chat.{str_hash(c.id, 10)}'
+				else: name = self.op_ev_chans_priv_name(user_names)
 				if not topic:
-					topic = 'private chat - ' + ', '.join(u.name for u in cc.users.values())
-					if len(topic) > 200: topic = topic[:200] + ' ...'
+					topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
+					topic_len_max = self.conf.irc_private_chat_topic_len
+					if len(topic) > topic_len_max: topic = topic[:topic_len_max-4] + ' ...'
 
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
@@ -2021,6 +2033,15 @@ class DiscordSession:
 			name = f'{cc.name_base}.{n}'
 			if name != cc.name: yield cc, cc.name
 			cc.name = name
+
+	def op_ev_chans_priv_name(self, user_names):
+		'Makes channel name of limited length from possibly-truncated usernames'
+		n = max_len_chan = self.conf.irc_private_chat_name_len
+		min_len_user = self.conf.irc_private_chat_name_user_min_len
+		while True:
+			name = '+'.join(sorted(name.replace('+', '')[:n] for name in user_names))
+			if n <= min_len_user or len(name) <= max_len_chan: return name[:max_len_chan]
+			n -= 1
 
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
