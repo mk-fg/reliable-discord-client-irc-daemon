@@ -94,6 +94,9 @@ after being reported (by another user) for mentioning that they're using BetterD
 
 .. image:: discord-tos-violation-warning.jpg
 
+Cordless_ client developer's acc apparently got blocked for ToS violation when
+initiating private chats.
+
 They didn't block my account yet though, so guess these rules aren't well-enforced.
 
 You have been warned :)
@@ -341,9 +344,8 @@ Channel Commands
 Local Name Aliases
 ``````````````````
 
-Can be defined in the config file to replace hash-based discord prefixes or
-server channel names with something more readable/memorable or meaningful
-to you::
+Can be defined in the config file to replace hash-based discord prefixes or server
+channel names with something more readable/memorable or meaningful to you::
 
   [aliases]
   guild.jvpp = game-X
@@ -362,11 +364,10 @@ This should:
 - Rename channel with id=710035588048224269 to "memes" (with guild prefix too).
 
   That long discord channel id (also called "snowflake") can be found by typing
-  "/t info" topic-command in the channel, and can be used to refer to one
-  specific channel, e.g. #general on this one server instead of everywhere.
+  "/t info" topic-command in irc channel from discord, and can be used to refer
+  to that specific channel, e.g. this #general on this server instead of everywhere.
 
-Currently aliases are implemented for guild IDs and channel names,
-like demonstrated above.
+Currently aliases are implemented for guild IDs and chan names, like demonstrated above.
 
 #rdircd.monitor channels
 ````````````````````````
@@ -594,7 +595,7 @@ Web UI (in-browser) clients:
 
 Terminal UI (TUI, ncurses) clients:
 
-- Cordless_ - fairly mature Go TUI client
+- Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 - 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
 - Terminal-Discord_ - minimal JS/node terminal client
 - `Discord Terminal`_ - customizable JS/node client with IRC layout and Windows OS support
@@ -695,4 +696,9 @@ Last updated: 2020-11-28
   helper script in this repo can be used to decompress/decode websocket messages saved
   from chromium-engine browser devtools (pass -h/--help option for info on how to do it).
 
-.. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
+  .. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
+
+- Adding support for initiating private chats might be a bad idea, as Cordless_
+  dev apparently got banned for that, as these seem to be main spam vector,
+  so more monitoring and anomaly detection is likely done there, leading to
+  higher risk for users.
