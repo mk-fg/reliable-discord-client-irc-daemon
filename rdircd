@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.187' # git-version: py-str
+	version = '1.188' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1417,7 +1417,7 @@ class DiscordSession:
 		self.ws_closed_clean.set()
 		self.rate_limits = adict()
 		self.st = adict(guilds={1: adict(
-			id=1, name='me', ts_joined=0, kh='me', chans=dict() )})
+			id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict() )})
 		self.st.me = self.st.guilds[1]
 		self.auth_token, self.auth_token_manual = (
 			self.get_auth('token'), self.get_auth('token_manual') )
@@ -1942,7 +1942,7 @@ class DiscordSession:
 			if ts_joined: ts_joined = parse_iso8601(ts_joined)
 			gg.update(
 				name=g.name, ts_joined=ts_joined,
-				roles=adict((r.id, r) for r in g.get('roles', list())) )
+				roles=dict((r.id, r) for r in g.get('roles', list())) )
 			if 'channels' in g: gs_chans[g.id] = g.channels # missing in guild_update evs
 		dict_update(self.st.guilds, gs_new, sync=sync)
 		for gid, chans in gs_chans.items(): self.op_ev_chans(gid, chans, sync=True)
@@ -2381,7 +2381,7 @@ class RDIRCD:
 				for role in info.gg.roles.values(): notice_cmd(f'    id={role.id} name={role.name}')
 				notice_cmd('Channel:')
 				notice_cmd(f'  id: {info.cc.id}')
-				notice_cmd(f'  name on discord: {info.cc.name_raw}')
+				notice_cmd(f'  name on discord: {info.cc.name_raw or ""}')
 				notice_cmd(f'  name/alias without irc encoding: {info.cc.name}')
 				notice_cmd(f'  name/alias encoded for irc: {self.irc_name(info.cc.name)}')
 				notice_cmd(f'  topic: {info.cc.topic or ""}')
