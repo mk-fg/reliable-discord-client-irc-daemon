@@ -341,15 +341,32 @@ Channel Commands
 Local Name Aliases
 ``````````````````
 
-Can be defined in the config file to replace hash-based IDs with something
-easily readable::
+Can be defined in the config file to replace hash-based discord prefixes or
+server channel names with something more readable/memorable or meaningful
+to you::
 
   [aliases]
   guild.jvpp = game-X
+  chan.some-long-and-weird-name = weird
+  chan.@710035588048224269 = memes
 
-(to turn e.g. #jvpp.info into #game-X.info)
+This should:
 
-Currently only implemented for guild IDs in IRC channel names.
+- Turn e.g. #jvpp.info into #game-X.info (lettersoup-id to more humane prefix).
+
+- Rename that long channel to have a shorter name (retaining guild prefix).
+
+  Note that this affects all guilds where such channel name exists, and source name
+  should be in irc format, same as in /list, and is case-insensitive (as it is on irc).
+
+- Rename channel with id=710035588048224269 to "memes" (with guild prefix too).
+
+  That long discord channel id (also called "snowflake") can be found by typing
+  "/t info" topic-command in the channel, and can be used to refer to one
+  specific channel, e.g. #general on this one server instead of everywhere.
+
+Currently aliases are implemented for guild IDs and channel names,
+like demonstrated above.
 
 #rdircd.monitor channels
 ````````````````````````

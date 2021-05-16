@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.185' # git-version: py-str
+	version = '1.187' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1969,6 +1969,7 @@ class DiscordSession:
 				continue
 
 			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
+			cc.name_raw = name
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
 			if c.type in [ct.private, ct.private_group]:
 				ts, users= time.time(), c.get('recipients') or list()
@@ -1976,7 +1977,6 @@ class DiscordSession:
 				dict_update( cc.users,
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
-
 				user_names = list(u.name for u in cc.users.values())
 				if len(user_names) >= self.conf.irc_private_chat_min_others_to_use_id_name:
 					# Hash-name is not descriptive, but should stay the same
@@ -1984,6 +1984,14 @@ class DiscordSession:
 					name = f'chat.{str_hash(c.id, 10)}'
 				else: name = f'chat.{self.op_ev_chans_priv_name(user_names)}'
 				if not topic: topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
+
+			alias = self.conf.aliases.get(('chan', f'@{c.id}'))
+			if not alias:
+				alias = self.conf.aliases.get(
+					('chan', self.discord.bridge.irc_name(name).lower()) )
+			if alias:
+				self.log.debug('Using alias-name for channel: {} -> {}', name, alias)
+				name = alias
 
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
@@ -2003,7 +2011,8 @@ class DiscordSession:
 			for cca, cca_name_old in self.op_ev_chans_update_disambiguation(cs, name):
 				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
 		for cc, name, name_old in chan_name_changes:
-			if not name_old: self.log.debug('New channel [{}]: {!r} ({!r})', cc.id, cc.name, cc.topic)
+			if not name_old:
+				self.log.debug('New channel [{}]: {!r} ({!r})', cc.id, cc.name, cc.topic or '')
 			elif cc.name != name_old: self.discord.cmd_chan_rename(cc, name_old)
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
@@ -2346,6 +2355,7 @@ class RDIRCD:
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
 				'  set {topic...} - set topic, as usual irc /topic command would do.',
+				'  info - show some internal guild/channel information, like IDs and such for aliases.',
 				'  log [state] - replay history since "state" point (default: last rdircd stop).',
 				'    "state" value can be either a number, state-id, relative or iso8601 timestamp.',
 				'    Where number indicates last Nth state recorded in the config (0 - current).',
@@ -2358,6 +2368,25 @@ class RDIRCD:
 		try:
 			if cmd[0] == 'set':
 				raise IRCBridgeSignal('Changing topic is not implemented')
+			elif cmd[0] == 'info':
+				info = self.irc_chan_info(name)
+				if not (info and info.gg and info.cc):
+					raise IRCBridgeSignal(f'Not a discord channel: {chan}')
+				notice_cmd('--- Protocol information on this guild/channel:')
+				notice_cmd('Guild:')
+				notice_cmd(f'  id: {info.gg.id}')
+				notice_cmd(f'  name: {info.gg.name}')
+				notice_cmd(f'  joined-at: {ts_iso8601(info.gg.ts_joined)}')
+				notice_cmd('  existing roles:')
+				for role in info.gg.roles.values(): notice_cmd(f'    id={role.id} name={role.name}')
+				notice_cmd('Channel:')
+				notice_cmd(f'  id: {info.cc.id}')
+				notice_cmd(f'  name on discord: {info.cc.name_raw}')
+				notice_cmd(f'  name/alias without irc encoding: {info.cc.name}')
+				notice_cmd(f'  name/alias encoded for irc: {self.irc_name(info.cc.name)}')
+				notice_cmd(f'  topic: {info.cc.topic or ""}')
+				notice_cmd(f'  type: {info.cc.t.name} [{info.cc.t.value}]')
+				notice_cmd(f'--- end of info')
 			elif cmd[0] == 'log':
 				state = ('1' if len(cmd) == 1 else cmd[1]) if len(cmd) <= 2 else None
 				state_list = sorted((v,k) for k,v in self.conf.state.items())
@@ -2579,7 +2608,8 @@ class RDIRCD:
 					send(f'  {k_ini} = {v} [{vt.__name__}]')
 				send( 'Note: string values must be quoted when setting'
 					' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
-				return send('Note: not all option changes take effect without reconnect or full restart')
+				return send( 'Note: not all option changes take effect'
+					' without reconnect or full restart, save them to config for latter' )
 			conf_save = line[1] in ['-s', '--save']
 			line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
 			if not 1 <= len(line) <= 2:
