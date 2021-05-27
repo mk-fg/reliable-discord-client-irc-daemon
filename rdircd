@@ -1929,13 +1929,15 @@ class DiscordSession:
 		if chan is not ...: gg.chans.pop(chan, None)
 		else: self.st.guilds.pop(gid, None)
 
-	def op_ev_guilds(self, guild, sync=False):
+	def op_ev_guilds(self, guilds, sync=False):
 		gs_new, gs_chans = {1: self.st.me}, dict()
-		for g in force_list(guild):
+		for g in force_list(guilds):
 			if g.get('unavailable'): continue # can be sent in "ready" event
 			if g.id == self.st.me.id or g.name == self.st.me.name:
 				self.log.error('Skipping guild due to id/name conflict with "me" guild: {}', g)
 				continue
+			if g.id not in self.st.guilds:
+				self.log.debug('New guild: gid={} name={!r}', g.id, g.name)
 			gg = gs_new.setdefault( g.id,
 				self.st.guilds.get(g.id, adict(id=g.id, chans=dict())) )
 			ts_joined = g.get('joined_at') or 0
@@ -2012,7 +2014,8 @@ class DiscordSession:
 				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
 		for cc, name, name_old in chan_name_changes:
 			if not name_old:
-				self.log.debug('New channel [{}]: {!r} ({!r})', cc.id, cc.name, cc.topic or '')
+				self.log.debug( 'New channel [id={} gid={}]:'
+					' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
 			elif cc.name != name_old: self.discord.cmd_chan_rename(cc, name_old)
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
