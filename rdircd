@@ -904,7 +904,24 @@ class IRCProtocol:
 		self.send( 266, f'{s.total} {s.total_max}',
 			f':Current global users {s.total}, max {s.total_max}' )
 
-	def send_motd(self): self.send(422, ':MOTD File is missing')
+	def send_motd(self):
+		if not os.path.exists('rdircd.motd'):
+			self.send(422, ':MOTD File is missing')
+			return
+
+		try:
+			with open('rdircd.motd') as fd:
+				motd = fd.readlines()
+
+		except OSError:
+			self.send(422, ':MOTD File is missing')
+			return
+
+		self.send(375, f':- {self.bridge.server_host} Message of the day - ')
+		for line in motd:
+			self.send(372, f':- {line}')
+
+		self.send(376, ':End of /MOTD command')
 
 	def recv_cmd_quit(self, reason=None):
 		self.send('QUIT :Client quit')
