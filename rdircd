@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.188' # git-version: py-str
+	version = '1.190' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -30,6 +30,7 @@ class RDIRCDConfigBase:
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
 	irc_names_timeout = '1d' # time since last activity
+	irc_motd_file_path = '' # file path to read for motd command
 
 	irc_len_hwm = 450 # will probably still work with most clients
 	irc_len_lwm = 300
@@ -905,22 +906,13 @@ class IRCProtocol:
 			f':Current global users {s.total}, max {s.total_max}' )
 
 	def send_motd(self):
-		if not os.path.exists('rdircd.motd'):
-			self.send(422, ':MOTD File is missing')
-			return
-
-		try:
-			with open('rdircd.motd') as fd:
-				motd = fd.readlines()
-
-		except OSError:
-			self.send(422, ':MOTD File is missing')
-			return
-
-		self.send(375, f':- {self.bridge.server_host} Message of the day - ')
-		for line in motd:
-			self.send(372, f':- {line}')
-
+		motd = self.conf.irc_motd_file_path
+		if motd:
+			try: motd = pl.Path(self.conf.irc_motd_file_path).read_text()
+			except FileNotFoundError: motd = ''
+		if not motd: return self.send(422, ':MOTD File is missing')
+		self.send(375, f':- {self.bridge.server_host} Message of the day -')
+		for line in motd.splitlines(): self.send(372, f':- {line}')
 		self.send(376, ':End of /MOTD command')
 
 	def recv_cmd_quit(self, reason=None):
