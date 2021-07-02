@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.190' # git-version: py-str
+	version = '1.191' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2676,6 +2676,7 @@ class RDIRCD:
 				'    That mostly adds connection stuff - disconnects, reconnects, auth, etc.',
 				'  level debug - (alias: d) enable level=debug logging in this channel',
 				'    Includes protocol info (if shared), events, messages and everything else.',
+				'  level error, level critical - more quiet than other levels above',
 				'  proto {file} - enable irc/discord protocol logging to specified file',
 				'  proto off - (alias: px) disable irc/discord protocol logging',
 				'  proto share/unshare - (alias: ps/pu)',
@@ -2692,9 +2693,10 @@ class RDIRCD:
 		if cmd == 'level' and len(line) == 2:
 			level = getattr(logging, arg.upper(), None)
 			if level is not None and self.conf._debug_chan:
+				arg_old = logging.getLevelName(self.conf._debug_chan.level)
 				self.conf._debug_chan.setLevel(level)
-			else: arg = 'unavailable'
-			send(f'-- logging level: {arg}')
+				send(f'-- logging level: {arg_old.lower()} -> {arg.lower()}')
+			else: send(f'-- failed to change logging level: level or logger unavailable')
 		elif cmd == 'proto':
 			if arg == 'off':
 				if self.conf._debug_proto:
