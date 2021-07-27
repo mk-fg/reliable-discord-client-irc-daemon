@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.193' # git-version: py-str
+	version = '1.194' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1327,6 +1327,7 @@ class Discord:
 
 class DiscordSession:
 
+	# XXX: api-9 needs changes for new rate limits, gw intents, inline replies, threads
 	api_ver = 6
 
 	class c(enum.IntEnum):
@@ -1496,7 +1497,9 @@ class DiscordSession:
 				req_limit, req_limit_ts = self.rate_limits[route] = req_limit_vals
 			if res.status == 429:
 				m = await res.json()
-				delay = m.get('retry_after')
+				delay = m.get('retry_after') # XXX: it's now seconds in api-8+!!!
+				# XXX: see also X-RateLimit-Reset and X-RateLimit-Reset-After
+				# XXX: https://discord.com/developers/docs/topics/rate-limits#more-precise-rate-limit-resets
 				if delay:
 					self.log.debug( 'Rate-limiting request on route'
 							' {!r}: explicit-retry-after, delay={:,.1f}s, global={}, msg={!r}',

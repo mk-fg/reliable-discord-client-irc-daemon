@@ -5,6 +5,25 @@ Reliable Discord-client IRC Daemon (rdircd)
   :backlinks: none
 
 
+Deprecation Notice
+------------------
+
+As of 2021-07-27, I've stopped using Discord myself, so this repository is
+likely unmaintained.
+
+This client should probably continue to work while Discord API v6 endpoint is
+still supported (afaik there's no public deadline on that yet), and won't be
+able to connect afterwards.
+
+It currently won't display "threads" (if server allows these), and might have
+any other additional limitations wrt future Discord features, which will not be
+reflected in this README as it's also unmaintained (obviously).
+
+If you really want to use this client anyway for some reason, maybe at least
+check if there are any more up-to-date forks of it around, and maybe check
+"Links" section below for an outdated list of alternatives.
+
+
 Description
 -----------
 
@@ -20,9 +39,6 @@ It's also "reliable" in that it tries hard to confirm message delivery,
 notify about any issues in that regard and enforce strict
 all-in-same-order-or-nothing posting, which - somewhat surprisingly - other
 discord clients seem to be quite sloppy about.
-
-If you have any questions or difficulty, or just want to test this script,
-here's an ad-hoc discord for that: https://discord.gg/s2fbWZD
 
 .. _Discord: http://discord.gg/
 .. _"guilds" in API docs: https://discord.com/developers/docs/resources/guild
@@ -634,13 +650,21 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2020-11-28
+Last updated: 2021-07-27
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   because such use of its API is explicitly not supported, against their
   Terms of Service, and presumably has repercussions if discovered.
 
   See WARNING section above for more details.
+
+- Discord API protocol changes between version, which are documented on
+  `Change Log page of the API docs`_.
+
+  Code has API number hardcoded as DiscordSession.api_ver, which has to be
+  bumped there manually after updating it to handle new features as necessary.
+
+  .. _Change Log page of the API docs: https://discord.com/developers/docs/change-log
 
 - Auth uses undocumented /api/auth/login endpoint for getting "token" value for
   email/password, which is not OAuth2 token and is usable for all other endpoints
