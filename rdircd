@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, re, time, secrets, enum, json, zlib
+import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, traceback, contextlib as cl
 import hashlib, base64, random, unicodedata, ast, urllib.parse
 import configparser, tempfile, datetime as dt, pathlib as pl
@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.198' # git-version: py-str
+	version = '1.199' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -519,6 +519,28 @@ def parse_duration(ts_str, to_float=True):
 			delta.append(val)
 		delta = dt.timedelta(*delta)
 	return delta if not to_float else delta.total_seconds()
+
+def repr_duration( ts, ts0=None,
+		ext=True, units_max=2, units_res=None,
+		_units=dict( h=3600, m=60, s=1,
+			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+	delta = ts if ts0 is None else (ts - ts0)
+	if ext is True: ext = 'ago' if delta < 0 else 'from now'
+	res, s, n_last = list(), abs(delta), units_max - 1
+	for unit, unit_s in sorted(_units.items(), key=op.itemgetter(1), reverse=True):
+		val = math.floor(s / unit_s)
+		if not val:
+			if units_res == unit: break
+			continue
+		if len(res) == n_last or units_res == unit:
+			val, n_last = round(s / unit_s), True
+		res.append(f'{val:.0f}{unit}')
+		if n_last is True: break
+		s -= val * unit_s
+	if not res: return '-'
+	else:
+		if ext: res.append(ext)
+		return ' '.join(res)
 
 
 def iter_gather(cls, cache=False):
@@ -1409,7 +1431,10 @@ class DiscordSession:
 		friend_req_out = 4
 		friend_implicit = 5
 
-	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo everyone other')
+	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo ts everyone other')
+	c_msg_tags_ts_fmts = dict(
+		t='%H:%M', T='%H:%M:%S', d='%Y%m%d', D='%m %B %Y',
+		f='%Y%m%d %H:%M:%S', F='%c', R=repr_duration )
 
 	def __init__(self, discord):
 		self.discord, self.conf = discord, discord.conf
@@ -2146,6 +2171,7 @@ class DiscordSession:
 			if not mt and m.get('author', dict()).get('bot'):
 				if m.get('embeds'): mt = self.c_msg_type.bot_embeds
 				# Otherwise empty message_update bumps and/or something webhook-related?
+				# Msgs from bots updating their embeds can be filtered-out via "flags = loading"
 			else:
 				mt = self.c_msg_type(int(mt))
 				if mt != self.c_msg_type.default: line = ''
@@ -2153,9 +2179,7 @@ class DiscordSession:
 			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
 			mt_nx = True
-		if line:
-			tags.update(self.op_msg_parse_tags(
-				line, m.get('mentions'), gg.chans, gg.get('roles') ))
+		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
 		if mt == self.c_msg_type.bot_embeds:
 			for n, em in enumerate(m.embeds):
 				pre = self.conf.irc_prefix_embed.format(tuple_hash((m.id, n), 3))
@@ -2182,23 +2206,27 @@ class DiscordSession:
 			elif mt == self.c_msg_type.channel_name_change: line = f'[channel renamed]'
 		return line.strip(), tags
 
-	def op_msg_parse_tags(self, line, users, chans, roles):
+	def op_msg_parse_tags(self, line, m, chans, roles):
 		'Returns string-replacement pairs for discord tags detected within message'
 		# https://discord.com/developers/docs/reference#message-formatting
-		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&)(\d+)>', line))
+		# m.mention_channels and m.mention_roles can be used here instead of guild lists
+		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&|t)(\d+)(:\w)?>', line))
 		if tags_raw:
-			mt, users = self.c_msg_tags, dict((m.id, m.username) for m in force_list(users))
+			mt = self.c_msg_tags
+			users = dict((m.id, m.username) for m in force_list(m.get('mentions')))
 			for m in tags_raw:
 				k_src, t, k = m.group(0), m.group(1), m.group(2)
 				if t in ['@', '@!']: v = mt.user, users.get(k, f'[{k}]')
 				elif t == '@&':
-					role_tag = ( f'[{roles[k].name}]'
+					v = mt.role, ( f'[{roles[k].name}]'
 						if roles and k in roles else '[role:{}]'.format(str_hash(k, 3)) )
-					v = mt.role, role_tag
-				elif t == '#':
-					chan_tag = chans[k].did if k in chans else f'#[{k}]'
-					v = mt.chan, chan_tag
+				elif t == '#': v = mt.chan, chans[k].did if k in chans else f'#[{k}]'
 				elif t.lstrip('a').startswith(':'): v = mt.emo, t.lstrip('a')
+				elif t == 't':
+					ts, ts_fmt = float(k), self.c_msg_tags_ts_fmts
+					ts_fmt = ts_fmt.get(m.group(3)) or ts_fmt['f']
+					v = mt.ts, '[' + str( ts_fmt(ts) if callable(ts_fmt)
+						else dt.datetime.fromtimestamp(ts).strftime(ts_fmt) ) + ']'
 				else: v = mt.other, f'{t}{k}'
 				tags[k_src] = v
 		return tags
