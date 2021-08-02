@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.195' # git-version: py-str
+	version = '1.196' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1371,6 +1371,7 @@ class DiscordSession:
 		stage = 13
 
 	class c_msg_type(enum.IntEnum):
+		# https://discord.com/developers/docs/resources/channel#message-object-message-types
 		default = 0
 		recipient_add = 1
 		recipient_remove = 2
@@ -1384,6 +1385,16 @@ class DiscordSession:
 		user_premium_guild_subscription_tier_2 = 10
 		user_premium_guild_subscription_tier_3 = 11
 		channel_follow_add = 12
+		guild_discovery_disqualified = 14
+		guild_discovery_requalified = 15
+		guild_discovery_grace_period_initial_warning = 16
+		guild_discovery_grace_period_final_warning = 17
+		thread_created = 18
+		reply = 19 # inline reply msg, was type=default with old api
+		application_command = 20
+		thread_starter_message = 21
+		guild_invite_reminder = 22
+
 		# Negative values are internal types
 		bot_embeds = -1001
 
@@ -2110,15 +2121,20 @@ class DiscordSession:
 			if self.conf.irc_inline_reply_quote_len > 0 and ref:
 				ref_user = ref.get('author', dict()).get('username')
 				ref_user = f'<{ref_user}>' if ref_user else ''
-				ref = ref.content.strip() if ref.content else ''
-				ref = str_repr(ref, self.conf.irc_inline_reply_quote_len)
-				if ref_user and ref: line = f'-- re:{ref_user} {ref}\n{line.strip()}'
+				ref_line, ref_tags = self.op_msg_parse(ref, gg)
+				ref = str_repr(ref_line, self.conf.irc_inline_reply_quote_len)
+				if ref_user and ref:
+					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
+					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
 		self.discord.cmd_msg_recv( cc,
 			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
-		# Note: must produce non-empty message for any relevant msg type
-		# Note: also used for parsing history query responses, not just events
+		# All message types are processed for their "contents" attr here,
+		#  some known-special and useful ones get transformed into tag-like notifications,
+		#  and the rest of no-content ones are simply ignored
+		# Must produce non-empty message for any relevant msg type
+		# Also used for parsing history query responses, not just events
 		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
 		line = line.replace('\u200b', '') # unicode zero-width-space junk
 		try:
