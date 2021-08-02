@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.194' # git-version: py-str
+	version = '1.195' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -75,11 +75,10 @@ class RDIRCDConfigBase:
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 
-	# XXX: rename to just "auth"
-	auth_main_email = ''
-	auth_main_password = ''
-	auth_main_token = ''
-	auth_main_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
+	auth_email = ''
+	auth_password = ''
+	auth_token = ''
+	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	debug_verbose = False
 	debug_asyncio = False
@@ -97,7 +96,8 @@ class RDIRCDConfigBase:
 	debug_chan_proto_cut = 230
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth_main', 'debug'
+	_conf_sections = 'irc', 'discord', 'auth', 'debug'
+	_conf_sections_old = dict(auth_main='auth') # old -> new renames
 
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '^$')
 	_conv_discord_msg_mention_re_ignore = lambda s, v: v and re.compile(v)
@@ -1118,8 +1118,8 @@ class Discord:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
 
 	async def __aenter__(self):
-		if not ( self.conf.get('auth_main_email')
-				and self.conf.get('auth_main_password') ):
+		if not ( self.conf.get('auth_email')
+				and self.conf.get('auth_password') ):
 			self.log.error('Disabling discord due to missing access credentials')
 			self.session = None
 		else:
@@ -1407,7 +1407,7 @@ class DiscordSession:
 		self._repr = ft.partial(str_repr, max_len=self.conf.debug_proto_cut)
 
 	def get_auth(self, k, default=ValueError):
-		try: return self.conf.get(f'auth_main_{k}')
+		try: return self.conf.get(f'auth_{k}')
 		except AttributeError as err:
 			if default is ValueError: raise
 			return default
@@ -1526,8 +1526,8 @@ class DiscordSession:
 			if res.get('mfa'):
 				raise DiscordAbort( 'Multi-factor auth'
 					' requirement detected, but is not supported by rdircd' )
-			self.conf.set('auth_main_token', res['token'])
-			self.conf.update_file_section('auth_main', 'token')
+			self.conf.set('auth_token', res['token'])
+			self.conf.update_file_section('auth', 'token')
 			self.auth_token.set()
 			self.auth_token = self.get_auth('token')
 		return self.auth_token
@@ -2608,7 +2608,8 @@ class RDIRCD:
 			send('discord: disconnecting')
 			self.discord.disconnect()
 		elif cmd == 'set':
-			sec_re = re.compile('^({})_(.*)$'.format('|'.join(map(re.escape, self.conf._conf_sections))))
+			sec_re = re.compile('^({})_(.*)$'.format(
+				'|'.join(map(re.escape, self.conf._conf_sections)) ))
 			if len(line) == 1:
 				send(f'Current config options/values:')
 				val_types = [str, bool, int, float]
@@ -2619,7 +2620,7 @@ class RDIRCD:
 						if isinstance(v, vt): break
 					else: continue
 					v = ['no', 'yes'][v] if vt is bool else repr(v)
-					if vt is str and k.startswith('auth_') or 'password' in k: v = '<hidden>'
+					if vt is str and k == 'auth' or 'password' in k: v = '<hidden>'
 					send(f'  {k_ini} = {v} [{vt.__name__}]')
 				send( 'Note: string values must be quoted when setting'
 					' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
@@ -2843,11 +2844,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if v_conv: setattr(self, k_conv, v_conv(v))
 		setattr(self, k, v)
 
-	def read(self, func, section, k, conf_k=None):
+	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
-		for k in k, k.replace('-', '_'), k.replace('_', '-'):
+		for k in set([k, k.replace('-', '_'), k.replace('_', '-')]):
 			try:
-				self.set(conf_k, func(section, k))
+				self.set(conf_k, func(section_old or section, k))
 				return True
 			except configparser.NoSectionError: pass
 			except configparser.NoOptionError: pass
@@ -2883,6 +2884,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
 		self._conf_path = conf_paths[-1]
+		for k, k_new in list(self._conf_sections_old.items()):
+			if not self.update_from_file_section(
+					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
+				# Warnings will be issued for existing keys after logging is configured later
+				del self._conf_sections_old[k]
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 		self.read(conf_file.getboolean, 'state', 'tracked')
@@ -2910,8 +2916,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
-	def update_from_file_section(self, config, section='default', prefix=None):
-		section = section.replace('_', '-')
+	def update_from_file_section(self,
+			config, section='default', prefix=None, section_old=None ):
+		if section_old: section_old = section_old.replace('_', '-')
+		section_old_warn, section = None, section.replace('_', '-')
 		for k in dir(self):
 			if prefix:
 				if not k.startswith(prefix): continue
@@ -2921,7 +2929,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			v = getattr(self, conf_k)
 			get_val = self.get_val_conv_func(v, config.get)
 			if not get_val: continue # other types cannot be specified in config
-			self.read(get_val, section, k, conf_k)
+			if self.read( get_val, section, k, conf_k,
+				section_old=section_old ) and section_old: section_old_warn = True
+		return section_old_warn
+
 
 	def update_file_section(self, section, keys=None, path=None):
 		section = section.replace('_', '-')
@@ -3230,6 +3241,11 @@ def main(args=None, conf=None):
 	def handle_exception(err_t, err, err_tb):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
 	sys.excepthook = handle_exception
+
+	for k_old, k_new in conf._conf_sections_old.items():
+		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
+		log.warning( 'Old and deprecated section'
+			' in config file(s) - {!r} - replace it with {!r}', k_old, k_new )
 
 	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)

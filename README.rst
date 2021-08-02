@@ -8,20 +8,15 @@ Reliable Discord-client IRC Daemon (rdircd)
 Deprecation Notice
 ------------------
 
-As of 2021-07-27, I've stopped using Discord myself, so this repository is
-likely unmaintained.
+I'm currently not using Discord myself,
+so this project/repository is likely not well-maintained.
 
-This client should probably continue to work while Discord API v6 endpoint is
-still supported (afaik there's no public deadline on that yet), and won't be
-able to connect afterwards.
+Some folks are still using the thing though, and hopefully might report any bad
+issues - usually easy to fix/merge these but still obviously not ideal,
+so if there're any better options (or forks) actually maintained by people who
+use them, you might want to look at these first.
 
-It currently won't display "threads" (if server allows these), and might have
-any other additional limitations wrt future Discord features, which will not be
-reflected in this README as it's also unmaintained (obviously).
-
-If you really want to use this client anyway for some reason, maybe at least
-check if there are any more up-to-date forks of it around, and maybe check
-"Links" section below for an outdated list of alternatives.
+See "Links" section below for a likely-outdated list of alternatives.
 
 
 Description
