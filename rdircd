@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.199' # git-version: py-str
+	version = '1.200' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2209,10 +2209,10 @@ class DiscordSession:
 	def op_msg_parse_tags(self, line, m, chans, roles):
 		'Returns string-replacement pairs for discord tags detected within message'
 		# https://discord.com/developers/docs/reference#message-formatting
-		# m.mention_channels and m.mention_roles can be used here instead of guild lists
 		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&|t)(\d+)(:\w)?>', line))
+		m_chans = dict((c.id, f'#{c.name}') for c in (m.get('mention_channels') or list()))
 		if tags_raw:
-			mt = self.c_msg_tags
+			mt, ts_fmts = self.c_msg_tags, self.c_msg_tags_ts_fmts
 			users = dict((m.id, m.username) for m in force_list(m.get('mentions')))
 			for m in tags_raw:
 				k_src, t, k = m.group(0), m.group(1), m.group(2)
@@ -2220,11 +2220,10 @@ class DiscordSession:
 				elif t == '@&':
 					v = mt.role, ( f'[{roles[k].name}]'
 						if roles and k in roles else '[role:{}]'.format(str_hash(k, 3)) )
-				elif t == '#': v = mt.chan, chans[k].did if k in chans else f'#[{k}]'
+				elif t == '#': v = mt.chan, chans[k].did if k in chans else (m_chans.get(k) or f'#[{k}]')
 				elif t.lstrip('a').startswith(':'): v = mt.emo, t.lstrip('a')
 				elif t == 't':
-					ts, ts_fmt = float(k), self.c_msg_tags_ts_fmts
-					ts_fmt = ts_fmt.get(m.group(3)) or ts_fmt['f']
+					ts, ts_fmt = float(k), ts_fmts.get(m.group(3)) or ts_fmts['f']
 					v = mt.ts, '[' + str( ts_fmt(ts) if callable(ts_fmt)
 						else dt.datetime.fromtimestamp(ts).strftime(ts_fmt) ) + ']'
 				else: v = mt.other, f'{t}{k}'
