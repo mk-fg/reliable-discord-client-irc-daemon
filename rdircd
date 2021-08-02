@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.196' # git-version: py-str
+	version = '1.197' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1327,8 +1327,10 @@ class Discord:
 
 class DiscordSession:
 
-	# XXX: api-9 needs changes for new rate limits, gw intents, inline replies, threads
-	api_ver = 6
+	# See https://discord.com/developers/docs/change-log
+	api_ver = 9
+	# See https://discord.com/developers/docs/topics/gateway#gateway-intents
+	api_intents = (1 << 0) | (1 << 2) | (1 << 9) | (1 << 10) | (1 << 12) | (1 << 13)
 
 	class c(enum.IntEnum):
 		dispatch = 0
@@ -1485,6 +1487,8 @@ class DiscordSession:
 	### Regular HTTP requests and OAuth2 stuff
 
 	async def rate_limit_wrapper(self, route, req_func):
+		# Discord also returns proactive X-Rate-Limit headers, but these are
+		#  not used here - shouldn't be needed, as simple client is unlikely to bump into them
 		req_limit_defaults = 1, None
 		while True:
 			ts = time.time()
@@ -1508,14 +1512,12 @@ class DiscordSession:
 				req_limit, req_limit_ts = self.rate_limits[route] = req_limit_vals
 			if res.status == 429:
 				m = await res.json()
-				delay = m.get('retry_after') # XXX: it's now seconds in api-8+!!!
-				# XXX: see also X-RateLimit-Reset and X-RateLimit-Reset-After
-				# XXX: https://discord.com/developers/docs/topics/rate-limits#more-precise-rate-limit-resets
+				delay = m.get('retry_after')
 				if delay:
 					self.log.debug( 'Rate-limiting request on route'
 							' {!r}: explicit-retry-after, delay={:,.1f}s, global={}, msg={!r}',
 						route, delay, m.get('global'), m.get('message') )
-					await asyncio.sleep(float(delay) / 1e3 + self.conf.discord_http_delay_padding)
+					await asyncio.sleep(float(delay) + self.conf.discord_http_delay_padding)
 					continue
 				elif req_limit <= 0 and req_limit_ts and req_limit_ts > time.time(): continue
 				else:
@@ -1803,7 +1805,7 @@ class DiscordSession:
 				t='ready', func=self.op_ready, replace=True )
 			self.ws_send(self.c.identify, dict(
 				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
-				token=token, compress=False, large_threshold=250 ))
+				intents=self.api_intents, token=token, compress=False, large_threshold=250 ))
 		else:
 			self.state('hello.auth.resume')
 			self.ws_add_handler( self.c.dispatch,
