@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.200' # git-version: py-str
+	version = '1.202' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -46,6 +46,8 @@ class RDIRCDConfigBase:
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
 	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
+
+	irc_thread_chan_name_len = 50 # truncate thread-channel names to this length
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -267,12 +269,15 @@ def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]'):
 irc_name_eq = lambda a, b: a.lower() == b.lower()
 
 
-def str_hash(s, c=None, key='rdircd'):
-	s = base64.urlsafe_b64encode(
-			hashlib.blake2s(str(s).encode(), key=key.encode()).digest() )\
-		.decode().replace('-', '').replace('_', '').replace('=', '')
+def str_hash(s, c=None, key='rdircd', strip=''):
+	s_raw, s = s, base64.urlsafe_b64encode(
+		hashlib.blake2s(str(s).encode(), key=key.encode()).digest() ).decode()
+	for sc in strip + '-_=': s = s.replace(sc, '')
 	if c is None: return s
-	if len(s) < c: s = str_hash(s, c, key)
+	for n in range(30): # limit is to avoid unlikely a -> ... -> a loops
+		if len(s) < c: s = str_hash(s, c, key, strip)
+		if len(s) >= c: break
+	else: raise RuntimeError(f'str_hash() failed on: {s_raw!r} {[c, key, strip]}')
 	return s[:c]
 
 def tuple_hash(t, c=None, key='rdircd'):
@@ -1393,6 +1398,8 @@ class DiscordSession:
 		group = 4 # header for a group of channels
 		news = 5 # announcements channels
 		store = 6
+		thread = 11
+		thread_private = 12 # invite-only threads
 		stage = 13
 
 	class c_msg_type(enum.IntEnum):
@@ -1932,7 +1939,7 @@ class DiscordSession:
 		elif mt == 'guild_members_chunk': return self.op_ev_member_chunk(m.d)
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
-		elif o == 'channel':
+		elif o in ['channel', 'thread']:
 			if act in ['create', 'update']: return self.op_ev_chans(gid or 1, m.d)
 			elif act == 'delete': return self.op_ev_delete(gid or 1, chan=m.d.id)
 		elif o == 'channel_recipient': return self.op_ev_recipient(m.d, act)
@@ -1947,9 +1954,10 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 
 		# Known-ignored events
-		elif o in [ 'presences', 'presence', 'typing', 'integration',
-			'channel_pins', 'webhooks', 'guild_emojis', 'guild_integrations', 'guild_role' ]: return
-		elif re.search(r'^(voice|application_command)_', mt): return
+		elif o in [ 'typing', 'integration', 'channel_pins', 'webhooks',
+			'presence', 'presences', 'thread_member', 'thread_members',
+			'guild_emojis', 'guild_integrations', 'guild_role' ]: return
+		elif re.search(r'^(voice|(guild_)?application_command)_', mt): return
 		elif mt in [ 'sessions_replace',
 			'user_note_update', 'user_settings_update', 'invite_create' ]: return
 
@@ -1998,11 +2006,18 @@ class DiscordSession:
 			gg.update(
 				name=g.name, ts_joined=ts_joined,
 				roles=dict((r.id, r) for r in g.get('roles', list())) )
-			if 'channels' in g: gs_chans[g.id] = g.channels # missing in guild_update evs
+			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
+			if 'threads' in g: gs_chans[g.id, 't'] = g.threads
 		dict_update(self.st.guilds, gs_new, sync=sync)
-		for gid, chans in gs_chans.items(): self.op_ev_chans(gid, chans, sync=True)
+		for (gid, sk), chans in sorted(gs_chans.items()):
+			self.op_ev_chans(gid, chans, sync=sk == 'c')
 
 	def op_ev_chans(self, gid, chans, sync=False):
+		def _gg_prefix():
+			try:
+				return ( self.discord.bridge.cache.gid_prefix.get(gg.id)
+					or self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh')) )
+			except: return '???' # digs a bit too far to get that debug info
 		gg = self.st.guilds.get(gid)
 		if not gg: return
 		cs, ct = dict(), self.c_chan_type
@@ -2013,20 +2028,29 @@ class DiscordSession:
 			if c.type in [ct.voice, ct.group, ct.store, ct.stage]: continue
 			try: cc_type = ct(c.type)
 			except ValueError:
-				try:
-					gg_prefix = (
-						self.discord.bridge.cache.gid_prefix.get(gg.id)
-						or self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh')) )
-				except: gg_prefix = '???' # digs a bit too far to get that debug info
 				self.log.error( 'BUG - ignoring unknown channel'
-						' type={}: guild={!r} (id={} prefix={}) name={!r} topic={!r}',
-					c.type, gg.name, gg.id, gg_prefix, name, topic )
+						' type={}: guild={!r} (id={} prefix={}) name={!r} topic={!r} id={}',
+					c.type, gg.name, gg.id, _gg_prefix(), name, topic, c.id )
 				continue
 
-			cc = cs.setdefault(c.id, gg.chans.get(c.id, adict(users=adict())))
+			# XXX: no cleanup for archived threads here - not sure if there's an event for that
+			if c.type in [ct.thread, ct.thread_private]:
+				cc_parent = gg.chans.get(c.parent_id) or cs.get(c.parent_id)
+				if not cc_parent:
+					self.log.error( 'BUG - ignoring thread sub-channel with'
+							' unknown parent-chan={}: guild={!r} (id={} prefix={}) name={!r} id={}',
+						c.parent_id, gg.name, gg.id, _gg_prefix(), name, c.id )
+					continue
+				c_tid, topic = str_hash(c.id, 4, strip='='), f'[thread] {name}'
+				name = f'{cc_parent.name}.={c_tid}.{name}'[:self.conf.irc_thread_chan_name_len]
+			else: c_tid = None
+
+			cc = cs.setdefault( c.id,
+				gg.chans.get(c.id, adict(users=adict(), threads=adict())) )
 			cc.name_raw = name
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
-			if c.type in [ct.private, ct.private_group]:
+			if c_tid: cc.tid, cc_parent.threads[c_tid] = c_tid, cc
+			elif c.type in [ct.private, ct.private_group]:
 				ts, users= time.time(), c.get('recipients') or list()
 				for u in users: self.discord.cmd_user_cache(gid, u.id, u.username)
 				dict_update( cc.users,
@@ -2045,7 +2069,7 @@ class DiscordSession:
 				alias = self.conf.aliases.get(
 					('chan', self.discord.bridge.irc_name(name).lower()) )
 			if alias:
-				self.log.debug('Using alias-name for channel: {} -> {}', name, alias)
+				self.log.debug('Using alias-name for channel/thread: {} -> {}', name, alias)
 				name = alias
 
 			cc.update(
@@ -2072,6 +2096,7 @@ class DiscordSession:
 			elif cc.name != name_old: self.discord.cmd_chan_rename(cc, name_old)
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
+		# XXX: chan renames/dedup should also go through all still-exising chan threads
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()

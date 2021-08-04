@@ -122,7 +122,7 @@ Features
 - Reliable outgoing message ordering and delivery, with explicit notifications
   for detected issues of any kind.
 
-- Support for both private and public channels, channel ordering.
+- Support for both private and public channels, channel ordering, threads.
 
 - Per-server and global catch-all channels to track general activity.
 
@@ -414,6 +414,26 @@ requests/adds/removes) as notices.
 
 Accepting friend requests and adding/removing these can be done via regular
 discord webui and is not implemented in this client in any special way.
+
+Discord channel threads
+```````````````````````
+
+"Threads" is a relatively recent Discord feature, allowing transient ad-hoc
+sub-channels to be created by any user anytime, which are auto-removed ("archived")
+after a relatively-short inactivity timeout (like a day).
+
+All non-archived threads should be shown in the channel list as a regular IRC
+channels, with names like #gg.general.=vot5.lets·discuss·stuff, extending parent
+chan name with thread id tag ("=vot5" in this example) and a possibly-truncated
+thread name (see thread-chan-name-len config option).
+
+TODO: reference and link to a thread when it gets created
+
+TODO: option to dump thread msgs into parent channels with (configurable) thread-chan prefix
+
+There's no support for creating new threads from IRC or otherwise managing these,
+and joining thread channel in IRC doesn't "join" thread on discord (pins it in the UI),
+but posting anything there should do that automatically.
 
 Auto-joining channels
 `````````````````````
