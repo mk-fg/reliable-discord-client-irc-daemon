@@ -47,7 +47,7 @@ class RDIRCDConfigBase:
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
 	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
 
-	irc_thread_chan_name_len = 50 # truncate thread-channel names to this length
+	irc_thread_chan_name_len = 30 # truncate thread-name to this len in thread-chans, 0 = just id
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -2069,8 +2069,9 @@ class DiscordSession:
 				c_tid = self.conf.discord_thread_id_prefix
 				c_tid += str_hash( c.id, 4,
 					strip=(c_tid.lower() + c_tid.upper()) if len(c_tid) == 1 else '' ).lower()
-				topic = f'[thread {c_tid}] {name}'
-				name = f'{cc_parent.name}.{c_tid}.{name}'[:self.conf.irc_thread_chan_name_len]
+				topic, name = f'[thread {c_tid}] {name}', name[:self.conf.irc_thread_chan_name_len]
+				if name: name = f'.{name}'
+				name = f'{cc_parent.name}.{c_tid}{name}'
 				# XXX: test/implement querying thread backlogs
 			else: c_tid = None
 
