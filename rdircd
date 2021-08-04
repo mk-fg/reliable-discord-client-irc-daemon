@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.202' # git-version: py-str
+	version = '1.203' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -76,6 +76,18 @@ class RDIRCDConfigBase:
 	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
+
+	# Prefix for thread-id values, used in thread-chan names
+	#   and msg prefixes if propagation from these to parent channel is enabled.
+	discord_thread_id_prefix = '='
+	# discord_thread_msgs_in_parent_chan propagates messages from threads to a parent channel,
+	#   adding thread-id prefix, through which response can be redirected as well, if enabled.
+	discord_thread_msgs_in_parent_chan = True
+	# discord_thread_redirect_prefixed_responses_from_parent_chan allows to send msgs
+	#   to threads from parent channel by prepending thread-id prefix to each one of these.
+	# For example "=vot5 hi!" will send "hi!" msg to =vot5 thread
+	#   sub-channel only, or print an error if such thread-id is not recognized.
+	discord_thread_redirect_prefixed_responses_from_parent_chan = True
 
 	auth_email = ''
 	auth_password = ''
@@ -1211,10 +1223,12 @@ class Discord:
 		except DiscordHTTPError as err: return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
-	def cmd_msg_recv(self, cc, nick, line,
+	def cmd_msg_recv( self, cc, nick, line,
 			tags=None, flake=None, nonce=None, notice=None ):
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gid, cc.name, nick, line, tags or '')
-		if nonce and flake:
+		if nonce and flake and not ( self.conf.discord_thread_msgs_in_parent_chan
+				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
+			# Thread-prefixed msgs can be mirrored to two chans, hence the check/skip here
 			fut = self.msg_confirms.pop(nonce, None)
 			if fut:
 				self.log.debug('MSG: confirm nonce={} flake={}', nonce, flake)
@@ -1225,6 +1239,12 @@ class Discord:
 	async def cmd_msg_send(self, cc, line):
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 		try:
+			if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
+					and line.split(None, 1)[0].startswith(self.conf.discord_thread_id_prefix) ):
+				c_tid, line = line.split(None, 1)
+				cc = cc.threads.get(c_tid.lower())
+				if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
+
 			nonce = self.flake_build(time.time())
 			self.log.debug('MSG:  >> :: {} {} {} :: {}', cc.gid, cc.name, nonce, line)
 			try:
@@ -1247,6 +1267,7 @@ class Discord:
 				self.log.warning( 'Same-nonce sent/received'
 					' msg-id mismatch: {} != {}', flake_gw, flake_res )
 			self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
+
 		except Exception as err:
 			if isinstance(err, IRCBridgeSignal): raise
 			err_str = err_fmt(err)
@@ -1342,6 +1363,11 @@ class Discord:
 			for n in [name_old or cc.name, name_new or cc.name] )
 		self.bridge.cmd_msg_discord( cc, None,
 			f'-----== Discord channel renamed: #{name_old} -> #{name_new} ==-----' )
+
+	def cmd_chan_thread(self, cc):
+		# Idea behind tag prefix is to allow sending msgs from parent channel to a prefixed thread
+		self.bridge.cmd_msg_discord( cc, None,
+			f'[{cc.tid}] --- Thread channel created: #{self.bridge.irc_name(cc.name).lower()}' )
 
 	def cmd_guild_ban(self, act, gid, guild_name, name):
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
@@ -2021,7 +2047,7 @@ class DiscordSession:
 		gg = self.st.guilds.get(gid)
 		if not gg: return
 		cs, ct = dict(), self.c_chan_type
-		chan_name_changes = list() # for disambiguation checks
+		chan_name_changes, new_threads = list(), list() # for disambiguation checks/notifications
 
 		for c in force_list(chans):
 			name, topic = c.get('name'), c.get('topic')
@@ -2033,7 +2059,6 @@ class DiscordSession:
 					c.type, gg.name, gg.id, _gg_prefix(), name, topic, c.id )
 				continue
 
-			# XXX: no cleanup for archived threads here - not sure if there's an event for that
 			if c.type in [ct.thread, ct.thread_private]:
 				cc_parent = gg.chans.get(c.parent_id) or cs.get(c.parent_id)
 				if not cc_parent:
@@ -2041,15 +2066,21 @@ class DiscordSession:
 							' unknown parent-chan={}: guild={!r} (id={} prefix={}) name={!r} id={}',
 						c.parent_id, gg.name, gg.id, _gg_prefix(), name, c.id )
 					continue
-				c_tid, topic = str_hash(c.id, 4, strip='='), f'[thread] {name}'
-				name = f'{cc_parent.name}.={c_tid}.{name}'[:self.conf.irc_thread_chan_name_len]
+				c_tid = self.conf.discord_thread_id_prefix
+				c_tid += str_hash( c.id, 4,
+					strip=(c_tid.lower() + c_tid.upper()) if len(c_tid) == 1 else '' ).lower()
+				topic = f'[thread {c_tid}] {name}'
+				name = f'{cc_parent.name}.{c_tid}.{name}'[:self.conf.irc_thread_chan_name_len]
+				# XXX: test/implement querying thread backlogs
 			else: c_tid = None
 
 			cc = cs.setdefault( c.id,
 				gg.chans.get(c.id, adict(users=adict(), threads=adict())) )
 			cc.name_raw = name
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
-			if c_tid: cc.tid, cc_parent.threads[c_tid] = c_tid, cc
+			if c_tid:
+				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
+				if not name_old: new_threads.append(cc)
 			elif c.type in [ct.private, ct.private_group]:
 				ts, users= time.time(), c.get('recipients') or list()
 				for u in users: self.discord.cmd_user_cache(gid, u.id, u.username)
@@ -2097,6 +2128,9 @@ class DiscordSession:
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
 		# XXX: chan renames/dedup should also go through all still-exising chan threads
+
+		# Notification for new threads, in case msgs from these to parent channel are disabled
+		for cc in new_threads: self.discord.cmd_chan_thread(cc)
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
@@ -2149,13 +2183,15 @@ class DiscordSession:
 		if name: name = name.username
 		self.discord.cmd_relationship(m.get('id', '?'), t, act, name)
 
-	def op_msg(self, m, act):
-		gid = m.get('guild_id', 1)
-		cc, gg = None, self.st.guilds.get(gid)
-		if gg: cc = gg.chans.get(m.channel_id)
+	def op_msg(self, m, act, cc=None, prefix=''):
+		gg = self.st.guilds.get(m.get('guild_id', 1))
 		if not cc:
-			return self.log.warning( 'Dropped msg event with unknown guild/channel'
-				' id: msg_id={} guild_id={} channel_id={}', m.id, gid, m.channel_id )
+			if gg: cc = gg.chans.get(m.channel_id)
+			if not cc:
+				return self.log.warning( 'Dropped msg event with unknown guild/channel'
+					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
+		if cc.get('tid') and self.conf.discord_thread_msgs_in_parent_chan:
+			self.op_msg(m, act, cc=cc.parent, prefix=f'{cc.tid} ')
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( cc,
@@ -2181,8 +2217,9 @@ class DiscordSession:
 				if ref_user and ref:
 					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
 					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
-		self.discord.cmd_msg_recv( cc,
-			author.username, line.strip(), tags, flake=flake, nonce=m.get('nonce') )
+		if prefix: tags['_prefix'] = tags.get('_prefix', '') + prefix
+		self.discord.cmd_msg_recv( cc, author.username,
+			line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
 		# All message types are processed for their "contents" attr here,

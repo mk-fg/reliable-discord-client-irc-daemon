@@ -427,13 +427,14 @@ channels, with names like #gg.general.=vot5.lets·discuss·stuff, extending pare
 chan name with thread id tag ("=vot5" in this example) and a possibly-truncated
 thread name (see thread-chan-name-len config option).
 
-TODO: reference and link to a thread when it gets created
+There are several options to see and interact with threads from the parent channel
+(under [discord] section, see --conf-dump-defaults output), but even with all
+these disabled, a simple notice get sent to the channel when threads are started.
 
-TODO: option to dump thread msgs into parent channels with (configurable) thread-chan prefix
-
-There's no support for creating new threads from IRC or otherwise managing these,
-and joining thread channel in IRC doesn't "join" thread on discord (pins it in the UI),
-but posting anything there should do that automatically.
+There's no support for creating new threads from IRC, unarchiving old ones or
+otherwise managing these, and joining thread channel in IRC doesn't "join thread"
+in Discord UI (pins it under channel name), but posting anything there should do
+that automatically.
 
 Auto-joining channels
 `````````````````````
