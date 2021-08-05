@@ -169,8 +169,9 @@ Features
 Limitations
 -----------
 
-- Only user mentions are translated into discord tags (if enabled and with some
-  quirks, see below) - not channels, roles or emojis.
+- Only user mentions sent from IRC are translated into discord tags
+  (if enabled and with some quirks, see below) - not channels, roles, stickers,
+  components or emojis.
 
 - No support for sending attachments or embeds of any kind - use WebUI for that, not IRC.
 
@@ -178,7 +179,7 @@ Limitations
 
 - No discord-specific actions beyond all kinds of reading and sending messages
   to existing channels are supported - i.e. no creating accounts or channels on discord,
-  managing roles, bans, timeouts, etc - use WebUI, Harmony_ or proper discord bots.
+  managing roles, invites, bans, timeouts, etc - use WebUI, Harmony_ or proper discord bots.
 
 - Does not track user presence (online, offline, afk, playing game, etc) at all.
 
@@ -195,7 +196,13 @@ Limitations
 - Discord tracks "read_state" server-side, which is not used here in any way -
   triggering history replay is only done manually (/t commands in chans).
 
-- Does not support discord multifactor authentication mode.
+- Does not support discord multifactor authentication mode, but manual-token
+  auth can probably work around that - see note on captchas below.
+
+- `Slash commands`_ (for bots) are not supported in any special way,
+  but you can probably still send them, if IRC client will pass these through.
+
+  .. _Slash commands: https://discord.com/developers/docs/interactions/slash-commands
 
 - Not the most user-friendly thing, though probably same as IRC itself.
 

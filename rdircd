@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.207' # git-version: py-str
+	version = '1.208' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -29,6 +29,7 @@ class RDIRCDConfigBase:
 	irc_prefix_attachment = '[att] '
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
+	irc_prefix_uis = '[UIs] '
 	irc_names_timeout = '1d' # time since last activity
 	irc_motd_file_path = '' # file path to read for motd command
 
@@ -2245,6 +2246,7 @@ class DiscordSession:
 			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
 			mt_nx = True
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
+
 		if mt == mtc.bot_embeds:
 			for n, em in enumerate(m.embeds):
 				pre = self.conf.irc_prefix_embed.format(tuple_hash((m.id, n), 3))
@@ -2255,15 +2257,34 @@ class DiscordSession:
 				if em.get('description'):
 					info = (dl.strip() for dl in em.description.splitlines())
 					for info in filter(None, info): line += f'\n{pre}{info}'
+
 		for att in m.get('attachments') or list():
-			url = att.get('url')
-			if not url:
+			if not (url := att.get('url')):
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		for stk in m.get('stickers') or list():
 			name, desc = stk.get('name'), stk.get('description')
 			line += f'\n{self.conf.irc_prefix_sticker}{name} [{desc}]'
+		if uis := m.get('components'):
+			def _tags(uis, types=dict(enumerate(['row', 'btn', 'menu'], 1))):
+				line = list()
+				for ui in uis:
+					tag = types.get(ui.type, f'ui{ui.type}')
+					if ui.get('label'): tag += f' {repr(ui.label)}'
+					if ui.get('placeholder'): tag += f' {repr(ui.placeholder)}'
+					if ui.get('emoji'): tag += f' :{ui.emoji.name}:'
+					if ui.get('url'): tag += f' url={ui.url}'
+					if ui.get('options'):
+						for opt in ui.options:
+							tag += ' ({})'.format(
+								opt.get('label', '').replace(' ', '_')
+								or f":{opt.get('emoji', dict()).get('name', 'x')}:" )
+					line.append(
+						f'<{tag}/>' if not ui.get('components') else
+						f'<{tag}>' + _tags(ui.components) + f'</{tag}>' )
+				return ' '.join(line)
+			line += '\n{self.conf.irc_prefix_uis}' + _tags(m.components)
 
 		if not mt_nx and not line: # represent some non-text/embed events
 			if mt == mtc.recipient_add: line = f'[+recipient]'
