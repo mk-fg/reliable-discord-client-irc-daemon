@@ -724,13 +724,6 @@ Last updated: 2021-07-27
 - Discord allows channels (and probably users) to have exactly same name, which is not
   a big deal for users (due to one-way translation), but have to be disambiguated for channels.
 
-- Discord status page with something like 99.98% API/gateway uptimes is
-  completely useless, as it only seem to track frontend accessibility via tcp connections,
-  and it's almost always fails are backends, timing-out logins and returning error opcodes.
-
-  At least in my experience so far, discord servers seem to fail like that for a
-  few minutes to an hour or two pretty much every other week.
-
 - Gateway websocket `can use zlib compression`_, which makes inspecting protocol in
   browser devtools a bit inconvenient. `gw-ws-har-decode.py <gw-ws-har-decode.py>`_
   helper script in this repo can be used to decompress/decode websocket messages saved
