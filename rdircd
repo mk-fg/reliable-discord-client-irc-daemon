@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.206' # git-version: py-str
+	version = '1.207' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2227,27 +2227,25 @@ class DiscordSession:
 			line.strip(), tags, flake=flake, nonce=m.get('nonce') )
 
 	def op_msg_parse(self, m, gg):
-		# All message types are processed for their "contents" attr here,
-		#  some known-special and useful ones get transformed into tag-like notifications,
-		#  and the rest of no-content ones are simply ignored
 		# Must produce non-empty message for any relevant msg type
+		# Most message types are protocol notifications that have their "content" discarded
 		# Also used for parsing history query responses, not just events
 		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
-		line = line.replace('\u200b', '') # unicode zero-width-space junk
+		line, mtc = line.replace('\u200b', ''), self.c_msg_type # unicode zero-width-space junk
 		try:
 			if not mt and m.get('author', dict()).get('bot'):
-				if m.get('embeds'): mt = self.c_msg_type.bot_embeds
+				if m.get('embeds'): mt = mtc.bot_embeds
 				# Otherwise empty message_update bumps and/or something webhook-related?
 				# Msgs from bots updating their embeds can be filtered-out via "flags = loading"
 			else:
-				mt = self.c_msg_type(int(mt))
-				if mt != self.c_msg_type.default: line = ''
+				mt = mtc(int(mt))
+				if mt not in [mtc.default, mtc.reply]: line = ''
 		except ValueError: # new unknown msg type - check how to handle
 			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
 			mt_nx = True
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
-		if mt == self.c_msg_type.bot_embeds:
+		if mt == mtc.bot_embeds:
 			for n, em in enumerate(m.embeds):
 				pre = self.conf.irc_prefix_embed.format(tuple_hash((m.id, n), 3))
 				if em.get('author'):
@@ -2268,9 +2266,9 @@ class DiscordSession:
 			line += f'\n{self.conf.irc_prefix_sticker}{name} [{desc}]'
 
 		if not mt_nx and not line: # represent some non-text/embed events
-			if mt == self.c_msg_type.recipient_add: line = f'[+recipient]'
-			elif mt == self.c_msg_type.recipient_remove: line = f'[-recipient]'
-			elif mt == self.c_msg_type.channel_name_change: line = f'[channel renamed]'
+			if mt == mtc.recipient_add: line = f'[+recipient]'
+			elif mt == mtc.recipient_remove: line = f'[-recipient]'
+			elif mt == mtc.channel_name_change: line = f'[channel renamed]'
 		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, m, chans, roles):
