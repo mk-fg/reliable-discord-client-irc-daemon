@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.204' # git-version: py-str
+	version = '1.205' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2041,7 +2041,7 @@ class DiscordSession:
 		for (gid, sk), chans in sorted(gs_chans.items()):
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 
-	def op_ev_chans(self, gid, chans, sync=False):
+	def op_ev_chans(self, gid, chans, sync=None):
 		def _gg_prefix():
 			try:
 				return ( self.discord.bridge.cache.gid_prefix.get(gg.id)
@@ -2133,8 +2133,8 @@ class DiscordSession:
 		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
 		# XXX: chan renames/dedup should also go through all still-exising chan threads
 
-		# Notification for new threads, in case msgs from these to parent channel are disabled
-		for cc in new_threads: self.discord.cmd_chan_thread(cc)
+		if sync is None: # needed if msgs from these to parent chan are disabled
+			for cc in new_threads: self.discord.cmd_chan_thread(cc)
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
