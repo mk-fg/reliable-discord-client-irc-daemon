@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.215' # git-version: py-str
+	version = '1.216' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2314,8 +2314,8 @@ class DiscordSession:
 			elif mt == mtc.recipient_remove: line = f'[-recipient]'
 			elif mt == mtc.channel_name_change: line = f'[channel renamed]'
 			elif mt == mtc.default:
-				self.log.warning( 'Discarded basic text message'
-					' without contents (processing bug?): {}', mt, self._repr(m) )
+				self.log.warning( 'Discarded basic text-msg'
+					' without contents (processing bug?): {}', self._repr(m) )
 		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, m, chans, roles):
