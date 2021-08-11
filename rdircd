@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.210' # git-version: py-str
+	version = '1.211' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -84,6 +84,9 @@ class RDIRCDConfigBase:
 	# discord_thread_msgs_in_parent_chan propagates messages from threads to a parent channel,
 	#   adding thread-id prefix, through which response can be redirected as well, if enabled.
 	discord_thread_msgs_in_parent_chan = True
+	# Enable to see mirrored msgs
+	#   in #rdircd.monitor channel(s) too - e.g. to have it all there as-is.
+	discord_thread_msgs_in_parent_chan_monitor = False
 	# discord_thread_msgs_in_parent_chan_full_prefix - enable to use full
 	#  chan-name prefix instead of shorter thread-id, for IRC clients with easy click-to-join.
 	discord_thread_msgs_in_parent_chan_full_prefix = False
@@ -1228,7 +1231,7 @@ class Discord:
 		return data_repr(info)
 
 	def cmd_msg_recv( self, cc, nick, line,
-			tags=None, flake=None, nonce=None, notice=None ):
+			tags=None, flake=None, nonce=None, notice=None, skip_monitor=False ):
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gid, cc.name, nick, line, tags or '')
 		if nonce and flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
@@ -1238,7 +1241,7 @@ class Discord:
 				self.log.debug('MSG: confirm nonce={} flake={}', nonce, flake)
 				return fut.set_result(flake)
 		self.bridge.cmd_msg_discord( cc, nick, line,
-			tags, notice=notice, ts=self.flake_parse(flake) )
+			tags, notice=notice, ts=self.flake_parse(flake), skip_monitor=skip_monitor )
 
 	async def cmd_msg_send(self, cc, line):
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
@@ -2190,7 +2193,7 @@ class DiscordSession:
 		if name: name = name.username
 		self.discord.cmd_relationship(m.get('id', '?'), t, act, name)
 
-	def op_msg(self, m, act, cc=None, prefix=''):
+	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
 		if not cc:
 			if gg: cc = gg.chans.get(m.channel_id)
@@ -2198,9 +2201,9 @@ class DiscordSession:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
 		if cc.get('tid') and self.conf.discord_thread_msgs_in_parent_chan:
-			tid_prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
-			tid_prefix = cc.tid if tid_prefix else ('#' + self.discord.bridge.irc_name(cc.name))
-			self.op_msg(m, act, cc=cc.parent, prefix=f'{prefix}{tid_prefix} :: ')
+			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
+			prefix = cc.tid if prefix else ('#' + self.discord.bridge.irc_name(cc.name))
+			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( cc,
@@ -2226,9 +2229,12 @@ class DiscordSession:
 				if ref_user and ref:
 					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
 					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
-		if prefix: tags['_prefix'] = tags.get('_prefix', '') + prefix
-		self.discord.cmd_msg_recv( cc, author.username,
-			line.strip(), tags, flake=flake, nonce=m.get('nonce') )
+		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
+		skip_mirrored_msg_in_monitor = (
+			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
+		self.discord.cmd_msg_recv(
+			cc, author.username, line.strip(), tags, flake=flake,
+			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_parse(self, m, gg):
 		# Must produce non-empty message for any relevant msg type
@@ -2918,7 +2924,7 @@ class RDIRCD:
 			if gid: conn.cmd_msg_synth(nick, gid, s, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick, line,
-			tags=None, ts=None, conn=None, notice=None ):
+			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
@@ -2942,7 +2948,7 @@ class RDIRCD:
 		else:
 			nick = self.nick_sys
 			if notice is None: notice = True
-		if not direct:
+		if not (direct or skip_monitor):
 			self.cmd_msg_monitor( line, conn=conn, nick=nick,
 				pre=f'#{name} :: {prefix}', notice=notice, gid=cc.gid )
 		if not name:
