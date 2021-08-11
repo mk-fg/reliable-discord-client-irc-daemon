@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.212' # git-version: py-str
+	version = '1.213' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1201,6 +1201,9 @@ class Discord:
 			return self.session.st
 		except KeyError: return adict(guilds=dict())
 
+	def get_irc_chan_name(self, cc):
+		return f'#{self.bridge.cache.did_chan.get(cc.did)}'
+
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
 		list(self.bridge.cmd_chan_map()) # enough to trigger re-caching
@@ -1366,15 +1369,15 @@ class Discord:
 				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
 
 	def cmd_chan_rename(self, cc, name_old=None):
-		name_new = self.bridge.cache.did_chan.get(cc.did)
+		name_new = self.get_irc_chan_name(cc)
 		name_old = self.bridge.irc_name(name_old).lower()
 		self.bridge.cmd_msg_discord( cc, None,
-			f'-----== Discord channel renamed: {name_old} -> #{name_new} ==-----' )
+			f'-----== Discord channel renamed: {name_old} -> {name_new} ==-----' )
 
 	def cmd_chan_thread(self, cc):
 		# Idea behind tag prefix is to allow sending msgs from parent channel to a prefixed thread
-		name = self.bridge.cache.did_chan.get(cc.did)
-		self.bridge.cmd_msg_discord(cc, None, f'[{cc.tid}] --- Thread channel created: #{name}')
+		self.bridge.cmd_msg_discord( cc, None,
+			f'[{cc.tid}] --- Thread channel created: {self.get_irc_chan_name(cc)}' )
 
 	def cmd_guild_ban(self, act, gid, guild_name, name):
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
@@ -2198,7 +2201,7 @@ class DiscordSession:
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
 		if cc.get('tid') and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
-			prefix = cc.tid if prefix else ('#' + self.discord.bridge.irc_name(cc.name))
+			prefix = cc.tid if prefix else self.discord.get_irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
