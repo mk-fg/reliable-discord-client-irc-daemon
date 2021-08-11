@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.209' # git-version: py-str
+	version = '1.210' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1200,7 +1200,7 @@ class Discord:
 
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
-		list(self.bridge.cmd_chan_map())
+		list(self.bridge.cmd_chan_map()) # enough to trigger re-caching
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		if not self.session: return list()
@@ -1362,16 +1362,16 @@ class Discord:
 				if uid_key[0] not in '\0\t' or uid_key not in users: continue
 				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
 
-	def cmd_chan_rename(self, cc, name_old=None, name_new=None):
-		name_old, name_new = ( self.bridge.irc_name(n).lower()
-			for n in [name_old or cc.name, name_new or cc.name] )
+	def cmd_chan_rename(self, cc, name_old=None):
+		name_new = self.bridge.cache.did_chan.get(cc.did)
+		name_old = self.bridge.irc_name(name_old).lower()
 		self.bridge.cmd_msg_discord( cc, None,
-			f'-----== Discord channel renamed: #{name_old} -> #{name_new} ==-----' )
+			f'-----== Discord channel renamed: {name_old} -> #{name_new} ==-----' )
 
 	def cmd_chan_thread(self, cc):
 		# Idea behind tag prefix is to allow sending msgs from parent channel to a prefixed thread
-		self.bridge.cmd_msg_discord( cc, None,
-			f'[{cc.tid}] --- Thread channel created: #{self.bridge.irc_name(cc.name).lower()}' )
+		name = self.bridge.cache.did_chan.get(cc.did)
+		self.bridge.cmd_msg_discord(cc, None, f'[{cc.tid}] --- Thread channel created: #{name}')
 
 	def cmd_guild_ban(self, act, gid, guild_name, name):
 		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
@@ -2125,19 +2125,22 @@ class DiscordSession:
 		for cc, name, name_old in chan_name_changes:
 			for cca, cca_name_old in self.op_ev_chans_update_disambiguation(cs, name):
 				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
+		new_renames = list()
 		for cc, name, name_old in chan_name_changes:
 			if not name_old:
 				self.log.debug( 'New channel [id={} gid={}]:'
 					' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
-			elif cc.name != name_old: self.discord.cmd_chan_rename(cc, name_old)
+			elif cc.name != name_old: new_renames.append((cc, name_old))
 			cs_affected.pop(cc.id, None)
-		for cc, name_old in cs_affected.values(): self.discord.cmd_chan_rename(cc, name_old)
-
-		if sync is None: # needed if msgs from these to parent chan are disabled
-			for cc in new_threads: self.discord.cmd_chan_thread(cc)
+		for cc, name_old in cs_affected.values(): new_renames.append((cc, name_old))
 
 		dict_update(gg.chans, cs, sync=sync)
 		self.discord.cmd_chan_map_update()
+
+		if sync is None: # otherwise they'll be mentioned on every (re-)connect
+			# Should be needed if msgs from these to parent chan are disabled
+			for cc in new_threads: self.discord.cmd_chan_thread(cc)
+		for cc, name_old in new_renames: self.discord.cmd_chan_rename(cc, name_old)
 
 	def op_ev_chans_update_disambiguation(self, cs, name):
 		'Renames same-name channels to "chan.1" "chan.2" etc, yielding (cc, name_old) tuples'
