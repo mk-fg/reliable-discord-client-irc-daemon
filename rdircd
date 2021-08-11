@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.214' # git-version: py-str
+	version = '1.215' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1847,6 +1847,16 @@ class DiscordSession:
 		try: return await fut
 		finally: del self.ws_nonces[nonce]
 
+	def ws_req_thread_list_sync(self):
+		for gid, gg in self.st.guilds.items():
+			if gid == 1: continue # "me" pseudo-guild
+			chan_req = list( (cc.id, [[0, 99]])
+				for cc in gg.chans.values() if cc.t == self.c_chan_type.text )
+			if not chan_req: continue
+			# It doesn't seem to matter what channels= are sent in request_sync_chan -
+			#   all threads are returned regardless, along with GUILD_MEMBER_LIST_UPDATE and such
+			self.ws_send( self.c.request_sync_chan,
+				dict(guild_id=gid, threads=True, channels=dict([chan_req[0]])) )
 
 	### Gateway Websocket event handlers
 
@@ -1927,6 +1937,7 @@ class DiscordSession:
 				user_n=md.user.discriminator )
 			self.op_ev_guilds(md.get('guilds'), sync=True)
 			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
+			self.ws_req_thread_list_sync()
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
@@ -1969,6 +1980,7 @@ class DiscordSession:
 			elif act in ['add', 'update']: return self.op_ev_member(m.d)
 			elif act == 'remove': return self.op_ev_member(m.d, delete=True)
 		elif mt == 'guild_members_chunk': return self.op_ev_member_chunk(m.d)
+		elif mt == 'thread_list_sync': return self.op_ev_thread_list(m.d)
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o in ['channel', 'thread']:
@@ -1995,6 +2007,9 @@ class DiscordSession:
 
 		# Known stuff must be explicitly handled above to not generate "Unhandled event"
 		self.log.warning('Unhandled event: {}', self._repr(m))
+
+	async def op_ev_thread_list(self, d):
+		self.op_ev_chans(d.guild_id, d.threads)
 
 	def op_ev_member_chunk(self, d):
 		user_map = dict()
