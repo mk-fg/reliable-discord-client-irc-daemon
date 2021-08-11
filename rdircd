@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.216' # git-version: py-str
+	version = '1.218' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2008,8 +2008,8 @@ class DiscordSession:
 		# Known stuff must be explicitly handled above to not generate "Unhandled event"
 		self.log.warning('Unhandled event: {}', self._repr(m))
 
-	async def op_ev_thread_list(self, d):
-		self.op_ev_chans(d.guild_id, d.threads)
+	def op_ev_thread_list(self, d):
+		self.op_ev_chans(d.guild_id, d.threads, sync=False)
 
 	def op_ev_member_chunk(self, d):
 		user_map = dict()
