@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.211' # git-version: py-str
+	version = '1.212' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -438,7 +438,7 @@ class StacklessContext:
 					await aio_await_wrap(coro)
 			except asyncio.CancelledError: pass
 			except Exception as err:
-				self.log.exception('Background task failed: {} - {}', coro, err_fmt(err))
+				self.log.exception('Background task failed: {} - {}', coro, str_repr(err_fmt(err), 200))
 			finally:
 				assert task_id is not None, task_id
 				if self.tasks: self.tasks.pop(task_id, None)
@@ -1389,9 +1389,6 @@ class DiscordSession:
 
 	# See https://discord.com/developers/docs/change-log
 	api_ver = 9
-	# See https://discord.com/developers/docs/topics/gateway#gateway-intents
-	api_intents_base = (1 << 0) | (1 << 2) | (1 << 9) | (1 << 12) | (1 << 13)
-	api_intents_reactions = (1 << 10) # not used if these are disabled in irc
 
 	class c(enum.IntEnum):
 		dispatch = 0
@@ -1613,7 +1610,7 @@ class DiscordSession:
 
 	async def req( self, url, m='get',
 			route=None, auth=True, raw=False, **kws ):
-		if not re.search(r'^https?:', url): url = urllib.parse.urljoin(self.api_url, url)
+		if not re.search(r'^https?:', url): url = urllib.parse.urljoin(self.api_url, url.lstrip('/'))
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
 			'User-Agent', self.conf.discord_api_user_agent )
@@ -1869,11 +1866,10 @@ class DiscordSession:
 			self.state('hello.auth.identify')
 			self.ws_add_handler( self.c.dispatch,
 				t='ready', func=self.op_ready, replace=True )
-			api_intents = self.api_intents_base
-			if not self.conf.irc_disable_reactions: api_intents |= self.api_intents_reactions
+			# Note: sending API intents seem to strip "contents" from other people's messages!
 			self.ws_send(self.c.identify, dict(
 				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
-				intents=api_intents, token=token, compress=False, large_threshold=250 ))
+				token=token, compress=False, large_threshold=250 ))
 		else:
 			self.state('hello.auth.resume')
 			self.ws_add_handler( self.c.dispatch,
@@ -2040,7 +2036,7 @@ class DiscordSession:
 				name=g.name, ts_joined=ts_joined,
 				roles=dict((r.id, r) for r in g.get('roles', list())) )
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
-			if 'threads' in g: gs_chans[g.id, 't'] = g.threads
+			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
 		dict_update(self.st.guilds, gs_new, sync=sync)
 		for (gid, sk), chans in sorted(gs_chans.items()):
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
