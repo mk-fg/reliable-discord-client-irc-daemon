@@ -223,7 +223,7 @@ Usage
 Requirements
 ````````````
 
-* `Python 3.7+ <http://python.org/>`_
+* `Python <http://python.org/>`_ (relatively modern one)
 * `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
 
 Installation

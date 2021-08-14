@@ -2282,14 +2282,16 @@ class DiscordSession:
 					for info in filter(None, info): line += f'\n{pre}{info}'
 
 		for att in m.get('attachments') or list():
-			if not (url := att.get('url')):
+			url = att.get('url')
+			if not url:
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		for stk in m.get('stickers') or list():
 			name, desc = stk.get('name'), stk.get('description')
 			line += f'\n{self.conf.irc_prefix_sticker}{name} [{desc}]'
-		if uis := m.get('components'):
+		uis = m.get('components')
+		if uis:
 			def _tags(uis, types=dict(enumerate(['row', 'btn', 'menu'], 1))):
 				line = list()
 				for ui in uis:
