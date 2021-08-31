@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.219' # git-version: py-str
+	version = '1.220' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2619,12 +2619,18 @@ class RDIRCD:
 		if name in self.chans_sys:
 			return self.cmd_chan_sys(name, conn, chan, line)
 		if name in self.chans_mon: return
-		if not line.strip(): return
+		line = self.irc_msg_translate(line)
+		if not line: return
 		if not self.irc_msg_queue:
 			conn.cmd_msg_synth( self.nick_sys, chan,
 				f'ERR {{irc-msg-queue-failed}}: {line}', notice=True, direct=True )
 		else: self.irc_msg_queue.put_nowait(
 			adict(conn=conn, chan=chan, name=name, line=line) )
+
+	def irc_msg_translate(self, line):
+		# "/me msg" -> "\1ACTION msg\1" - https://tools.ietf.org/id/draft-oakley-irc-ctcp-01.html
+		line = re.sub(r'^\x01ACTION ?(.*)\x01$', r'_\1_', line)
+		return line.strip()
 
 	async def irc_msg_queue_proc(self):
 		try:
