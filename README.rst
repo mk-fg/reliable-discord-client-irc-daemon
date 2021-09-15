@@ -52,68 +52,11 @@ effectively unusable for a random non-admin user.
 This app does not present itself as a "bot" and does not use bot-specific endpoints,
 so using it can result in account termination if discovered.
 
-I did ask discord staff for clarification on the matter,
-and got this response around Nov 2020:
-
-    Is third-party discord client that uses same API as webapp, that does not
-    have any kind of meaningful automation beyond what official discord app has,
-    will be considered a "self-bot" or "user-bot"?
-
-    I.e. are absolutely all third-party clients not using Bot API in violation
-    of discord ToS, period?
-
-    Or does that "self-bot" or "user-bot" language applies only to a specific
-    sub-class of clients that are intended to automate client/user behavior,
-    beyond just allowing a person to connect and chat on discord normally?
-
-  Discord does not allow any form of third party client, and using a client like
-  this can result in your account being disabled.  Our API documentation
-  explicitly states that a bot account is required to use our API: "Automating
-  normal user accounts (generally called "self-bots") outside of the OAuth2/bot
-  API is forbidden, and can result in an account termination if found."
-
-Another thing you might want to keep in mind, is that apparently it's also
-considered to be responsibility of discord admins to enforce its Terms of
-Service, or - presumably - be at risk of whole guild/community being shut down.
-
-Got clarification on this issue in the same email (Nov 2020):
-
-    Are discord server admins under obligation to not just follow discord Terms
-    of Service themselves (obviously), but also enforce them within the server
-    to the best of their knowledge?
-
-    I.e. if discord server admin knows that some user is in violation of the
-    ToS, are they considered to be under obligation to either report them to
-    discord staff or take action to remove (ban) them from the server?
-
-    Should failing to do so (i.e. not taking action on known ToS violation)
-    result in discord server (and maybe admins' account) termination or some
-    similar punitive action, according to current discord ToS or internal policies?
-
-  Server owners and admin are responsible for moderating their servers in
-  accordance with our Terms of Service and Community Guidelines.
-  If content that violates our Terms or Guidelines is posted in your server,
-  it is your responsibility to moderate it appropriately.
-
-So unless something changes or I misread discord staff position, using this
-client can get your discord account terminated, and any discord admins seem to
-be under obligation to ban/report its usage, if they are aware of it.
-
-Also, unrelated to this client, one person received following warning (2020-01-30)
-after being reported (by another user) for mentioning that they're using BetterDiscord_
-(which is/was mostly just a custom css theme at the time, afaik):
-
-.. image:: discord-tos-violation-warning.jpg
-
-Cordless_ client developer's acc apparently got blocked for ToS violation when
-initiating private chats.
-
-They didn't block my account yet though, so guess these rules aren't well-enforced.
+See also `More info on third-party client blocking`_ section below.
 
 You have been warned :)
 
 .. _Bot vs User Accounts: https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
-.. _BetterDiscord: https://betterdiscord.net/
 
 
 Features
@@ -665,6 +608,84 @@ Not an exhaustive list by any means.
 .. _Discurses: https://github.com/topisani/Discurses
 .. _Discline: https://github.com/MitchWeaver/Discline
 .. _Harmony: https://github.com/nickolas360/harmony
+
+
+More info on third-party client blocking
+----------------------------------------
+
+I did ask discord staff for clarification on the matter,
+and got this response around Nov 2020:
+
+    Is third-party discord client that uses same API as webapp, that does not
+    have any kind of meaningful automation beyond what official discord app has,
+    will be considered a "self-bot" or "user-bot"?
+
+    I.e. are absolutely all third-party clients not using Bot API in violation
+    of discord ToS, period?
+
+    Or does that "self-bot" or "user-bot" language applies only to a specific
+    sub-class of clients that are intended to automate client/user behavior,
+    beyond just allowing a person to connect and chat on discord normally?
+
+  Discord does not allow any form of third party client, and using a client like
+  this can result in your account being disabled.  Our API documentation
+  explicitly states that a bot account is required to use our API: "Automating
+  normal user accounts (generally called "self-bots") outside of the OAuth2/bot
+  API is forbidden, and can result in an account termination if found."
+
+Another thing you might want to keep in mind, is that apparently it's also
+considered to be responsibility of discord admins to enforce its Terms of
+Service, or - presumably - be at risk of whole guild/community being shut down.
+
+Got clarification on this issue in the same email (Nov 2020):
+
+    Are discord server admins under obligation to not just follow discord Terms
+    of Service themselves (obviously), but also enforce them within the server
+    to the best of their knowledge?
+
+    I.e. if discord server admin knows that some user is in violation of the
+    ToS, are they considered to be under obligation to either report them to
+    discord staff or take action to remove (ban) them from the server?
+
+    Should failing to do so (i.e. not taking action on known ToS violation)
+    result in discord server (and maybe admins' account) termination or some
+    similar punitive action, according to current discord ToS or internal policies?
+
+  Server owners and admin are responsible for moderating their servers in
+  accordance with our Terms of Service and Community Guidelines.
+  If content that violates our Terms or Guidelines is posted in your server,
+  it is your responsibility to moderate it appropriately.
+
+So unless something changes or I misread discord staff position, using this
+client can get your discord account terminated, and any discord admins seem to
+be under obligation to ban/report its usage, if they are aware of it.
+
+Also, unrelated to this client, one person received following warning (2020-01-30)
+after being reported (by another user) for mentioning that they're using BetterDiscord_
+(which is/was mostly just a custom css theme at the time, afaik):
+
+.. image:: discord-tos-violation-warning.jpg
+
+In September 2021 there was a bunch of issues with people using all third-party
+clients being asked to reset their passwords daily due to "suspicious activity",
+raised here in `issue-18`_ (check out other links there too), which seem to have
+gone away within a week.
+
+As another datapoint - Cordless_ client developer's acc apparently got blocked
+for ToS violation when initiating private chats. This client doesn't have such
+functionality, but maybe one should be more careful with private chats anyway,
+as that seem to be a major spam vector, so is more likely to be heavily-monitored,
+I think.
+
+There are also `some HN comments clarifying their approach in a thread here`_,
+though none of the above should probably be taken as definitive, as third-party
+and even tech support info can be wrong/misleading or outdated, and such
+treatment can obviously change anytime and in any direction, without any
+explicit indication.
+
+.. _BetterDiscord: https://betterdiscord.net/
+.. _issue-18: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/18
+.. _some HN comments clarifying their approach in a thread here: https://news.ycombinator.com/item?id=25214777
 
 
 API and Implementation Notes
