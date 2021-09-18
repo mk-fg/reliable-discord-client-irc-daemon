@@ -671,6 +671,10 @@ clients being asked to reset their passwords daily due to "suspicious activity",
 raised here in `issue-18`_ (check out other links there too), which seem to have
 gone away within a week.
 
+At least one person in that issue thread also reported being asked for phone
+account verification for roughly same reason about a week after that, so maybe
+"suspicious activity" triggering for 3p clients haven't really gone away.
+
 As another datapoint - Cordless_ client developer's acc apparently got blocked
 for ToS violation when initiating private chats. This client doesn't have such
 functionality, but maybe one should be more careful with private chats anyway,
