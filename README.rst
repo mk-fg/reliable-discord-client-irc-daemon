@@ -597,6 +597,7 @@ Not an exhaustive list by any means.
 .. _PinePhone: https://www.pine64.org/pinephone/
 .. _Ripcord: https://cancel.fm/ripcord/
 .. _BandagedBD: https://github.com/rauenzi/BetterDiscordApp
+.. _BetterDiscord: https://betterdiscord.net/
 .. _Powercord: https://powercord.dev/
 .. _Glasscord: https://github.com/AryToNeX/Glasscord
 .. _EnhancedDiscord: https://enhanceddiscord.com/
@@ -612,6 +613,12 @@ Not an exhaustive list by any means.
 
 More info on third-party client blocking
 ----------------------------------------
+
+As mentioned in the "WARNING" section above, `Bot vs User Accounts`_ section in
+API docs seem to prohibit people using third-party clients,
+same as `Discord Community Guidelines`_.
+
+.. _Discord Community Guidelines: https://discord.com/guidelines
 
 I did ask discord staff for clarification on the matter,
 and got this response around Nov 2020:
@@ -656,40 +663,49 @@ Got clarification on this issue in the same email (Nov 2020):
   If content that violates our Terms or Guidelines is posted in your server,
   it is your responsibility to moderate it appropriately.
 
-So unless something changes or I misread discord staff position, using this
-client can get your discord account terminated, and any discord admins seem to
-be under obligation to ban/report its usage, if they are aware of it.
+So unless something changes or I misread discord staff position,
+using this client can get your discord account terminated,
+and discord admins seem to have responsibility to ban/report its usage,
+if they are aware of it.
 
-Also, unrelated to this client, one person received following warning (2020-01-30)
-after being reported (by another user) for mentioning that they're using BetterDiscord_
-(which is/was mostly just a custom css theme at the time, afaik):
+Few other datapoints and anecdotes on the subject:
 
-.. image:: discord-tos-violation-warning.jpg
+- Don't think Discord's "Terms of Service" document explicitly covers
+  third-party client usage, but "Discord Community Guidelines" kinda does,
+  if you consider this client to be "self-bot" or "user-bot" at least.
 
-In September 2021 there was a bunch of issues with people using all third-party
-clients being asked to reset their passwords daily due to "suspicious activity",
-raised here in `issue-18`_ (check out other links there too), which seem to have
-gone away within a week.
+  Only thing that matters in practice is likely the actual staff and specific
+  server admins' position and actions on this matter, as of course it's a
+  private platform/communities and everything is up to their discretion.
 
-At least one person in that issue thread also reported being asked for phone
-account verification for roughly same reason about a week after that, so maybe
-"suspicious activity" triggering for 3p clients haven't really gone away.
+- Unrelated to this client, one person received following warning (2020-01-30)
+  after being reported (by another user) for mentioning that they're using
+  BetterDiscord_ (which is/was mostly just a custom css theme at the time, afaik):
 
-As another datapoint - Cordless_ client developer's acc apparently got blocked
-for ToS violation when initiating private chats. This client doesn't have such
-functionality, but maybe one should be more careful with private chats anyway,
-as that seem to be a major spam vector, so is more likely to be heavily-monitored,
-I think.
+  .. image:: discord-tos-violation-warning.jpg
 
-There are also `some HN comments clarifying their approach in a thread here`_,
-though none of the above should probably be taken as definitive, as third-party
-and even tech support info can be wrong/misleading or outdated, and such
-treatment can obviously change anytime and in any direction, without any
-explicit indication.
+- In September 2021 there was a bunch of issues with people using different
+  third-party clients being asked to reset their passwords daily due to
+  "suspicious activity", raised here in `issue-18`_ (check out other links there too),
+  which seem to have gone away within a week.
 
-.. _BetterDiscord: https://betterdiscord.net/
+  At least one person in that issue thread also reported being asked for phone
+  account verification for roughly same reason about a week after that, so maybe
+  "suspicious activity" triggering for 3p clients haven't really gone away.
+
+- Cordless_ client developer's acc apparently got blocked for ToS violation when
+  initiating private chats. This client doesn't have such functionality, but
+  maybe one should be more careful with private chats anyway, as that seem to be
+  a major spam vector, so is more likely to be heavily-monitored, I think.
+
+There are also `some HN comments clarifying Discord staff position in a thread here`_,
+though none of the above should probably be taken as definitive,
+since third-party and even support staff's responses can be wrong/misleading or outdated,
+and such treatment can likely change anytime and in any direction,
+without explicit indication.
+
 .. _issue-18: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/18
-.. _some HN comments clarifying their approach in a thread here: https://news.ycombinator.com/item?id=25214777
+.. _some HN comments clarifying Discord staff position in a thread here: https://news.ycombinator.com/item?id=25214777
 
 
 API and Implementation Notes
