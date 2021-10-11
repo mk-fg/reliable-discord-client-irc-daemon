@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.222' # git-version: py-str
+	version = '1.223' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1424,6 +1424,7 @@ class DiscordSession:
 		oneshot = 10_000
 
 	class c_chan_type(enum.IntEnum):
+		# https://discord.com/developers/docs/resources/channel#channel-object-channel-types
 		text = 0
 		private = 1
 		voice = 2
@@ -1431,6 +1432,7 @@ class DiscordSession:
 		group = 4 # header for a group of channels
 		news = 5 # announcements channels
 		store = 6
+		thread_news = 10 # threads in news channels
 		thread = 11
 		thread_private = 12 # invite-only threads
 		stage = 13
@@ -2087,7 +2089,7 @@ class DiscordSession:
 					c.type, gg.name, gg.id, _gg_prefix(), name, topic, c.id )
 				continue
 
-			if c.type in [ct.thread, ct.thread_private]:
+			if c.type in [ct.thread, ct.thread_news, ct.thread_private]:
 				cc_parent = gg.chans.get(c.parent_id) or cs.get(c.parent_id)
 				if not cc_parent:
 					self.log.error( 'BUG - ignoring thread sub-channel with'
