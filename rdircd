@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.223' # git-version: py-str
+	version = '1.224' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2146,7 +2146,7 @@ class DiscordSession:
 			if name != name_old: chan_name_changes.append((cc, name, name_old)) # new chans too
 
 		# Process channel name changes, if any, send notifications
-		# Renames here don't affect threads, as they have unique ids in them already
+		# Disambiguation here doesn't affect threads, as they have unique ids in them already
 		cs_affected = dict() # other channels affected by disambiguation
 		for cc, name, name_old in chan_name_changes:
 			for cca, cca_name_old in self.op_ev_chans_update_disambiguation(cs, name):
@@ -2154,8 +2154,9 @@ class DiscordSession:
 		new_renames = list()
 		for cc, name, name_old in chan_name_changes:
 			if not name_old:
-				self.log.debug( 'New channel [id={} gid={}]:'
-					' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
+				if not cc.get('tid'): # logged separately below
+					self.log.debug( 'New channel [id={} gid={}]:'
+						' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
 			elif cc.name != name_old: new_renames.append((cc, name_old))
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): new_renames.append((cc, name_old))
@@ -2165,7 +2166,10 @@ class DiscordSession:
 
 		if sync is None: # otherwise they'll be mentioned on every (re-)connect
 			# Should be needed if msgs from these to parent chan are disabled
-			for cc in new_threads: self.discord.cmd_chan_thread(cc)
+			for cc in new_threads:
+				self.log.debug( 'New thread-channel'
+					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
+				self.discord.cmd_chan_thread(cc)
 		for cc, name_old in new_renames: self.discord.cmd_chan_rename(cc, name_old)
 
 	def op_ev_chans_update_disambiguation(self, cs, name):
