@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.225' # git-version: py-str
+	version = '1.226' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2322,7 +2322,7 @@ class DiscordSession:
 						f'<{tag}/>' if not ui.get('components') else
 						f'<{tag}>' + _tags(ui.components) + f'</{tag}>' )
 				return ' '.join(line)
-			line += '\n{self.conf.irc_prefix_uis}' + _tags(m.components)
+			line += f'\n{self.conf.irc_prefix_uis}' + _tags(m.components)
 
 		if not mt_nx and not line: # represent some non-text/embed events
 			if mt == mtc.recipient_add: line = f'[+recipient]'
