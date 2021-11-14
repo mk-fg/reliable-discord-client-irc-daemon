@@ -2236,7 +2236,7 @@ class DiscordSession:
 		uid, name = m.get('id', '?'), '' if not name else f' name={name}'
 		self.discord.cmd_guild_event(1, f'relationship: [uid={uid}{name}] {act} {t}')
 
-	def op_ev_sched(self, m, act):
+	def op_ev_sched(self, m, act, _sts={2: 'started', 3: 'ended'}):
 		ev_st, ev_hash = m.get('status'), str_hash(m.id, 4)
 		ts0, ts1 = (m.get(f'scheduled_{k}_time') for k in ['start', 'end'])
 		ev_info = [m.get('name')]
@@ -2252,7 +2252,7 @@ class DiscordSession:
 		ev_info = ' :: '.join(filter(None, ev_info))
 		if not ev_info: # dunno how to translate it, so print a kind of debug info
 			ev_info = f'type={m.get("entity_type", "?")} status={m.get("status", "?")}'
-		if act == 'update': act = f' {act}' + (' - started' if ev_st == 2 else '')
+		if act == 'update' and ev_st in _sts: act = ' {_sts[ev_st]}'
 		else: act = f' {act}' if act != 'create' else ''
 		self.discord.cmd_guild_event( m.guild_id,
 			f'scheduled event <{ev_hash}>{act}: {ev_info}' )
