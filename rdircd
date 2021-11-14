@@ -2010,7 +2010,8 @@ class DiscordSession:
 		elif o in [ 'typing', 'integration', 'channel_pins', 'webhooks',
 			'presence', 'presences', 'thread_member', 'thread_members',
 			'guild_emojis', 'guild_integrations', 'guild_role', 'stage_instance' ]: return
-		elif re.search(r'^(voice|(guild_)?application_command)_', mt): return
+		elif re.search( r'^(voice|guild_scheduled_event'
+			r'|(guild_)?application_command)_', mt ): return
 		elif mt in [ 'sessions_replace', 'user_guild_settings_update',
 			'user_note_update', 'user_settings_update', 'invite_create' ]: return
 
