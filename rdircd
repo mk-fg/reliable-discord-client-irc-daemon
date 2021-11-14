@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.231' # git-version: py-str
+	version = '1.232' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -503,10 +503,12 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False):
 	if not human: ts = ts.replace(tzinfo=TZ_UTC)
 	if ts.year > 2030: raise ValueError(ts) # sanity check
 	if not to_str: return ts
-	if human: return ts.strftime(f'%Y-%m-%d %H:%M:%S')
+	if human:
+		ts = ts.strftime('%Y-%m-%d %H:%M:%S')
+		return ts[:-3] if ts.endswith(':00') else ts
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ts_ext: ts_ext = f'.{ts_ext}'
-	return ts.strftime(f'%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
+	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 _short_ts_days = dict(
 	y=365.25, yr=365.25, year=365.25,
@@ -2223,14 +2225,23 @@ class DiscordSession:
 
 	def op_ev_sched(self, m, act):
 		gg, ev_hash = self.st.guilds.get(m.guild_id), str_hash(m.id, 4)
-		guild_name, meta = gg.name if gg else f'%{m.guild_id}', m.get('entity_metadata')
-		ev_info = ' - '.join(filter(None, [m.get('name', ''), m.get('description', '')]))
-		if meta:
-			meta = ' '.join((f'{k}={v}' if ' ' not in v else f'{k}=[{v}]') for k,v in meta.items())
-			ev_info = f' :: {meta}' if ev_info else meta
+		guild_name = gg.name if gg else f'%{m.guild_id}'
+		ts0, ts1 = (m.get(f'scheduled_{k}_time') for k in ['start', 'end'])
+		ev_info = [' - '.join(filter(
+			None, [m.get('name', ''), m.get('description', '')] ))]
+		if ts0:
+			ts0, ts1 = ((v and parse_iso8601(v)) for v in [ts0, ts1])
+			ts_ext = f'{ts_iso8601(ts0, human=True)} ({repr_duration(ts0, time.time())})'
+			if ts1:
+				ts_ext += ( f' to {ts_iso8601(ts1, human=True)}'
+					f' (lasts {repr_duration(ts1, ts0, ext="")})' )
+			ev_info.append(ts_ext)
+		ev_info.append( ' '.join(f'{k}=[ {v} ]'
+			for k,v in (m.get('entity_metadata') or dict()).items()) )
+		ev_info = ' :: '.join(filter(None, ev_info))
 		if not ev_info: # dunno how to translate it, so print a kind of debug info
 			ev_info = f'type={m.get("entity_type", "?")} status={m.get("status", "?")}'
-		act = ' {act}' if act != 'create' else '' # "update" or something else
+		act = f' {act}' if act != 'create' else '' # "update" or something else
 		self.discord.cmd_guild_event( m.guild_id,
 			f'scheduled event <{ev_hash}>{act}: [{guild_name}] {ev_info}' )
 
