@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.232' # git-version: py-str
+	version = '1.234' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -496,7 +496,7 @@ def parse_iso8601( spec,
 	ts = ts.replace(tzinfo=tz)
 	return ts if not to_float else datetime_to_float(ts)
 
-def ts_iso8601(ts, ms=3, to_str=True, human=False):
+def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None):
 	if not isinstance(ts, dt.datetime):
 		ts = ( dt.datetime.utcfromtimestamp(ts)
 			if not human else dt.datetime.fromtimestamp(ts) )
@@ -504,7 +504,16 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False):
 	if ts.year > 2030: raise ValueError(ts) # sanity check
 	if not to_str: return ts
 	if human:
-		ts = ts.strftime('%Y-%m-%d %H:%M:%S')
+		ts_fmt = '%Y-%m-%d %H:%M:%S'
+		if strip_date:
+			if strip_date is True: ts_fmt = ts_fmt[9:]
+			else: # strip specified redundant or rolled-over (next) date
+				tss, d0 = strip_date, ts.strftime('%Y-%m-%d')
+				if not isinstance(tss, (dt.datetime, dt.date)):
+					tss = dt.datetime.fromtimestamp(tss)
+				for tss in [tss, tss + dt.timedelta(days=1)]:
+					if tss.strftime('%Y-%m-%d') == d0: ts_fmt = ts_fmt[9:]
+		ts = ts.strftime(ts_fmt)
 		return ts[:-3] if ts.endswith(':00') else ts
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ts_ext: ts_ext = f'.{ts_ext}'
@@ -2234,7 +2243,7 @@ class DiscordSession:
 		if ts0:
 			ts0, ts1 = ((v and parse_iso8601(v)) for v in [ts0, ts1])
 			ts_ext = f'{ts_iso8601(ts0, human=True)}'
-			if ts1: ts_ext += f' - {ts_iso8601(ts1, human=True)}'
+			if ts1: ts_ext += f' - {ts_iso8601(ts1, human=True, strip_date=ts0)}'
 			ts_ext += f' [{repr_duration(ts0, time.time())}'
 			if ts1: ts_ext += f', lasts {repr_duration(ts1, ts0, ext=False)}'
 			ev_info.append(ts_ext + ']')
