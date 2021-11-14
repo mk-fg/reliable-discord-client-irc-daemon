@@ -1384,7 +1384,12 @@ class Discord:
 
 	def cmd_guild_event(self, gid, msg):
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
-		self.bridge.cmd_msg_monitor(f'{self.conf.irc_prefix_guild_event}{msg}', gid=gid)
+		if gid == 1: guild_prefix = ''
+		else:
+			gg = self.st.guilds.get(gid)
+			guild_prefix = '[' + (gg.name if gg else f'%{m.guild_id}') + '] '
+		self.bridge.cmd_msg_monitor(
+			f'{self.conf.irc_prefix_guild_event}{guild_prefix}{msg}', gid=gid )
 
 
 
@@ -2210,10 +2215,9 @@ class DiscordSession:
 		self.discord.cmd_msg_recv(cc, u.get('username'), f'--- recipient {act.lower()}')
 
 	def op_ev_ban(self, m, act):
-		gg, name = self.st.guilds.get(m.guild_id), m.get('user', dict())
-		guild_name = gg.name if gg else f'%{m.guild_id}'
+		name = self.st.guilds.get(m.guild_id), m.get('user', dict())
 		name = name.get('username') or f'@{name.get("id", "???")}'
-		self.discord.cmd_guild_event(m.guild_id, f'guild user ban: [{guild_name}] {act} {name}')
+		self.discord.cmd_guild_event(m.guild_id, f'guild user ban: {act} {name}')
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
@@ -2224,26 +2228,25 @@ class DiscordSession:
 		self.discord.cmd_guild_event(1, f'relationship: [uid={uid}{name}] {act} {t}')
 
 	def op_ev_sched(self, m, act):
-		gg, ev_hash = self.st.guilds.get(m.guild_id), str_hash(m.id, 4)
-		guild_name = gg.name if gg else f'%{m.guild_id}'
+		ev_st, ev_hash = m.get('status'), str_hash(m.id, 4)
 		ts0, ts1 = (m.get(f'scheduled_{k}_time') for k in ['start', 'end'])
-		ev_info = [' - '.join(filter(
-			None, [m.get('name', ''), m.get('description', '')] ))]
+		ev_info = [m.get('name')]
 		if ts0:
 			ts0, ts1 = ((v and parse_iso8601(v)) for v in [ts0, ts1])
-			ts_ext = f'{ts_iso8601(ts0, human=True)} ({repr_duration(ts0, time.time())})'
-			if ts1:
-				ts_ext += ( f' to {ts_iso8601(ts1, human=True)}'
-					f' (lasts {repr_duration(ts1, ts0, ext="")})' )
-			ev_info.append(ts_ext)
-		ev_info.append( ' '.join(f'{k}=[ {v} ]'
-			for k,v in (m.get('entity_metadata') or dict()).items()) )
+			ts_ext = f'{ts_iso8601(ts0, human=True)}'
+			if ts1: ts_ext += f' - {ts_iso8601(ts1, human=True)}'
+			ts_ext += f' [{repr_duration(ts0, time.time())}'
+			if ts1: ts_ext += f', lasts {repr_duration(ts1, ts0, ext=False)}'
+			ev_info.append(ts_ext + ']')
+		ev_info.extend([m.get('description', ''), ' '.join(
+			f'{k}=[ {v} ]' for k,v in (m.get('entity_metadata') or dict()).items() )])
 		ev_info = ' :: '.join(filter(None, ev_info))
 		if not ev_info: # dunno how to translate it, so print a kind of debug info
 			ev_info = f'type={m.get("entity_type", "?")} status={m.get("status", "?")}'
-		act = f' {act}' if act != 'create' else '' # "update" or something else
+		if act == 'update': act = f' {act}' + (' - started' if ev_st == 2 else '')
+		else: act = f' {act}' if act != 'create' else ''
 		self.discord.cmd_guild_event( m.guild_id,
-			f'scheduled event <{ev_hash}>{act}: [{guild_name}] {ev_info}' )
+			f'scheduled event <{ev_hash}>{act}: {ev_info}' )
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
