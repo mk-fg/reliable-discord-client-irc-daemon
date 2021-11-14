@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.229' # git-version: py-str
+	version = '1.231' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -30,6 +30,7 @@ class RDIRCDConfigBase:
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
+	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_names_timeout = '1d' # time since last activity
 	irc_motd_file_path = '' # file path to read for motd command
 
@@ -1379,12 +1380,9 @@ class Discord:
 		self.bridge.cmd_msg_discord( cc, None,
 			f'[{cc.tid}] --- Thread channel created: {self.irc_chan_name(cc)}' )
 
-	def cmd_guild_ban(self, act, gid, guild_name, name):
-		self.bridge.cmd_msg_monitor(f'--- guild ban: [{guild_name}] {act} {name}', gid=gid)
-
-	def cmd_relationship(self, uid, t, act, name):
-		name = '' if not name else f' name={name}'
-		self.bridge.cmd_msg_monitor(f'--- relationship: [uid={uid}{name}] {act} {t}', gid=1)
+	def cmd_guild_event(self, gid, msg):
+		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
+		self.bridge.cmd_msg_monitor(f'{self.conf.irc_prefix_guild_event}{msg}', gid=gid)
 
 
 
@@ -1992,6 +1990,7 @@ class DiscordSession:
 		elif mt == 'thread_list_sync': return self.op_ev_thread_list(m.d)
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
+		elif o == 'guild_scheduled_event': return self.op_ev_sched(m.d, act)
 		elif o in ['channel', 'thread']:
 			if act in ['create', 'update']: return self.op_ev_chans(gid or 1, m.d)
 			elif act == 'delete': return self.op_ev_delete(gid or 1, chan=m.d.id)
@@ -2212,14 +2211,28 @@ class DiscordSession:
 		gg, name = self.st.guilds.get(m.guild_id), m.get('user', dict())
 		guild_name = gg.name if gg else f'%{m.guild_id}'
 		name = name.get('username') or f'@{name.get("id", "???")}'
-		self.discord.cmd_guild_ban(act, m.guild_id, guild_name, name)
+		self.discord.cmd_guild_event(m.guild_id, f'guild user ban: [{guild_name}] {act} {name}')
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
 		try: t = self.c_rel_type(t).name
 		except ValueError: t = f'unknown[{t}]'
 		if name: name = name.username
-		self.discord.cmd_relationship(m.get('id', '?'), t, act, name)
+		uid, name = m.get('id', '?'), '' if not name else f' name={name}'
+		self.discord.cmd_guild_event(1, f'relationship: [uid={uid}{name}] {act} {t}')
+
+	def op_ev_sched(self, m, act):
+		gg, ev_hash = self.st.guilds.get(m.guild_id), str_hash(m.id, 4)
+		guild_name, meta = gg.name if gg else f'%{m.guild_id}', m.get('entity_metadata')
+		ev_info = ' - '.join(filter(None, [m.get('name', ''), m.get('description', '')]))
+		if meta:
+			meta = ' '.join((f'{k}={v}' if ' ' not in v else f'{k}=[{v}]') for k,v in meta.items())
+			ev_info = f' :: {meta}' if ev_info else meta
+		if not ev_info: # dunno how to translate it, so print a kind of debug info
+			ev_info = f'type={m.get("entity_type", "?")} status={m.get("status", "?")}'
+		act = ' {act}' if act != 'create' else '' # "update" or something else
+		self.discord.cmd_guild_event( m.guild_id,
+			f'scheduled event <{ev_hash}>{act}: [{guild_name}] {ev_info}' )
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
