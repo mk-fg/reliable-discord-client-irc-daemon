@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.235' # git-version: py-str
+	version = '1.236' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2027,8 +2027,9 @@ class DiscordSession:
 			'guild_emojis', 'guild_integrations', 'guild_role', 'stage_instance' ]: return
 		elif re.search( r'^(voice|guild_scheduled_event'
 			r'|(guild_)?application_command)_', mt ): return
-		elif mt in [ 'sessions_replace', 'user_guild_settings_update',
-			'user_note_update', 'user_settings_update', 'invite_create' ]: return
+		elif re.search( r'^user_(note|'
+			r'guild_settings|settings|settings_proto)_update$', mt ): return
+		elif mt in ['sessions_replace', 'invite_create']: return
 
 		# Known stuff must be explicitly handled above to not generate "Unhandled event"
 		self.log.warning('Unhandled event: {}', self._repr(m))
