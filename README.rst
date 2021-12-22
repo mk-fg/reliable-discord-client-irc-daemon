@@ -5,24 +5,10 @@ Reliable Discord-client IRC Daemon (rdircd)
   :backlinks: none
 
 
-Deprecation Notice
-------------------
-
-I'm currently not using Discord myself,
-so this project/repository is likely not well-maintained.
-
-Some folks are still using the thing though, and hopefully might report any bad
-issues - usually easy to fix/merge these but still obviously not ideal,
-so if there're any better options (or forks) actually maintained by people who
-use them, you might want to look at these first.
-
-See "Links" section below for a likely-outdated list of alternatives.
-
-
 Description
 -----------
 
-Python3/asyncio daemon to present personal Discord_ client as local irc server,
+Python3/asyncio daemon to present personal Discord_ client as local IRC_ server,
 with a list of channels corresponding to ones available on all joined "discord
 servers" (group of users/channels with its own theme/auth/rules on discord,
 also referred to as `"guilds" in API docs`_).
@@ -31,12 +17,17 @@ Purpose is to be able to comfortably use discord via simple text-based IRC clien
 and not browser, electron app or anything of the sort.
 
 It's also "reliable" in that it tries hard to confirm message delivery,
-notify about any issues in that regard and enforce strict
-all-in-same-order-or-nothing posting, which - somewhat surprisingly - other
-discord clients seem to be quite sloppy about.
+notify about any issues in that regard and enforce strict posting in the same
+order or signaling an error wrt what wasn't delivered, which - somewhat
+surprisingly - other discord clients seemed to be quite sloppy about.
+
+| There's an IRC channel to talk about the thing - join `#rdircd at libera.chat`_.
+| IRC URL: ircs://irc.libera.chat/rdircd (github refuses to make ircs:// links)
 
 .. _Discord: http://discord.gg/
+.. _IRC: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 .. _"guilds" in API docs: https://discord.com/developers/docs/resources/guild
+.. _#rdircd at libera.chat: https://web.libera.chat/?channels=#rdircd
 
 
 WARNING
