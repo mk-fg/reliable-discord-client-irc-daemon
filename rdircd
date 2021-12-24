@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.237' # git-version: py-str
+	version = '1.238' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2023,8 +2023,8 @@ class DiscordSession:
 
 		# Known-ignored events
 		elif o in [ 'typing', 'integration', 'channel_pins', 'webhooks',
-			'presence', 'presences', 'thread_member', 'thread_members',
-			'guild_emojis', 'guild_integrations', 'guild_role', 'stage_instance' ]: return
+			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
+			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers' ]: return
 		elif re.search( r'^(voice|guild_scheduled_event'
 			r'|(guild_)?application_command)_', mt ): return
 		elif re.search( r'^user_(note|'
