@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.238' # git-version: py-str
+	version = '1.240' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -106,7 +106,7 @@ class RDIRCDConfigBase:
 	debug_asyncio = False
 	debug_msg_cut = 50
 	debug_proto_cut = 90
-	debug_proto_log_shared = True
+	debug_proto_log_shared = True # sends protocol logs to normal debug logging and log-file
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9

@@ -531,14 +531,83 @@ Never encountered this problem myself so far.
 
 .. _issue-1: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
 
-Anything unknown or unexpected
-``````````````````````````````
+Debugging anything strange, unknown or unexpected
+`````````````````````````````````````````````````
 
-Can be seen in #rdircd.debug channel with warning/error level, as well as logged to stderr.
+Most likely source of that should be missing handling for some new/uncommon
+discord events, or maybe a bug in the code somewhere - either can be reported as
+a github issue.
 
-These should not normally occur though, unless there's a bug or - more likely -
-missing handling for some new/uncommon events (either can be reported as a
-github issue), so joining/monitoring either of these sources is recommended.
+To get more information on the issue (so that report won't be unhelpful "don't work"),
+following things can be monitored and/or enabled:
+
+- Standard error stream (stderr) of the script when problem occurs and whether
+  it crashes (unlikely).
+
+  If rdircd is run as a systemd service, e.g. ``journalctl -au rdircd`` should
+  normally capture its output, but there are other ways to enable logs listed just below.
+
+  rdircd shouldn't normally ever crash, as it handles any errors within its own
+  loop and just reconnects or whatever, but obviously bugs happen - there gotta
+  be some python traceback printed to stderr on these.
+
+- Find a way to reproduce the issue.
+
+  When something weird happens, it's most useful to check whether it can be
+  traced to some specific discord and event there (e.g. some new feature being used),
+  or something specific you did at the time, and check whether same thing
+  happens again on repeating that.
+
+  That's very useful to know, as then problem can be reproduced with any kind of
+  extra logging and debugging aids enabled until it's perfectly clear what's
+  going on there, or maybe how to avoid it, if fixing is not an option atm.
+
+- Join #rdircd.debug channel - any warnings/errors should be logged there.
+
+  Send "help" (or "h") msg to it to see a bunch of extra controls over it.
+
+  Sending "level debug" (or "d") there for example will enable verbose debug
+  logging to that channel (can be disabled again via "level warning"/"w"),
+  but it might be easier to use log files for that - see below.
+
+- Enable debug and protocol logs to files.
+
+  In any loaded rdircd ini file(s), add [debug] section with options like these::
+
+    [debug]
+    log-file = /var/log/rdircd/debug.log
+    proto-log-shared = no
+    proto-log-file = /var/log/rdircd/proto.log
+
+  ``/var/log/rdircd`` dir in this example should be created and accessible only
+  to running rdircd and ideally nothing else, e.g. creating it as:
+  ``install -m700 -o rdircd -d /var/log/rdircd``
+
+  Such opts should enable those auto-rotating log files, which will have a lot
+  of very information about everything happening with the daemon at any time.
+
+  Both of these can also be enabled/controlled and/or queried at runtime from
+  #rdircd.debug chan.
+
+  ``proto-log-shared`` option (defaults to "yes") and be used to send
+  discord/irc protocol logging to same log-file or #rdircd.debug channel,
+  but it might be easier to have two separate logs, as in example above.
+
+  Log file size and rotation count can be set via ``log-file-size``,
+  ``log-file-count``, ``proto-log-file-size``, ``proto-log-file-count``
+  options - run ``rdircd --conf-dump-defaults`` to see all those and their
+  default values.
+
+  Note that these files will contain all sorts of sensitive information - from
+  auth data to all chats and contacts - so should probably not be posted or
+  shared freely on the internet in-full or as-is, but can definitely help to
+  identify/fix any problems.
+
+Generally if an issue is easy to reproduce (e.g. "I send message X anywhere and
+get this error"), it can be reported without digging much deeper for more info,
+as presumably anyone debugging it should be able to do that as well, but maybe
+info above can still be helpful to identify any of the more non-obvious problems,
+or maybe give an idea where to look at for fixing or working around these.
 
 
 Links
