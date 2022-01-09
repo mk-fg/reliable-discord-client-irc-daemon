@@ -1489,8 +1489,8 @@ class DiscordSession:
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo ts everyone other')
 	c_msg_tags_ts_fmts = dict(
-		t='%H:%M', T='%H:%M:%S', d='%Y%m%d', D='%m %B %Y',
-		f='%Y%m%d %H:%M:%S', F='%c', R=repr_duration )
+		t='%H:%M', T='%H:%M:%S', d='%Y-%m-%d', D='%m %B %Y',
+		f='%Y-%m-%d %H:%M:%S', F='%c', R=repr_duration )
 
 	def __init__(self, discord):
 		self.discord, self.conf = discord, discord.conf
@@ -2376,7 +2376,7 @@ class DiscordSession:
 	def op_msg_parse_tags(self, line, m, chans, roles):
 		'Returns string-replacement pairs for discord tags detected within message'
 		# https://discord.com/developers/docs/reference#message-formatting
-		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&|t)(\d+)(:\w)?>', line))
+		tags, tags_raw = dict(), list(re.finditer(r'<(@!?|#|a?:[^:]+:|@&|t:)(\d+)(:\w)?>', line))
 		m_chans = dict((c.id, f'#{c.name}') for c in (m.get('mention_channels') or list()))
 		if tags_raw:
 			mt, ts_fmts = self.c_msg_tags, self.c_msg_tags_ts_fmts
@@ -2389,7 +2389,7 @@ class DiscordSession:
 						if roles and k in roles else '[role:{}]'.format(str_hash(k, 3)) )
 				elif t == '#': v = mt.chan, chans[k].did if k in chans else (m_chans.get(k) or f'#[{k}]')
 				elif t.lstrip('a').startswith(':'): v = mt.emo, t.lstrip('a')
-				elif t == 't':
+				elif t == 't:':
 					ts, ts_fmt = float(k), ts_fmts.get(m.group(3)) or ts_fmts['f']
 					v = mt.ts, '[' + str( ts_fmt(ts) if callable(ts_fmt)
 						else dt.datetime.fromtimestamp(ts).strftime(ts_fmt) ) + ']'
