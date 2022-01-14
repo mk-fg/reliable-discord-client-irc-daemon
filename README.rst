@@ -170,14 +170,34 @@ Currently known distro packages (as of 2020-05-17):
 
 - Arch Linux (AUR): https://aur.archlinux.org/packages/rdircd-git/
 
-It should be easy to install this one script and its few dependencies manually
-though, e.g. by doing something roughly like this::
+It should be easy to install this one script and its few dependencies manually though.
+
+On debian/ubuntu, installing all this stuff can be done with this one command::
+
+  # apt install --no-install-recommends python3-minimal python3-aiohttp
+
+Other linux distros likely have similar packages as well, and I'd recommend
+trying to use these as a first option, so that they get updates and to avoid
+extra local maintenance burden, and only fallback to installing module(s) via
+"pip" if that fails.
+
+On any arbitrary distro with python (python3) installed, this might work to
+install aiohttp module to unprivileged "rdircd" user's home dir (which is also
+used to run rdircd in the next example below)::
 
   root # useradd -m rdircd
   root # su - rdircd
 
-  rdircd % python -m ensurepip --user
-  rdircd % python -m pip install --user aiohttp
+  rdircd % python3 -m ensurepip --user
+  rdircd % python3 -m pip install --user aiohttp
+
+After requirements above are installed, script itself can be fetched
+from this repo and run like this::
+
+  ## This snippet is to create and switch to a separate "rdircd" user
+  root # useradd -m rdircd
+  root # su - rdircd
+
   rdircd % curl https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd > rdircd
   rdircd % chmod +x rdircd
 
@@ -192,11 +212,8 @@ though, e.g. by doing something roughly like this::
   rdircd % ./rdircd --debug -c rdircd.ini
    ...drop --debug and use init system for a regular daemon...
 
-This assumes that only python3 is installed (see Requirements above) and will
-setup script and everything it needs in an rdircd user home directory.
-
-Note that it's generally better to use OS packages for as many steps above as
-possible, so that they get updates and avoid such extra local maintenance burden.
+Setting up daemon/script to run on OS boot is out of scope of this README -
+look into doing that via systemd service, init script or something like that.
 
 Setup and actual usage
 ``````````````````````
