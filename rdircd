@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.243' # git-version: py-str
+	version = '1.244' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -178,11 +178,12 @@ log_proto_debug_filter = LogProtoDebugFilter()
 class LogProtoFormatter(logging.Formatter):
 	last_ts = last_rec = last_reltime = None
 	def format(self, record):
-		if id(record) != self.last_rec:
+		rec_id = record.created
+		if rec_id != self.last_rec:
 			reltime = (record.created - self.last_ts) if self.last_ts else 0
 			self.last_reltime = '{:>7s}'.format(
 				'{}{:,.3f}'.format('+' if reltime >= 0 else '', reltime) )
-			self.last_ts, self.last_rec = record.created, id(record)
+			self.last_ts, self.last_rec = record.created, rec_id
 		record.reltime = self.last_reltime
 		record.asctime = time.strftime(
 			'%Y-%m-%dT%H:%M:%S', time.localtime(record.created) )
