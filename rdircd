@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.240' # git-version: py-str
+	version = '1.242' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2724,9 +2724,10 @@ class RDIRCD:
 		'Get list of irc connections for users in a channel'
 		for conn in self.irc_conns.values():
 			chan_name = conn.chan_name(name)
-			if ( chan_name in conn.st.chans
-					or self.conf._irc_chan_auto_join_re.search(chan_name) ):
-				yield conn
+			if chan_name not in conn.st.chans:
+				if not self.conf._irc_chan_auto_join_re.search(chan_name): continue
+				if not conn.st.auth: continue
+			yield conn
 
 	@iter_gather(list)
 	def cmd_chan_names_discord(self, name):
