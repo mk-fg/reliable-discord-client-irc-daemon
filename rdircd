@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.242' # git-version: py-str
+	version = '1.243' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -888,7 +888,8 @@ class IRCProtocol:
 
 
 	def recv_cmd_ping(self, server, server_dst=None):
-		self.send(f'PONG {self.bridge.server_host}')
+		# See https://gitlab.com/gitterHQ/irc-bridge/-/issues/34#note_190986152
+		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
 	def recv_cmd_cap(self, sub, caps=''):
 		sub = sub.lower()
