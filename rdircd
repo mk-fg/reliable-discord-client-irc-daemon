@@ -180,7 +180,8 @@ class LogProtoFormatter(logging.Formatter):
 	def format(self, record):
 		if id(record) != self.last_rec:
 			reltime = (record.created - self.last_ts) if self.last_ts else 0
-			self.last_reltime = '{}{:,.3f}'.format('+' if reltime >= 0 else '', reltime)
+			self.last_reltime = '{:>7s}'.format(
+				'{}{:,.3f}'.format('+' if reltime >= 0 else '', reltime) )
 			self.last_ts, self.last_rec = record.created, id(record)
 		record.reltime = self.last_reltime
 		record.asctime = time.strftime(
