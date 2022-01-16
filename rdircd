@@ -13,8 +13,9 @@ import aiohttp
 
 
 class RDIRCDConfigBase:
-	# Note: string time intervals can be either simple floats or stuff like
+	# String time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
+	# For values ending with whitespace (like prefixes), add backslash ("\") at the end after spaces.
 
 	version = '1.247' # git-version: py-str
 
@@ -3104,6 +3105,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				cat = cat_chk
 				print(f'\n[{cat}]')
 			if isinstance(v, bool): v = ['no', 'yes'][v]
+			if v and isinstance(v, str) and v[-1] in ' \t': v += '\\'
 			k = m.group(2).replace('_', '-')
 			k_full = f'{cat}-{k}'
 			if k_full in comms:
@@ -3139,7 +3141,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				self.aliases[tuple(k.lower().split('.', 1))] = v
 
 	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
-		if v is str or isinstance(v, str): return lambda *a: str(conf_get(*a, raw=True))
+		if v is str or isinstance(v, str):
+			def str_get(*a):
+				v = str(conf_get(*a, raw=True))
+				return v if not v.endswith('\\') else v[:-1]
+			return str_get
 		elif v is bool or isinstance(v, bool):
 			bool_map = {
 				'1': True, 'yes': True, 'y': True, 'true': True, 'on': True,
