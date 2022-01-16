@@ -8,18 +8,15 @@ Reliable Discord-client IRC Daemon (rdircd)
 Description
 -----------
 
-Python3/asyncio daemon to present personal Discord_ client as local IRC_ server,
-with a list of channels corresponding to ones available on all joined "discord
-servers" (group of users/channels with its own theme/auth/rules on discord,
-also referred to as `"guilds" in API docs`_).
+rdircd is a daemon that allows using a personal Discord_ account through an IRC client.
 
-Purpose is to be able to comfortably use discord via simple text-based IRC client,
-and not browser, electron app or anything of the sort.
+It translates all private channels and public channels/threads on "discord
+servers" into channels on an IRC server that it creates and that you can connect
+to using regular IRC client, instead of a browser or electron app.
 
-It's also "reliable" in that it tries hard to confirm message delivery,
-notify about any issues in that regard and enforce strict posting in the same
-order or signaling an error wrt what wasn't delivered, which - somewhat
-surprisingly - other discord clients seemed to be quite sloppy about.
+Named it "reliable" because one of the initial goals was to make it confirm message
+delivery and notify about any issues in that regard, which was somewhat lacking
+in other such clients at the time.
 
 | There's an IRC channel to talk about the thing - join `#rdircd at libera.chat`_.
 | IRC URL: ircs://irc.libera.chat/rdircd (github refuses to make ircs:// links)
@@ -77,7 +74,7 @@ Features
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
   from that point on to the present, fetching in multiple batches if necessary.
 
-- Own msgs sent thru other means (e.g. browser) will be relayed to irc too,
+- Messages sent through other means (e.g. browser) will be relayed to irc too,
   maybe coming from a diff nick though, if irc name doesn't match discord-to-irc
   nick translation.
 
@@ -93,7 +90,7 @@ Features
   deploy anywhere.
 
 - Runs in constant ~40M memory footprint on amd64, which is probably more than
-  e.g. bitlbee-discord_ but nothing like those leaky browser tabs.
+  e.g. bitlbee-discord_, but better than those leaky browser tabs.
 
 - Easy to tweak and debug without rebuilds, gdb, rust and such.
 
@@ -172,7 +169,7 @@ Currently known distro packages (as of 2020-05-17):
 
 It should be easy to install this one script and its few dependencies manually though.
 
-On debian/ubuntu, installing all this stuff can be done with this one command::
+On debian/ubuntu, installing dependencies can be done with this one command::
 
   # apt install --no-install-recommends python3-minimal python3-aiohttp
 
@@ -181,9 +178,10 @@ trying to use these as a first option, so that they get updates and to avoid
 extra local maintenance burden, and only fallback to installing module(s) via
 "pip" if that fails.
 
-On any arbitrary distro with python (python3) installed, this might work to
-install aiohttp module to unprivileged "rdircd" user's home dir (which is also
-used to run rdircd in the next example below)::
+On any arbitrary distro with python (python3) installed, using "pip" to
+install aiohttp module (and its deps) to unprivileged "rdircd" user's home dir
+might work (which is also used to run rdircd in the next example below),
+but ignore this if you've already installed it via OS package manager or such::
 
   root # useradd -m rdircd
   root # su - rdircd
@@ -194,7 +192,7 @@ used to run rdircd in the next example below)::
 After requirements above are installed, script itself can be fetched
 from this repo and run like this::
 
-  ## This snippet is to create and switch to a separate "rdircd" user
+  ## Ignore "useradd" if you've already created a user when running "pip" above
   root # useradd -m rdircd
   root # su - rdircd
 
@@ -214,6 +212,7 @@ from this repo and run like this::
 
 Setting up daemon/script to run on OS boot is out of scope of this README -
 look into doing that via systemd service, init script or something like that.
+But make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
 Setup and actual usage
 ``````````````````````
@@ -231,11 +230,14 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
 Note: IRC password can be omitted, but be sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
+If you set an IRC password though, make sure to use it when configuring
+connection to this server in the IRC client as well.
+
 | Start rdircd daemon: ``./rdircd --debug``
 | (note: if installed from dis
 
 Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
-or -i/--irc-bind option for using diff host/port).
+or -i/--irc-bind option for using different host/port).
 
 Run ``/list`` to see channels for all joined discord servers/guilds::
 
