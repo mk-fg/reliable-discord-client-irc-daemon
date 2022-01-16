@@ -16,7 +16,7 @@ class RDIRCDConfigBase:
 	# Note: string time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 
-	version = '1.245' # git-version: py-str
+	version = '1.247' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -31,6 +31,8 @@ class RDIRCDConfigBase:
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
+	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
+	irc_prefix_all_private = '' # universal prefix to include in all incoming private-chat msgs
 	irc_names_timeout = '1d' # time since last activity
 	irc_motd_file_path = '' # file path to read for motd command
 
@@ -1251,6 +1253,7 @@ class Discord:
 
 	def cmd_msg_recv( self, cc, nick, line,
 			tags=None, flake=None, nonce=None, notice=None, skip_monitor=False ):
+		'Relay message from Discord to IRC.'
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gid, cc.name, nick, line, tags or '')
 		if nonce and flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
@@ -1263,6 +1266,7 @@ class Discord:
 			tags, notice=notice, ts=self.flake_parse(flake), skip_monitor=skip_monitor )
 
 	async def cmd_msg_send(self, cc, line):
+		'Relay message from IRC to Discord.'
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 		try:
 			if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
@@ -2124,6 +2128,7 @@ class DiscordSession:
 				if name: name = f'.{name}'
 				name = f'{cc_parent.name}.{c_tid}{name}'
 			else: c_tid = None
+			cc_private = c.type in [ct.private, ct.private_group]
 
 			cc = cs.setdefault( c.id,
 				gg.chans.get(c.id, adict(users=adict(), threads=adict())) )
@@ -2132,7 +2137,7 @@ class DiscordSession:
 			if c_tid:
 				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
 				if not name_old: new_threads.append(cc)
-			elif c.type in [ct.private, ct.private_group]:
+			elif cc_private:
 				ts, users= time.time(), c.get('recipients') or list()
 				for u in users: self.discord.cmd_user_cache(gid, u.id, u.username)
 				dict_update( cc.users,
@@ -2156,7 +2161,7 @@ class DiscordSession:
 
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
-				name_base=name, name=name, t=cc_type,
+				name_base=name, name=name, t=cc_type, private=cc_private,
 				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
 
@@ -2982,6 +2987,7 @@ class RDIRCD:
 
 	def cmd_msg_monitor( self, msg,
 			conn=None, nick=None, pre='', notice=True, gid=None ):
+		'Sends notice to monitor IRC channel(s).'
 		if not conn: conn = self.cmd_conn()
 		if not conn: return
 		lines, n = list(filter(None, msg.splitlines())), self.conf.irc_len_monitor_lines
@@ -3004,6 +3010,7 @@ class RDIRCD:
 
 	def cmd_msg_discord( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
+		'Sends annotated Discord message to all corresponding/monitor IRC channels.'
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
@@ -3027,6 +3034,10 @@ class RDIRCD:
 		else:
 			nick = self.nick_sys
 			if notice is None: notice = True
+		if not notice:
+			if self.conf.irc_prefix_all_private and cc.private:
+				prefix = f'{self.conf.irc_prefix_all_private}{prefix}'
+			if self.conf.irc_prefix_all: prefix = f'{self.conf.irc_prefix_all}{prefix}'
 		if not (direct or skip_monitor):
 			self.cmd_msg_monitor( line, conn=conn, nick=nick,
 				pre=f'#{name} :: {prefix}', notice=notice, gid=cc.gid )
