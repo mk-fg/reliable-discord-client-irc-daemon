@@ -8,22 +8,21 @@ Reliable Discord-client IRC Daemon (rdircd)
 Description
 -----------
 
-rdircd is a daemon that allows using a personal Discord_ account through an IRC client.
+rdircd is a daemon that allows using a personal Discord_ account through an IRC_ client.
 
-It translates all private channels and public channels/threads on "discord
-servers" into channels on an IRC server that it creates and that you can connect
-to using regular IRC client, instead of a browser or electron app.
+It translates all private chats and public channels/threads on "discord servers"
+into channels on an IRC server that it creates and that you can connect to using
+regular IRC client, instead of a browser or electron app.
 
-Named it "reliable" because one of the initial goals was to make it confirm message
-delivery and notify about any issues in that regard, which was somewhat lacking
-in other such clients at the time.
+"reliable" is in the name because one of the initial goals was to make it confirm
+message delivery and notify about any issues in that regard, which was somewhat
+lacking in other similar clients at the time.
 
 | There's an IRC channel to talk about the thing - join `#rdircd at libera.chat`_.
 | IRC URL: ircs://irc.libera.chat/rdircd (github refuses to make ircs:// links)
 
 .. _Discord: http://discord.gg/
 .. _IRC: https://en.wikipedia.org/wiki/Internet_Relay_Chat
-.. _"guilds" in API docs: https://discord.com/developers/docs/resources/guild
 .. _#rdircd at libera.chat: https://web.libera.chat/?channels=#rdircd
 
 
