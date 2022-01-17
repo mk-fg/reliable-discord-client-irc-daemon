@@ -17,7 +17,7 @@ class RDIRCDConfigBase:
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 	# For values ending with whitespace (like prefixes), add backslash ("\") at the end after spaces.
 
-	version = '1.247' # git-version: py-str
+	version = '1.248' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -3346,52 +3346,38 @@ def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
 	import argparse, textwrap
-	dedent = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
-	text_fill = lambda s,w=100,ind='\t',ind_next=None,**k: textwrap.fill(
-		s, w, initial_indent=ind, subsequent_indent=ind if ind_next is None else ind_next, **k )
-	class SmartHelpFormatter(argparse.HelpFormatter):
-		def __init__(self, *args, **kws):
-			return super().__init__(*args, **kws, width=100)
-		def _fill_text(self, text, width, indent):
-			if '\n' not in text: return super()._fill_text(text, width, indent)
-			return ''.join( indent + line
-				for line in text.replace('\t', '  ').splitlines(keepends=True) )
-		def _split_lines(self, text, width):
-			return super()._split_lines(text, width)\
-				if '\n' not in text else dedent(text).splitlines()
-
+	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
+	fill = lambda s,w=80,**k: textwrap.fill(s, w, **k)
 	parser = argparse.ArgumentParser(
-		formatter_class=SmartHelpFormatter,
+		formatter_class=argparse.RawTextHelpFormatter,
+		usage='%(prog)s [options]',
 		description='Reliable personal discord-client to irc-server translation daemon.')
 
 	group = parser.add_argument_group('Configuration file(s)')
-	group.add_argument('-c', '--conf',
-		metavar='file', action='append',
-		help=f'''
-			Path to configuration file to use.
-			It will get updated with OAuth2 credentials ([auth] section)
-				and some state info ([state] section), so has to be writable.
-			Can be specified mutliple times to use multiple config files,
-				in which case only last one will be updated and has to be writable.
-			Default: {conf._conf_path}''')
+	group.add_argument('-c', '--conf', metavar='file', action='append', help=dd(f'''
+		Path to configuration file to use.
+		It will get updated with OAuth2 credentials ([auth] section)
+			and some state info ([state] section), so has to be writable.
+		Can be specified mutliple times to use multiple config files,
+			in which case only last one will be updated and has to be writable.
+		Default: {conf._conf_path}'''))
 	group.add_argument('--conf-dump', action='store_true',
-		help='Print all configuration settings, which will be used with'
-			' currently detected (and/or specified) configuration file(s), and exit.')
+		help=fill('Print all configuration settings, which will be used with'
+			' currently detected (and/or specified) configuration file(s), and exit.'))
 	group.add_argument('--conf-dump-defaults', action='store_true',
-		help='Print all default settings which would be used if no'
-			' configuration file(s) were overriding these, with some comments, and exit.')
+		help=fill('Print all default settings which would be used if no'
+			' configuration file(s) were overriding these, with some comments, and exit.'))
 	group.add_argument('--conf-dump-state', action='store_true',
-		help='Print "state" section from the config file,'
+		help=fill('Print "state" section from the config file,'
 			' with keys corresponding to app startups and iso8601'
-			' time values of last received message for that run.')
+			' time values of last received message for that run.'))
 
 	group = parser.add_argument_group('Interfaces')
-	group.add_argument('-i', '--irc-bind', metavar='host(:port)',
-		help=f'''
-			Address/host (to be resolved via gai) and port to bind IRC server to.
-			When specifying port after raw IPv6 address,
-				enclose the latter in [], for example - [::]:6667.
-			Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.''')
+	group.add_argument('-i', '--irc-bind', metavar='host(:port)', help=dd(f'''
+		Address/host (to be resolved via gai) and port to bind IRC server to.
+		When specifying port after raw IPv6 address,
+			enclose the latter in [], for example - [::]:6667.
+		Default: {conf.irc_host}:{conf.irc_port} or whatever is in --conf file.'''))
 
 	group = parser.add_argument_group('Logging and debug opts')
 	group.add_argument('-d', '--debug',
@@ -3399,16 +3385,14 @@ def main(args=None, conf=None):
 	group.add_argument('--debug-asyncio',
 		action='store_true', help='Run asyncio event loop in debug mode. Very verbose.')
 	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
-		help='Truncate long strings in protocol dumps to specified length.'
-			' Set to <=0 to disable truncation (default).')
-	group.add_argument('-p', '--proto-log', metavar='file',
-		help='''
-			File to dump full non-truncated protocol logs to.
-			Max file size and rotation options can be configured via --conf file.''')
-	group.add_argument('-l', '--debug-log', metavar='file',
-		help='''
-			Separate file for debug-level logging, regardless of levels set elsewhere.
-			Max file size and rotation options can be configured via --conf file.''')
+		help=fill('Truncate long strings in protocol dumps to specified length.'
+			' Set to <=0 to disable truncation (default).'))
+	group.add_argument('-p', '--proto-log', metavar='file', help=dd('''
+		File to dump full non-truncated protocol logs to.
+		Max file size and rotation options can be configured via --conf file.'''))
+	group.add_argument('-l', '--debug-log', metavar='file', help=dd('''
+		Separate file for debug-level logging, regardless of levels set elsewhere.
+		Max file size and rotation options can be configured via --conf file.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -3522,8 +3506,8 @@ def main(args=None, conf=None):
 		logging.root.addHandler(log_handler)
 
 		rdircd_task = asyncio.create_task(rdircd.run_async())
-		for sig in 'INT TERM'.split():
-			loop.add_signal_handler(getattr(signal, f'SIG{sig}'), rdircd_task.cancel)
+		for sig in signal.SIGINT, signal.SIGTERM:
+			loop.add_signal_handler(sig, rdircd_task.cancel)
 		with cl.suppress(asyncio.CancelledError): return await rdircd_task
 
 	log.debug('Starting eventloop...')
