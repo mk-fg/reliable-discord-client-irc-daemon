@@ -33,6 +33,7 @@ class RDIRCDConfigBase:
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
+	irc_prefix_call = '[call] '
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
 	irc_prefix_all_private = '' # universal prefix to include in all incoming private-chat msgs
@@ -2037,7 +2038,7 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 
 		# Known-ignored events
-		elif o in [ 'typing', 'integration', 'channel_pins', 'webhooks',
+		elif o in [ 'typing', 'integration', 'channel_pins', 'webhooks', 'call',
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
 			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers' ]: return
 		elif re.search( r'^(voice|guild_scheduled_event'
@@ -2291,10 +2292,12 @@ class DiscordSession:
 			return self.discord.cmd_msg_recv( cc,
 				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
 		flake, author = None, m.get('author')
+		if not m.get('content') and m.get('call'):
+			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 		if not author:
 			if ( act == 'update'
-					and not set(m.keys()).difference('id flags embeds channel_id guild_id'.split()) ):
-				return # type=rich/image updates, latter with same exact links - not useful
+					and not set(m.keys()).difference('id flags embeds channel_id guild_id call'.split()) ):
+				return # call or type=rich/image updates, latter with same exact links - not useful
 			self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 			return
 		else: self.discord.cmd_user_cache(gg.id, author.id, author.username)
