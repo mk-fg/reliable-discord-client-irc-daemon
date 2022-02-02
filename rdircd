@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '1.251' # git-version: py-str
+	version = '1.253' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -102,6 +102,11 @@ class RDIRCDConfigBase:
 	# For example "=vot5 hi!" will send "hi!" msg to =vot5 thread
 	#   sub-channel only, or print an error if such thread-id is not recognized.
 	discord_thread_redirect_prefixed_responses_from_parent_chan = True
+
+	# Print info for some embedded youtube links and such, if discord provides it
+	discord_embed_info = True
+	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
+	discord_embed_info_len = 200 # to truncate long youtube titles and such
 
 	auth_email = ''
 	auth_password = ''
@@ -1490,6 +1495,7 @@ class DiscordSession:
 
 		# Negative values are internal types
 		bot_embeds = -1001
+		media_info = -1002
 
 	class c_rel_type(enum.IntEnum):
 		none = 0
@@ -1535,7 +1541,7 @@ class DiscordSession:
 		self.rate_limits = adict()
 		self.st = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict() )})
-		self.st.me = self.st.guilds[1]
+		self.st.update(me=self.st.guilds[1], embed_info=dict())
 		self.auth_token, self.auth_token_manual = (
 			self.get_auth('token'), self.get_auth('token_manual') )
 		self.ws_enabled = False
@@ -2283,6 +2289,8 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
+		flake, author = None, m.get('author')
+
 		if cc.get('tid') and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
@@ -2291,18 +2299,24 @@ class DiscordSession:
 			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
 			return self.discord.cmd_msg_recv( cc,
 				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
-		flake, author = None, m.get('author')
 		if not m.get('content') and m.get('call'):
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
+
+		media_info = None
 		if not author:
-			if ( act == 'update'
-					and not set(m.keys()).difference('id flags embeds channel_id guild_id call'.split()) ):
-				return # call or type=rich/image updates, latter with same exact links - not useful
-			self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
-			return
+			# No-author update msgs are annotations or status updates for earlier ones
+			# E.g. YouTube video info follow-up after posted link or call status update
+			media_info = ( act == 'update' and
+				self.conf.discord_embed_info and self.op_msg_media_info(m) )
+			if media_info: # will be processed into msg below
+				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
+			elif act == 'update' and not set(m.keys()).difference([
+				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
+			else: return self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
 		else: self.discord.cmd_user_cache(gg.id, author.id, author.username)
+
 		line, tags = self.op_msg_parse(m, gg)
-		if not line: return # joins/parts/pins and such
+		if not (line or media_info): return # joins/parts/pins events and such
 		if act == 'update': tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake, ref = m.id, m.get('referenced_message')
@@ -2314,12 +2328,43 @@ class DiscordSession:
 				if ref_user and ref:
 					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
 					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
+
+		if self.conf.discord_embed_info:
+			if act != 'media':
+				if re.search(r'\b(https?://|(www\.|m\.)?youtube\.|youtu\.be)\b', line):
+					while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
+						del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
+					self.st.embed_info[m.id] = author
+				if not media_info: media_info = self.op_msg_media_info(m)
+			if media_info:
+				(author, em_lines), line_len = media_info, self.conf.discord_embed_info_len
+				tags['_prefix'] = ( tags.get('_prefix', '') +
+					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
+				line = '\n'.join([line, *(str_repr(line, line_len) for line in em_lines)]).strip()
+			if not (author and line): return
+
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
 		self.discord.cmd_msg_recv(
 			cc, author.username, line.strip(), tags, flake=flake,
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
+
+	def op_msg_media_info(self, m):
+		try:
+			if not any(em.type == 'video' for em in m.embeds): raise LookupError
+		except: return # no supported embed info detected
+		lines, author = list(), self.st.embed_info.get(m.id)
+		if not author: return # can be rotated out of cache
+		for n, em in enumerate(m.embeds):
+			info = ' :: '.join(filter( None,
+				[em.get('author', dict()).get('name'), em.get('title')] ))
+			if not info: info = re.sub(r'\n+', ' // ', info.get('description', ''))
+			if not info: continue
+			host = em.get('provider', dict()).get('name')
+			host = '' if not host else f' [{host}]'
+			lines.append(f'Video{host}: {info}')
+		return author, lines
 
 	def op_msg_parse(self, m, gg):
 		# Must produce non-empty message for any relevant msg type
