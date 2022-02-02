@@ -3099,7 +3099,7 @@ class RDIRCD:
 		if not name:
 			self.log.warning( 'Failed to resolve channel did'
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
-		for conn in conn_list:
+		for conn, line in it.product(conn_list, line.splitlines()):
 			conn.cmd_msg_synth( nick,
 				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
 
