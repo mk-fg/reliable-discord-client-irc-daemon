@@ -67,7 +67,8 @@ Features
   None of these will change after reconnection, channel or server reshuffling,
   etc - translation is mostly deterministic and does not depend on other names.
 
-- Translation for discord mentions, replies, attachments and emojis in incoming msgs.
+- Translation for discord mentions, replies, attachments, stickers and emojis
+  in incoming msgs, basic annotations for some embedded links.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog

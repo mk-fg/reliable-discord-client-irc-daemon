@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '1.253' # git-version: py-str
+	version = '1.255' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -103,10 +103,10 @@ class RDIRCDConfigBase:
 	#   sub-channel only, or print an error if such thread-id is not recognized.
 	discord_thread_redirect_prefixed_responses_from_parent_chan = True
 
-	# Print info for some embedded youtube links and such, if discord provides it
+	# Print info for some embedded youtube, twitter, etc links, if/when discord provides it
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
-	discord_embed_info_len = 200 # to truncate long youtube titles and such
+	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
 
 	auth_email = ''
 	auth_password = ''
@@ -2304,8 +2304,8 @@ class DiscordSession:
 
 		media_info = None
 		if not author:
-			# No-author update msgs are annotations or status updates for earlier ones
-			# E.g. YouTube video info follow-up after posted link or call status update
+			# No-author update msgs are embed-annotations or status updates for earlier ones
+			# E.g. YT video or twitter link info follow-up after posted link, call status update
 			media_info = ( act == 'update' and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) )
 			if media_info: # will be processed into msg below
@@ -2337,10 +2337,10 @@ class DiscordSession:
 					self.st.embed_info[m.id] = author
 				if not media_info: media_info = self.op_msg_media_info(m)
 			if media_info:
-				(author, em_lines), line_len = media_info, self.conf.discord_embed_info_len
+				(author, em_lines), n = media_info, self.conf.discord_embed_info_len
 				tags['_prefix'] = ( tags.get('_prefix', '') +
 					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
-				line = '\n'.join([line, *(str_repr(line, line_len) for line in em_lines)]).strip()
+				line = '\n'.join([line, *(str_repr(line, n) for line in em_lines)]).strip()
 			if not (author and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
@@ -2351,20 +2351,34 @@ class DiscordSession:
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m):
-		try:
-			if not any(em.type == 'video' for em in m.embeds): raise LookupError
-		except: return # no supported embed info detected
-		lines, author = list(), self.st.embed_info.get(m.id)
-		if not author: return # can be rotated out of cache
-		for n, em in enumerate(m.embeds):
-			info = ' :: '.join(filter( None,
-				[em.get('author', dict()).get('name'), em.get('title')] ))
-			if not info: info = re.sub(r'\n+', ' // ', info.get('description', ''))
-			if not info: continue
-			host = em.get('provider', dict()).get('name')
-			host = '' if not host else f' [{host}]'
-			lines.append(f'Video{host}: {info}')
-		return author, lines
+		lines, author, embeds = list(), self.st.embed_info.get(m.id), m.get('embeds')
+		if not (author and embeds): return
+		for n, em in enumerate(embeds):
+			emt, title, desc = (em.get(k, '') for k in ['type', 'title', 'description'])
+			em_src = em.get('author', dict()).get('name')
+			if emt == 'rich': # there are many types of these
+				if em.get('footer', dict()).get('text') == 'Twitter':
+					if em_src or title:
+						lines.append(' :: '.join(filter(None, [
+							f'Twitter {"msg" if em_src else "acc"}', em_src or title, desc ])))
+					for mt in 'image', 'video':
+						media = em.get(mt)
+						if media: media = media.get('url') or media.get('proxy_url')
+						if media:
+							if em_src or title: lines.append(f' {mt} :: {media}')
+							else:
+								info = f' [ {desc} ]' if desc else ''
+								lines.append(f'Twitter {mt} :: {em_src or title} :: {media}{info}')
+				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
+			if emt == 'video':
+				host = em.get('provider', dict()).get('name')
+				info = ' :: '.join(filter(None, ( ['-clip-', title, desc]
+					if host == 'YouTube' and not em_src else [em_src, title or desc] )))
+				if info:
+					host = '' if not host else f' ({host})'
+					lines.append(f'Video{host} :: {info}')
+		if not lines: return
+		return author, list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
 
 	def op_msg_parse(self, m, gg):
 		# Must produce non-empty message for any relevant msg type
