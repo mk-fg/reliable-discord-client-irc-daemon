@@ -2360,17 +2360,19 @@ class DiscordSession:
 			em_src = em.get('author', dict()).get('name')
 			if emt == 'rich': # there are many types of these
 				if em.get('footer', dict()).get('text') == 'Twitter':
-					if em_src or title:
-						lines.append(' :: '.join(filter(None, [
-							f'Twitter {"msg" if em_src else "acc"}', em_src or title, desc ])))
+					media = dict()
 					for mt in 'image', 'video':
-						media = em.get(mt)
-						if media: media = media.get('url') or media.get('proxy_url')
-						if media:
-							if em_src or title: lines.append(f' {mt} :: {media}')
-							else:
-								info = f' [ {desc} ]' if desc else ''
-								lines.append(f'Twitter {mt} :: {em_src or title} :: {media}{info}')
+						url = em.get(mt)
+						if url: url = url.get('url') or url.get('proxy_url')
+						if url: media[mt] = url
+					if em_src:
+						if media and re.search(r'^\s*https://t\.co/\S+\s*$', desc):
+							for mt, url in media.items():
+								lines.append(f'Twitter {mt} :: {em_src} :: {url}')
+							media.clear()
+						else: lines.append(f'Twitter msg :: {em_src} :: {desc}')
+					elif title: lines.append(f'Twitter acc :: {title} [ {desc} ]')
+					for mt, url in media.items(): lines.append(f' {mt} :: {url}')
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 			if emt == 'video':
 				host = em.get('provider', dict()).get('name')
