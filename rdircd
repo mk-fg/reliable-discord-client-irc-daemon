@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '1.256' # git-version: py-str
+	version = '1.257' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -115,6 +115,7 @@ class RDIRCDConfigBase:
 
 	debug_verbose = False
 	debug_asyncio = False
+	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50
 	debug_proto_cut = 90
 	debug_proto_log_shared = True # sends protocol logs to normal debug logging and log-file
@@ -289,10 +290,11 @@ def str_part(s, sep, default=None):
 	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
-def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]'):
+def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]', squash_lines=False):
 	'Truncates longer strings to "max_len", adding "ext" suffix.'
 	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
 	if not isinstance(s, str): s = str(s)
+	if squash_lines: s = s.replace('\n', '⏎')
 	s_len, s_repr, ext_tpl = f'{len(s):,d}', repr(s)[1:-1], ext.format(s_len='12/345')
 	if max_len > 0 and len(s_repr) > max_len:
 		s_len = f'{max_len}/{s_len}'
@@ -1259,7 +1261,9 @@ class Discord:
 	async def cmd_info_dump(self, info_url):
 		if not self.session: return f'No info for {info_url}: no discord session'
 		try: info = await self.session.req(info_url)
-		except DiscordHTTPError as err: return f'No info for {info_url}: {err}'
+		except DiscordHTTPError as err:
+			err = str_repr(err, self.conf.debug_err_cut, squash_lines=True)
+			return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
 	def cmd_msg_recv( self, cc, nick, line,
@@ -1670,15 +1674,15 @@ class DiscordSession:
 				if att != 'normal': raise DiscordSessionError('Auth failed')
 			break
 		if res.status >= 400:
-			body = await res.text()
-			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {body}')
+			err = str_repr(await res.text(), self.conf.debug_err_cut, squash_lines=True)
+			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {err}')
 		if not raw:
 			res_raw = res
 			try: res = await res.json()
 			except aiohttp.ContentTypeError:
-				body = await res.text()
+				err = str_repr(await res.text(), self.conf.debug_err_cut, squash_lines=True)
 				raise DiscordHTTPError(
-					f'[{res.status}] non-JSON data ({res.content_type}) - {body}' ) from None
+					f'[{res.status}] non-JSON data ({res.content_type}) - {err}' ) from None
 			finally: res_raw.release()
 		res_repr = str(res)
 		if '\n' in res_repr: res_repr = (res_repr.strip() + ' ').splitlines()[0]
