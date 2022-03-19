@@ -550,6 +550,21 @@ Never encountered this problem myself so far.
 
 .. _issue-1: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
 
+Almost every message I see are reacts by people :(
+``````````````````````````````````````````````````
+
+Run ``rdircd --conf-dump-defaults``, and you should see an option for this in there::
+
+  [irc]
+  ...
+  ; disable-reactions: disables all "--- reacts" messages
+  disable-reactions = no
+
+Flip that to "yes" in config to disable all those, or alternatively they can be
+blocked in a more fine-grained way in the IRC client.
+
+There's a bunch of other similar tweaks that can be useful in there too.
+
 Debugging anything strange, unknown or unexpected
 `````````````````````````````````````````````````
 
