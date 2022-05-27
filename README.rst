@@ -637,6 +637,10 @@ following things can be monitored and/or enabled:
   shared freely on the internet in-full or as-is, but can definitely help to
   identify/fix any problems.
 
+- Running ``/version`` IRC-command should at least print something like
+  ``host 351 mk-fg 22.05.1 rdircd rdircd discord-to-irc bridge`` on the first line,
+  which is definitely useful to report, if it's not the latest one in this git repo.
+
 Generally if an issue is easy to reproduce (e.g. "I send message X anywhere and
 get this error"), it can be reported without digging much deeper for more info,
 as presumably anyone debugging it should be able to do that as well, but maybe
