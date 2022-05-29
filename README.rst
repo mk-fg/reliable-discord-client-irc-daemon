@@ -266,6 +266,8 @@ Notes on information here:
 - There's #rdircd.monitor catch-all channel and guild-specific ones (see notes below).
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
+- Everything in that /list and everything used to talk through this app are IRC
+  channels (with #, that you /join), it doesn't use /q or /msg pretty much anywhere.
 
 ``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
 Channels joins/parts in IRC side do not affect discord in any way.
