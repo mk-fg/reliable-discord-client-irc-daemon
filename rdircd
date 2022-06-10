@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.05.0' # git-version: py-str
+	version = '22.06.0' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -3549,6 +3549,8 @@ def main(args=None, conf=None):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
 	sys.excepthook = handle_exception
 
+	for p in conf_user_paths:
+		log.debug('Loaded configuration file: {}', p)
 	for k_old, k_new in conf._conf_sections_old.items():
 		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
 		log.warning( 'Old and deprecated section'
