@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.06.0' # git-version: py-str
+	version = '22.06.1' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -3415,6 +3415,9 @@ def parse_conf_code_comments():
 				if comm:
 					if var and re.search('^' + re.escape(var_code) + r'\s+', comm):
 						comm = var + comm[len(var_code):]
+					if comm.split(None, 1)[0].istitle():
+						word1, *comm = comm.split(None, 1)
+						comm = ' '.join([word1.lower(), *comm])
 					if not comm.startswith(var): comm = f'{var}: {comm}'
 					comms[var] = comm
 			if comm_buffer and (not comm or var):
@@ -3447,7 +3450,7 @@ def main(args=None, conf=None):
 			' currently detected (and/or specified) configuration file(s), and exit.'))
 	group.add_argument('--conf-dump-defaults', action='store_true',
 		help=fill('Print all default settings which would be used if no'
-			' configuration file(s) were overriding these, with some comments, and exit.'))
+			' configuration file(s) were overriding these, with some extra comments, and exit.'))
 	group.add_argument('--conf-dump-state', action='store_true',
 		help=fill('Print "state" section from the config file,'
 			' with keys corresponding to app startups and iso8601'
