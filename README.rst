@@ -233,8 +233,7 @@ everything in the system then (or maybe do it anyway).
 If you set an IRC password though, make sure to use it when configuring
 connection to this server in the IRC client as well.
 
-| Start rdircd daemon: ``./rdircd --debug``
-| (note: if installed from dis
+Start rdircd daemon: ``./rdircd --debug``
 
 Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
 or -i/--irc-bind option for using different host/port).
