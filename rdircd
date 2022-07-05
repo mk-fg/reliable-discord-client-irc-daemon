@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.07.0' # git-version: py-str
+	version = '22.07.1' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -305,8 +305,12 @@ def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]', squash_lines=F
 			s_repr = s_repr.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
 	return s_repr
 
-irc_name_eq = lambda a, b: a.lower() == b.lower()
-
+def data_repr(data):
+	pp = getattr(data_repr, '_pp', None)
+	if not pp:
+		import pprint as pp
+		pp = data_repr._pp = pp.PrettyPrinter(indent=2, width=100, compact=True)
+	return pp.pformat(data)
 
 def str_hash(s, c=None, key='rdircd', strip=''):
 	s_raw, s = s, base64.urlsafe_b64encode(
@@ -323,25 +327,6 @@ def tuple_hash(t, c=None, key='rdircd'):
 	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
 	return str_hash(s, c=c, key=key)
 
-
-def data_repr(data):
-	pp = getattr(data_repr, '_pp', None)
-	if not pp:
-		import pprint as pp
-		pp = data_repr._pp = pp.PrettyPrinter(indent=2, width=100, compact=True)
-	return pp.pformat(data)
-
-def force_list(v):
-	if not v: v = list()
-	elif isinstance(v, cs_abc.ValuesView): v = list(v)
-	elif not isinstance(v, list): v = [v]
-	return v
-
-def dict_update(d, du_iter=None, sync=True):
-	keys_old, du = set(d.keys()), dict()
-	if du_iter: du.update(du_iter)
-	d.update(du)
-	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
 @cl.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
@@ -598,52 +583,34 @@ def repr_duration( ts, ts0=None,
 		return ' '.join(res)
 
 
-def iter_gather(cls, cache=False):
-	'''Auto-gathers iterator function result into cls.
-		cache=True will memoize function, allowing *args only,
-			and pass cache_track func as a second argument to all calls.
-		cache_track usage:
-			ct(d) - any shallow changes to adict "d" will drop result cache for this call.
-			ct(d, 'key1 key2 ...'), ct(d, [k1, k2, ...])
-				Any changes to specified keys of "d" will drop result cache for this call.
-				If any of these keys have adict value, shallow changes to it will propagate.'''
+def force_list(v):
+	if not v: v = list()
+	elif isinstance(v, cs_abc.ValuesView): v = list(v)
+	elif not isinstance(v, list): v = [v]
+	return v
+
+def dict_update(d, du_iter=None, sync=True):
+	'Update or replace dict contents, returning difference in the latter case.'
+	keys_old, du = set(d.keys()), dict()
+	if du_iter: du.update(du_iter)
+	d.update(du)
+	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
+
+def iter_gather(container):
+	'Auto-gathers iterator function result into some container.'
 	def _cls_wrapper(func):
-		if cache: stats_k = func.__name__ if cache is True else str(cache)
-		@ft.wraps(func)
 		def _wrapper(self, *args, **kws):
-			if not cache: return cls(func(self, *args, **kws))
-			if kws: raise ValueError(kws)
-			k = (func.__qualname__, *args)
-			if k not in iter_gather.cache:
-				cache_track = ft.partial(iter_gather_track, k)
-				args = [cache_track, *args]
-				iter_gather.cache[k] = cls(func(self, *args, **kws))
-				iter_gather.cache_stats[stats_k, 'miss'] += 1
-			else: iter_gather.cache_stats[stats_k, 'hit'] += 1
-			return iter_gather.cache[k]
-		return _wrapper
+			return container(func(self, *args, **kws))
+		return ft.wraps(func)(_wrapper)
 	return _cls_wrapper
-
-def iter_gather_cb(cache_k, keys, k, v):
-	if keys and k not in keys: return
-	iter_gather.cache.pop(cache_k, None)
-
-def iter_gather_track(cache_k, o, keys=None):
-	if not isinstance(o, adict): raise TypeError(o)
-	if isinstance(keys, str): keys = keys.split()
-	o._cache_cb_add( cache_k,
-		ft.partial(iter_gather_cb, cache_k, keys) )
-	for k in keys or list():
-		if isinstance(o.get(k), adict): iter_gather_track(cache_k, o[k])
-
-iter_gather.cache, iter_gather.cache_stats = dict(), cs.Counter()
 
 
 class adict(cs.UserDict):
-	__slots__ = 'data', '_cache_cb'
+	'dict with attribute access and update-tracking for cache invalidation.'
+	__slots__ = 'data', '_track_keys', '_track_cb'
 
 	def __init__(self, *args, **kws):
-		self._cache_cb = None
+		self._track_keys = self._track_cb = None
 		super().__init__(*args, **kws)
 		self._make(self)
 
@@ -653,13 +620,20 @@ class adict(cs.UserDict):
 		elif isinstance(v, (tuple, list)): v = type(v)(map(self._make, v))
 		return v
 
-	def _cache_cb_add(self, cb_k, cb):
-		if self._cache_cb is None: self._cache_cb = dict()
-		self._cache_cb[cb_k] = cb
-	def _cache_cb_check(self, k, v=...):
-		if not self._cache_cb: return
-		for cb in self._cache_cb.values(): cb(k, v)
-		self._cache_cb.clear()
+	def _track(self, keys=None, cb=None):
+		'Run cb() on specified (or any) key changes in this adict.'
+		# Intended to only be used in one place, so overrides any earlier cb
+		if keys:
+			self._track_keys = set(keys.split())
+			for k in self._track_keys:
+				if type(d := self.get(k)) is adict: d._track(cb=cb)
+		self._track_cb = cb
+	def _track_check(self, k):
+		if not self._track_cb: return
+		if self._track_keys:
+			if k not in self._track_keys: return
+			elif type(d := self.get(k)) is adict: d._track(cb=cb)
+		self._track_cb()
 
 	def __getattr__(self, k):
 		if k not in self.__slots__: return self[k]
@@ -670,11 +644,14 @@ class adict(cs.UserDict):
 	def __delattr__(self, k, v): del self[k]
 
 	def __setitem__(self, k, v):
-		super().__setitem__(k, v)
-		self._cache_cb_check(k, v)
+		self._track_check(k)
+		return super().__setitem__(k, v)
 	def __delitem__(self, k):
-		super().__delitem__(k)
-		self._cache_cb_check(k)
+		self._track_check(k)
+		return super().__delitem__(k)
+
+
+irc_name_eq = lambda a, b: a.lower() == b.lower()
 
 class irc_name_dict(cs.UserDict):
 	value_map = classmethod(
@@ -1238,7 +1215,7 @@ class Discord:
 
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
-		list(self.bridge.cmd_chan_map()) # enough to trigger re-caching
+		return list(self.bridge.cmd_chan_map()) # to trigger re-caching
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		if not self.session: return list()
@@ -1885,8 +1862,8 @@ class DiscordSession:
 			if self.ws_tasks: await self.ws_tasks.close()
 			if self.ws: await self.ws.close()
 			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
+			self.st.disconnect_ts = time.monotonic()
 			self.state('disconnected')
-			self.st.connect_ts = None
 			self.ws_closed.set()
 		finally: self.ws_closed_clean.set()
 
@@ -1985,7 +1962,7 @@ class DiscordSession:
 
 	def op_ready(self, m):
 		md, resume, ts = m.get('d'), False, time.monotonic()
-		ts_last = (self.st.get(k, 0) for k in ['session_ts', 'connect_ts'])
+		ts_last = (self.st.get(k) for k in ['session_ts', 'connect_ts'])
 		if md and md.get('session_id'):
 			self.st.update(
 				session_id=md.session_id,
@@ -1999,14 +1976,16 @@ class DiscordSession:
 			self.log.debug('New session id: {}', self.st.session_id)
 		else: resume = True
 		if self.conf.discord_ws_reconnect_warn_always:
+			ts1 = self.st.get('disconnect_ts') or ts
 			td_sess, td_conn = (
-				(repr_duration(ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_last )
+				(repr_duration(ts1, ts0, ext=None) if ts0 else '-') for ts0 in ts_last )
 			self.log.warning(
-				'Discord session (re-)connected{}:'
-					' {}sess-lifetime=[{}] last-conn-duration=[{}] id={}',
-				' [resumed]' if resume else ' [new]', 'last-' if not resume else '',
-				td_sess, td_conn, self.st.session_id )
-		self.st.connect_ts = ts # resets on session-resume too
+				'Discord session (re-)connected{}: id={}{}',
+				' [resumed]' if resume else ' [new]', self.st.session_id[:6],
+				'' if not (td_sess + td_conn).strip('-') else
+					' {}sess-lifetime=[{}] last-conn-duration=[{}]'\
+						.format('last-' if not resume else '', td_sess, td_conn) )
+		self.st.connect_ts, self.st.disconnect_ts = ts, None
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
@@ -2853,7 +2832,18 @@ class RDIRCD:
 		for nick_discord, nick_irc in self.cmd_chan_names_discord(name):
 			if nick_irc not in conn_nicks: yield nick_irc
 
-	@iter_gather(adict, cache=True)
+	def _cmd_chan_map_cache(func):
+		# Caches chan_map, invalidated on some specific adict/key changes
+		chan_map = None
+		def _cache_drop(): nonlocal chan_map; chan_map = None
+		def _cache_track(d, keys=None): d._track(keys, cb=_cache_drop)
+		def _wrapper(self):
+			nonlocal chan_map
+			if not chan_map: chan_map = adict(func(self, _cache_track))
+			return chan_map
+		return ft.wraps(func)(_wrapper)
+
+	@_cmd_chan_map_cache
 	def cmd_chan_map(self, cache_track):
 		'''Overloaded function to return cached adict of
 				{chan-name: {name, topic, did, ts_created}},
@@ -2909,6 +2899,7 @@ class RDIRCD:
 		sess_time, conn_time = (
 			(v and repr_duration(ts, v, ext=None))
 			for v in (st.get(k, '') for k in ('session_ts', 'connect_ts')) )
+		if sess_st != 'ready': conn_time = ''
 		send('\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
 			f'  session-id: {sess_id}',
@@ -3018,13 +3009,12 @@ class RDIRCD:
 				'  proto share/unshare - (alias: ps/pu)',
 				'    whether to dump protocol logging (level=debug) to regular logs',
 				f'  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines',
-				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).',
-				'  cache stats - (alias: cs) print hit/miss info on some internal caches' ]))
+				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).' ]))
 		with cl.suppress(KeyError):
 			line = dict(
 				i='level info', d='level debug', w='level warning',
-				cs='cache stats', px='proto off', ps='proto share',
-				pu='proto unshare', pt='proto tail' )[line[0]].split() + line[1:]
+				px='proto off', ps='proto share', pu='proto unshare', pt='proto tail'
+			)[line[0]].split() + line[1:]
 		cmd, arg = line[0], line[1] if len(line) >= 2 else None
 		if cmd == 'level' and len(line) == 2:
 			level = getattr(logging, arg.upper(), None)
@@ -3060,17 +3050,6 @@ class RDIRCD:
 					arg = f'file={path}'
 				else: arg = 'unavailable'
 				send(f'-- protocol log: {arg}')
-		elif cmd == 'cache':
-			if arg == 'stats':
-				send(f'-- cache stats:')
-				stats = dict()
-				for (k, t), n in iter_gather.cache_stats.items():
-					stats.setdefault(k, [0, 0])[t != 'hit'] = n
-				for k, (n_hit, n_miss) in stats.items():
-					send(
-						f'--- {k}: {n_hit:,d} / {n_hit + n_miss:,d}'
-						f' [{100 * n_hit / (n_hit + n_miss):.1f}%]' )
-				send(f'-- cache stats end')
 
 	def cmd_log(self, line):
 		if not self.init: return
