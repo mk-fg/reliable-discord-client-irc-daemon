@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.07.1' # git-version: py-str
+	version = '22.07.2' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -606,7 +606,7 @@ def iter_gather(container):
 
 
 class adict(cs.UserDict):
-	'dict with attribute access and update-tracking for cache invalidation.'
+	'dict with simplier access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', '_track_keys', '_track_cb'
 
 	def __init__(self, *args, **kws):
@@ -637,18 +637,18 @@ class adict(cs.UserDict):
 
 	def __getattr__(self, k):
 		if k not in self.__slots__: return self[k]
-		return self.__getattribute__(k)
+		else: return self.__getattribute__(k)
 	def __setattr__(self, k, v):
 		if k not in self.__slots__: self[k] = v
-		return super().__setattr__(k, v)
+		else: return super().__setattr__(k, v)
 	def __delattr__(self, k, v): del self[k]
 
 	def __setitem__(self, k, v):
+		super().__setitem__(k, v)
 		self._track_check(k)
-		return super().__setitem__(k, v)
 	def __delitem__(self, k):
+		super().__delitem__(k)
 		self._track_check(k)
-		return super().__delitem__(k)
 
 
 irc_name_eq = lambda a, b: a.lower() == b.lower()
