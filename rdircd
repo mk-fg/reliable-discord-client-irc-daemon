@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.07.3' # git-version: py-str
+	version = '22.07.4' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -66,7 +66,7 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_min = '65.0'
 	discord_ws_reconnect_max = '700.0'
 	discord_ws_reconnect_factor = 1.6
-	discord_ws_reconnect_warn = '7200:6' # to filter-out expected reconnects
+	discord_ws_reconnect_warn = '1800:6' # to filter-out expected reconnects
 	discord_ws_reconnect_warn_always = False # log warning with session info on every reconnect
 	discord_ws_reconnect_on_auth_fail = False # useful for discord service disruptions
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -382,14 +382,13 @@ def token_bucket(spec, negative_tokens=False):
 			else: interval = float(a) / float(b)
 		if min(interval, burst) < 0: raise ValueError()
 	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
-	# log.debug('tbf parameters: interval={:.1f}, burst={:.1f}', interval, burst)
 	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
 	val = (yield) or 1
 	while True:
 		ts = time.monotonic()
 		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
-		val, tokens = (None, tokens - val) if tokens >= val else\
-			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens)
+		val, tokens = ( (None, tokens - val) if tokens >= val else
+			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens) )
 		val = (yield val) or 1
 
 
