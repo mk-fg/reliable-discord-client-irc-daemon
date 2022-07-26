@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.07.4' # git-version: py-str
+	version = '22.07.5' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -111,7 +111,7 @@ class RDIRCDConfigBase:
 
 	auth_email = ''
 	auth_password = ''
-	auth_token = ''
+	auth_token = '' # can be fetched using email/password, unless mfa/captcha is in the way
 	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	debug_verbose = False
@@ -123,7 +123,7 @@ class RDIRCDConfigBase:
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
-	debug_proto_aiohttp = True
+	debug_proto_aiohttp = True # log aiohttp request/response info
 	debug_log_file = '' # not affected by "verbose" option in any way
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
@@ -281,6 +281,7 @@ def sockopt_resolve(prefix, v):
 		if not k.startswith(prefix): continue
 		if getattr(socket, k) == v: return k[len(prefix):]
 	return v
+
 
 # str_norm is NOT used in irc, where ascii-only casefold is more traditional
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
@@ -905,7 +906,7 @@ class IRCProtocol:
 		self.st.update(user=name, real_name=real_name)
 		self.check_auth_done()
 	def recv_cmd_nick(self, nick):
-		if not re.search(r'^[a-zA-Z-._]+$', nick):
+		if not re.search(r'^[-._a-zA-Z0-9]+$', nick):
 			return self.send(432, nick, ':Erroneus nickname')
 		if self.bridge.cmd_conn(nick):
 			return self.send(433, nick, ':Nickname is already in use')
