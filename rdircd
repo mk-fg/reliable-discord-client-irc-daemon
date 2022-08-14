@@ -995,7 +995,7 @@ class IRCProtocol:
 		self.send(f':{self.st.nick} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
-		self.send(f'MODE {chan} +v {self.st.nick}')
+		self.send(0, f'MODE {chan} +v {self.st.nick}')
 		self.st.chans.add(name)
 
 	def recv_cmd_part(self, chan, reason=None):
