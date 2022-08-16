@@ -21,6 +21,8 @@ lacking in other similar clients at the time.
 | There's an IRC channel to talk about the thing - join `#rdircd at libera.chat`_.
 | IRC URL: ircs://irc.libera.chat/rdircd (github refuses to make ircs:// links)
 
+See also Links_ section below for rarely-updated list of other alternative clients.
+
 .. _Discord: http://discord.gg/
 .. _IRC: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 .. _#rdircd at libera.chat: https://web.libera.chat/?channels=#rdircd
@@ -652,7 +654,7 @@ or maybe give an idea where to look at for fixing or working around these.
 Links
 -----
 
-Other third-party Discord clients that I'm aware of atm (2020-05-07),
+Other third-party Discord clients that I'm aware of atm (2022-08-16),
 in no particular order.
 
 IRC-translation clients (like this one):
@@ -667,21 +669,23 @@ Graphical UI (GUI) clients:
 - gtkcord_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
 - Ripcord_ - cross-platform proprietary shareware client, also supports slack
 
-Web UI (in-browser) clients:
-
-- BetterDiscord_ - alternative in-browser web interface/client (see also BandagedBD_ fork)
-- Powercord_ - privacy and client extension oriented mod/framework
-- Glasscord_ - discord client tweak for transparency and nicer looks
-- EnhancedDiscord_ (`joe27g/EnhancedDiscord`_) - JS plugin framework for extra client functionality
-
 Terminal UI (TUI, ncurses) clients:
 
+- discordo_ - relatively new but popular client written in Go.
 - Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 - 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
 - Terminal-Discord_ - minimal JS/node terminal client
 - `Discord Terminal`_ - customizable JS/node client with IRC layout and Windows OS support
 - Discurses_ - python urwid/curses client
 - Discline_ - another python client with typical IRC looks, seem to be broken atm
+
+Web UI (in-browser) clients:
+
+- BetterDiscord_ - alternative in-browser web interface/client (see also BandagedBD_ fork)
+- Powercord_ - privacy and client extension oriented mod/framework
+- Glasscord_ - discord client tweak for transparency and nicer looks
+- EnhancedDiscord_ (`joe27g/EnhancedDiscord`_) - JS plugin framework for extra client functionality
+- ... many-many more of these around, though note that browser client mods are explicitly against ToS, not just guidelines.
 
 Command-line clients:
 
@@ -702,6 +706,7 @@ Not an exhaustive list by any means.
 .. _EnhancedDiscord: https://enhanceddiscord.com/
 .. _joe27g/EnhancedDiscord: https://github.com/joe27g/EnhancedDiscord
 .. _6cord: https://gitlab.com/diamondburned/6cord/
+.. _discordo: https://github.com/ayntgl/discordo
 .. _Cordless: https://github.com/Bios-Marcel/cordless
 .. _Terminal-Discord: https://github.com/xynxynxyn/terminal-discord
 .. _Discord Terminal: https://github.com/cloudrex/discord-term
