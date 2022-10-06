@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.09.0' # git-version: py-str
+	version = '22.10.0' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -292,19 +292,21 @@ def str_part(s, sep, default=None):
 	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
-def str_repr(s, max_len=50, len_bytes=False, ext=' ...[{s_len}]', squash_lines=False):
-	'Truncates longer strings to "max_len", adding "ext" suffix.'
-	if isinstance(s, bytes): s = s.decode('utf-8', 'replace')
+def str_repr(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
+	'''Truncates longer strings to "max_len", adding "ext" suffix
+		Squashes line-breaks to ⏎, unless bytes or repr_fmt are used for full repr() escaping.'''
+	if isinstance(s, bytes): s, repr_fmt = s.decode('utf-8', 'replace'), True
 	if not isinstance(s, str): s = str(s)
-	if squash_lines: s = s.replace('\n', '⏎')
-	s_len, s_repr, ext_tpl = f'{len(s):,d}', repr(s)[1:-1], ext.format(s_len='12/345')
-	if max_len > 0 and len(s_repr) > max_len:
+	if repr_fmt: s = repr(s)[1:-1] # for logs and such, to escape all weird chars
+	else: s = s.replace('\n', '⏎')
+	s_len, ext_tpl = f'{len(s):,d}', ext.format(s_len='12/345')
+	if max_len > 0 and len(s) > max_len:
 		s_len = f'{max_len}/{s_len}'
-		if not len_bytes: s_repr = s_repr[:max_len - len(ext_tpl)] + ext.format(s_len=s_len)
+		if not len_bytes: s = s[:max_len - len(ext_tpl)] + ext.format(s_len=s_len)
 		else:
 			n = max_len - len(ext_tpl.encode())
-			s_repr = s_repr.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
-	return s_repr
+			s = s.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
+	return s
 
 def data_repr(data):
 	pp = getattr(data_repr, '_pp', None)
@@ -443,7 +445,8 @@ class StacklessContext:
 					await aio_await_wrap(coro)
 			except asyncio.CancelledError: pass
 			except Exception as err:
-				self.log.exception('Background task failed: {} - {}', coro, str_repr(err_fmt(err), 200))
+				self.log.exception( 'Background task failed: {} - {}',
+					coro, str_repr(err_fmt(err), 200, repr_fmt=True) )
 			finally:
 				assert task_id is not None, task_id
 				if self.tasks: self.tasks.pop(task_id, None)
@@ -1022,7 +1025,7 @@ class IRCProtocol:
 		if c is ...: c = self.req_chan_info(chan)
 		if not (c and c.topic): self.send(331, chan, ':No topic is set')
 		else:
-			topic = str_repr(c.topic, max_len=self.conf.irc_len_topic, len_bytes=True)
+			topic = str_repr(c.topic, self.conf.irc_len_topic, len_bytes=True)
 			self.send(332, chan, f':{topic}')
 			topic_src = c.get('topic_src')
 			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
@@ -1070,7 +1073,7 @@ class IRCProtocol:
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
 			names = self.bridge.cmd_chan_names(c.name)
-			topic = str_repr(c.topic, max_len=self.conf.irc_len_topic, len_bytes=True)
+			topic = str_repr(c.topic, self.conf.irc_len_topic, len_bytes=True)
 			self.send(322, self.chan_spec(c.name), len(names), f':{topic}')
 		self.send(323, ':End of /LIST')
 
@@ -1240,7 +1243,7 @@ class Discord:
 		if not self.session: return f'No info for {info_url}: no discord session'
 		try: info = await self.session.req(info_url)
 		except DiscordHTTPError as err:
-			err = str_repr(err, self.conf.debug_err_cut, squash_lines=True)
+			err = str_repr(err, self.conf.debug_err_cut)
 			return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
@@ -1654,13 +1657,13 @@ class DiscordSession:
 				if att != 'normal': raise DiscordSessionError('Auth failed')
 			break
 		if res.status >= 400:
-			err = str_repr(await res.text(), self.conf.debug_err_cut, squash_lines=True)
+			err = str_repr(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
 			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {err}')
 		if not raw:
 			res_raw = res
 			try: res = await res.json()
 			except aiohttp.ContentTypeError:
-				err = str_repr(await res.text(), self.conf.debug_err_cut, squash_lines=True)
+				err = str_repr(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
 				raise DiscordHTTPError(
 					f'[{res.status}] non-JSON data ({res.content_type}) - {err}' ) from None
 			finally: res_raw.release()
@@ -3044,7 +3047,7 @@ class RDIRCD:
 					if len(line) > 3: pt_cut = int(line[3])
 					lines = file_tail(self.conf._debug_proto.get_file(), pt_n)
 					send(f'-- protocol log tail [{len(lines)}/{pt_n}:{pt_cut}]:')
-					for line in lines: send(f'--- {str_repr(line, max_len=pt_cut)}')
+					for line in lines: send(f'--- {str_repr(line, pt_cut)}')
 					send(f'-- protocol log tail end')
 			elif len(line) >= 2:
 				path = line_src.strip().split(None, 1)[-1] # preserve spaces and case
