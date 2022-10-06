@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.1' # git-version: py-str
+	version = '22.10.2' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -117,8 +117,8 @@ class RDIRCDConfigBase:
 	debug_verbose = False
 	debug_asyncio = False
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
-	debug_msg_cut = 50
-	debug_proto_cut = 90
+	debug_msg_cut = 50 # message part length in debug logs
+	debug_proto_cut = 90 # cut-length for irc/discord protocol dump in debug msgs
 	debug_proto_log_shared = True # sends protocol logs to normal debug logging and log-file
 	debug_proto_log_file = ''
 	debug_proto_log_file_size = int(1.5e6)
@@ -292,7 +292,7 @@ def str_part(s, sep, default=None):
 	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
-def str_repr(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
+def str_cut(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
 	'''Truncates longer strings to "max_len", adding "ext" suffix.
 		Squashes line-breaks to ⏎, unless bytes or repr_fmt are used for full repr() escaping.'''
 	if isinstance(s, bytes): s, repr_fmt = s.decode('utf-8', 'replace'), True
@@ -446,7 +446,7 @@ class StacklessContext:
 			except asyncio.CancelledError: pass
 			except Exception as err:
 				self.log.exception( 'Background task failed: {} - {}',
-					coro, str_repr(err_fmt(err), 200, repr_fmt=True) )
+					coro, str_cut(err_fmt(err), 200, repr_fmt=True) )
 			finally:
 				assert task_id is not None, task_id
 				if self.tasks: self.tasks.pop(task_id, None)
@@ -748,7 +748,7 @@ class IRCProtocol:
 
 
 	def _repr_bin(self, data, prefix=False, max_len=None, ext=' [{data_len}]'):
-		'Binary-only version of str_repr().'
+		'Binary-only version of str_cut().'
 		if isinstance(data, str): data = data.encode()
 		if max_len is None: max_len = self.conf.debug_proto_cut
 		data_len, data_repr, ext_len = f'{len(data):,d}', repr(data)[2:-1], len(ext)
@@ -1025,7 +1025,7 @@ class IRCProtocol:
 		if c is ...: c = self.req_chan_info(chan)
 		if not (c and c.topic): self.send(331, chan, ':No topic is set')
 		else:
-			topic = str_repr(c.topic, self.conf.irc_len_topic, len_bytes=True)
+			topic = str_cut(c.topic, self.conf.irc_len_topic, len_bytes=True)
 			self.send(332, chan, f':{topic}')
 			topic_src = c.get('topic_src')
 			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
@@ -1073,7 +1073,7 @@ class IRCProtocol:
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
 			names = self.bridge.cmd_chan_names(c.name)
-			topic = str_repr(c.topic, self.conf.irc_len_topic, len_bytes=True)
+			topic = str_cut(c.topic, self.conf.irc_len_topic, len_bytes=True)
 			self.send(322, self.chan_spec(c.name), len(names), f':{topic}')
 		self.send(323, ':End of /LIST')
 
@@ -1173,7 +1173,7 @@ class Discord:
 	def __init__(self, rdircd):
 		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.discord')
-		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
+		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
 		if not ( self.conf.get('auth_email')
@@ -1243,7 +1243,7 @@ class Discord:
 		if not self.session: return f'No info for {info_url}: no discord session'
 		try: info = await self.session.req(info_url)
 		except DiscordHTTPError as err:
-			err = str_repr(err, self.conf.debug_err_cut, repr_fmt=True)
+			err = str_cut(err, self.conf.debug_err_cut, repr_fmt=True)
 			return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
@@ -1506,7 +1506,7 @@ class DiscordSession:
 		self.log_ws = get_logger(f'proto.ws')
 		self.log_http = get_logger(f'proto.http')
 		self.log_http_reqres = get_logger(f'proto.http.reqres')
-		self._repr = ft.partial(str_repr, max_len=self.conf.debug_proto_cut)
+		self._repr = ft.partial(str_cut, max_len=self.conf.debug_proto_cut, repr_fmt=True)
 
 	def get_auth(self, k, default=ValueError):
 		try: return self.conf.get(f'auth_{k}')
@@ -1657,13 +1657,13 @@ class DiscordSession:
 				if att != 'normal': raise DiscordSessionError('Auth failed')
 			break
 		if res.status >= 400:
-			err = str_repr(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
+			err = str_cut(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
 			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {err}')
 		if not raw:
 			res_raw = res
 			try: res = await res.json()
 			except aiohttp.ContentTypeError:
-				err = str_repr(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
+				err = str_cut(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
 				raise DiscordHTTPError(
 					f'[{res.status}] non-JSON data ({res.content_type}) - {err}' ) from None
 			finally: res_raw.release()
@@ -2335,7 +2335,7 @@ class DiscordSession:
 				ref_user = ref.get('author', dict()).get('username')
 				ref_user = f'<{ref_user}>' if ref_user else ''
 				ref_line, ref_tags = self.op_msg_parse(ref, gg)
-				ref = str_repr(ref_line, self.conf.irc_inline_reply_quote_len)
+				ref = str_cut(ref_line, self.conf.irc_inline_reply_quote_len)
 				if ref_user and ref:
 					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
 					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
@@ -2351,7 +2351,7 @@ class DiscordSession:
 				(author, em_lines), n = media_info, self.conf.discord_embed_info_len
 				tags['_prefix'] = ( tags.get('_prefix', '') +
 					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
-				line = '\n'.join([line, *(str_repr(line, n) for line in em_lines)]).strip()
+				line = '\n'.join([line, *(str_cut(line, n) for line in em_lines)]).strip()
 			if not (author and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
@@ -2535,7 +2535,7 @@ class RDIRCD:
 	def __init__(self, conf):
 		self.conf, self.init = conf, None
 		self.log = get_logger('rdircd.bridge')
-		self._repr = ft.partial(str_repr, max_len=self.conf.debug_msg_cut)
+		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
 		self.server_ver = self.conf.version
@@ -3047,7 +3047,7 @@ class RDIRCD:
 					if len(line) > 3: pt_cut = int(line[3])
 					lines = file_tail(self.conf._debug_proto.get_file(), pt_n)
 					send(f'-- protocol log tail [{len(lines)}/{pt_n}:{pt_cut}]:')
-					for line in lines: send(f'--- {str_repr(line, pt_cut)}')
+					for line in lines: send(f'--- {str_cut(line, pt_cut)}')
 					send(f'-- protocol log tail end')
 			elif len(line) >= 2:
 				path = line_src.strip().split(None, 1)[-1] # preserve spaces and case
@@ -3092,7 +3092,7 @@ class RDIRCD:
 				self.chans_mon[name] = ( 'rdircd: read-only'
 					' catch-all channel for messages from one discord' )
 		for s in lines:
-			s = f'{pre}{str_repr(s, n, len_bytes=True)}'
+			s = f'{pre}{str_cut(s, n, len_bytes=True)}'
 			conn.cmd_msg_synth(nick, c, s, notice=notice)
 			if gid: conn.cmd_msg_synth(nick, gid, s, notice=notice)
 
