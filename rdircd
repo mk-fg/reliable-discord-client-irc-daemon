@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.0' # git-version: py-str
+	version = '22.10.1' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -40,7 +40,7 @@ class RDIRCDConfigBase:
 	irc_names_timeout = '1d' # time since last activity
 	irc_motd_file_path = '' # file path to read for motd command
 
-	irc_len_hwm = 450 # will probably still work with most clients
+	irc_len_hwm = 450 # split irc lines when they're longer than hwm to lwm length
 	irc_len_lwm = 300
 	irc_len_topic = 300 # cannot be split, so is truncated instead
 	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor
@@ -293,7 +293,7 @@ def str_part(s, sep, default=None):
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
 def str_repr(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
-	'''Truncates longer strings to "max_len", adding "ext" suffix
+	'''Truncates longer strings to "max_len", adding "ext" suffix.
 		Squashes line-breaks to ⏎, unless bytes or repr_fmt are used for full repr() escaping.'''
 	if isinstance(s, bytes): s, repr_fmt = s.decode('utf-8', 'replace'), True
 	if not isinstance(s, str): s = str(s)
@@ -1243,7 +1243,7 @@ class Discord:
 		if not self.session: return f'No info for {info_url}: no discord session'
 		try: info = await self.session.req(info_url)
 		except DiscordHTTPError as err:
-			err = str_repr(err, self.conf.debug_err_cut)
+			err = str_repr(err, self.conf.debug_err_cut, repr_fmt=True)
 			return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
