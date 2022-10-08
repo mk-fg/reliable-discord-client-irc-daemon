@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.10' # git-version: py-str
+	version = '22.10.11' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1289,7 +1289,7 @@ class Discord:
 		if line == line_old: raise IRCBridgeSignal('edit-changed-nothing')
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line) )
-		line_tagged = await self.cmd_msg_send_annotate(cc, line)
+		line_tagged = await self.cmd_msg_mentionify(cc.gid, line)
 		await self.session.req(
 			f'channels/{cc.id}/messages/{flake}',
 			m='patch', json=dict(content=line_tagged) )
@@ -1321,7 +1321,7 @@ class Discord:
 		try:
 			res = None
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
-				line_tagged = await self.cmd_msg_send_annotate(cc, line)
+				line_tagged = await self.cmd_msg_mentionify(cc.gid, line)
 				res = asyncio.create_task(self.session.req(
 					f'channels/{cc.id}/messages',
 					m='post', json=dict(content=line_tagged, nonce=nonce) ))
@@ -1341,10 +1341,10 @@ class Discord:
 		cc.last_msg_sent = adict(flake=flake_res, line=line)
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 
-	async def cmd_msg_send_annotate(self, cc, line):
+	async def cmd_msg_mentionify(self, gid, line):
 		'''Translate IRC nick mentions matched by
 				"discord_msg_mention_re" replaced with Discord mention-tags, if any.
-			Either returns line with all mentioned translated or fails with DiscordError.'''
+			Either returns line with all mentions translated or fails with DiscordError.'''
 		# Regexp group replacements are made from the end to start,
 		#  with line/tag parts lists containing reversed str parts to reassemble.
 		# https://discord.com/developers/docs/reference#message-formatting
@@ -1357,12 +1357,12 @@ class Discord:
 			self.log.debug(
 				'Discord mention match [{}/{}]: {!r} [{}-{}]{}',
 				n+1, len(matches), tag, a, b, ' + ignore-pattern match' if mx else '' )
-			tag_parts = ( self.cmd_msg_annotate_ignore_strip(tag, mx)
-				if mx else await self.cmd_msg_annotate_translate_tag(cc, m, nick_idx) )
+			tag_parts = ( self.cmd_msg_mentionify_ignore_strip(tag, mx)
+				if mx else await self.cmd_msg_mentionify_translate_tag(gid, m, nick_idx) )
 			line_parts.extend([line[b:], *tag_parts, line[:a]])
 		return ''.join(reversed(line_parts))
 
-	def cmd_msg_annotate_ignore_strip(self, tag, mx):
+	def cmd_msg_mentionify_ignore_strip(self, tag, mx):
 		'Strips all capture groups in match from tag-string'
 		tag, subs = [tag], (mx.span(n) for n, s in enumerate(mx.groups(), 1))
 		for a, b in sorted(subs, reverse=True):
@@ -1370,35 +1370,34 @@ class Discord:
 			tag.extend([part[b:], part[:a]])
 		return tag
 
-	async def cmd_msg_annotate_translate_tag(self, cc, m, nick_idx):
+	async def cmd_msg_mentionify_translate_tag(self, gid, m, nick_idx):
 		tag, (a, b) = m.group(), m.span()
 		nick, (na, nb) = m.group(nick_idx), m.span(nick_idx)
-		if not (tag and nick): tag = [tag]
+		if not (tag and nick): return [tag]
+		subs = list( (ga-a, gb-a, '') for ga, gb in
+			(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
+		if self.conf.discord_msg_mention_irc_decode:
+			# This should make irc nicks usable for mention-tags as-is,
+			#  and fix matching e.g. discord names with spaces for default regexp.
+			nick = self.bridge.irc_name_revert(nick) or nick
+		if uid := self.user_mention_cache[gid].get(nick): # exact match
+			nick = f'<@{uid}>'
+			self.cmd_user_cache(gid, uid, replace=False)
 		else:
-			subs = list( (ga-a, gb-a, '') for ga, gb in
-				(m.span(n) for n, group in enumerate(m.groups(), 1) if n != nick_idx) )
-			if self.conf.discord_msg_mention_irc_decode:
-				# This should make irc nicks usable for mention-tags as-is,
-				#  and fix matching e.g. discord names with spaces for default regexp.
-				nick = self.bridge.irc_name_revert(nick) or nick
-			if uid := self.user_mention_cache[cc.gid].get(nick): # exact match
+			user_map = await self.session.ws_req_users_query(gid, nick, 6)
+			if not user_map: raise IRCBridgeSignal(f'{nick}=no-matches')
+			elif len(user_map) > 1:
+				nicks = list(user_map.values())
+				nicks = ' '.join(map(repr, nicks[:5])) + (' +' if len(nicks) > 5 else '')
+				raise IRCBridgeSignal(f'{nick}=[{nicks}]')
+			else: # successful server-lookup with unique result
+				uid = next(iter(user_map.keys()))
+				self.cmd_user_cache(gid, uid, nick, replace=False, query=True)
 				nick = f'<@{uid}>'
-				self.cmd_user_cache(cc.gid, uid, replace=False)
-			else:
-				user_map = await self.session.ws_req_users_query(cc.gid, nick, 6)
-				if not user_map: raise IRCBridgeSignal(f'{nick}=no-matches')
-				elif len(user_map) > 1:
-					nicks = list(user_map.values())
-					nicks = ' '.join(map(repr, nicks[:5])) + (' +' if len(nicks) > 5 else '')
-					raise IRCBridgeSignal(f'{nick}=[{nicks}]')
-				else: # successful server-lookup with unique result
-					uid = next(iter(user_map.keys()))
-					self.cmd_user_cache(cc.gid, uid, nick, replace=False, query=True)
-					nick = f'<@{uid}>'
-			tag = [tag]
-			for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
-				part = tag.pop()
-				tag.extend([part[sb:], s, part[:sa]])
+		tag = [tag]
+		for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
+			part = tag.pop()
+			tag.extend([part[sb:], s, part[:sa]])
 		return tag
 
 	def cmd_user_cache(self, gid, uid, name=None, replace=True, query=False):
