@@ -684,6 +684,7 @@ class irc_name_dict(cs.UserDict):
 class IRCProtocolError(Exception): pass
 class IRCProtocolArgsError(IRCProtocolError): pass
 class IRCBridgeSignal(Exception): pass
+class IRCBridgeNotice(IRCBridgeSignal): pass # not logged as exceptions
 
 class IRCProtocol:
 
@@ -1276,31 +1277,35 @@ class Discord:
 		async def _wrapper(self, *args, **kws):
 			try: return await func(self, *args, **kws)
 			except Exception as err:
-				self.log.exception('Failed discord-send: {}', err_str := err_fmt(err))
+				err_str = err_fmt(err)
+				if not isinstance(err, IRCBridgeNotice):
+					self.log.exception('Failed discord-send: {}', err_str)
 				raise IRCBridgeSignal(err_str)
 		return _wrapper
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_edit_last(self, cc, aaa, bbb):
-		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
+		if not cc.last_msg_sent: raise IRCBridgeNotice('no-last-msg')
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		line = re.sub(aaa, bbb, line_old)
-		if line == line_old: raise IRCBridgeSignal('edit-changed-nothing')
+		if line == line_old: raise IRCBridgeNotice('edit-changed-nothing')
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line) )
 		line_tagged = await self.cmd_msg_send_annotate(cc, line)
 		await asyncio.create_task(self.session.req(
 			f'channels/{cc.id}/messages/{flake}',
 			m='patch', json=dict(content=line_tagged), raw=True ))
+		cc.last_msg_sent.line = line
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_del_last(self, cc):
-		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
+		if not cc.last_msg_sent: raise IRCBridgeNotice('no-last-msg')
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		self.log.debug(
 			'MSG:  D> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line_old) )
 		await asyncio.create_task(self.session.req(
 			f'channels/{cc.id}/messages/{flake}', m='delete', raw=True ))
+		cc.last_msg_sent = None
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_send(self, cc, line):
