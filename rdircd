@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.7' # git-version: py-str
+	version = '22.10.8' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1277,9 +1277,9 @@ class Discord:
 		async def _wrapper(self, *args, **kws):
 			try: return await func(self, *args, **kws)
 			except Exception as err:
-				err_str = err_fmt(err)
 				if not isinstance(err, IRCBridgeNotice):
-					self.log.exception('Failed discord-send: {}', err_str)
+					self.log.exception('Failed discord-send: {}', err_str := err_fmt(err))
+				else: err_str = str(err)
 				raise IRCBridgeSignal(err_str)
 		return _wrapper
 
