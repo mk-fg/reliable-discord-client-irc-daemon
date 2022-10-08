@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.11' # git-version: py-str
+	version = '22.10.12' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1338,8 +1338,8 @@ class Discord:
 		if flake_gw != flake_res:
 			self.log.warning( 'Same-nonce sent/received'
 				' msg-id mismatch: {} != {}', flake_gw, flake_res )
-		cc.last_msg_sent = adict(flake=flake_res, line=line)
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
+		cc.last_msg_sent.update(flake=flake_res, line=line)
 
 	async def cmd_msg_mentionify(self, gid, line):
 		'''Translate IRC nick mentions matched by
@@ -3475,12 +3475,12 @@ def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
 	import argparse, textwrap
-	dd = lambda text: (textwrap.dedent(text).strip('\n') + '\n').replace('\t', '  ')
-	fill = lambda s,w=80,**k: textwrap.fill(s, w, **k)
+	dd = lambda text: re.sub( r' \t+', ' ',
+		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter,
 		usage='%(prog)s [options]',
-		description='Reliable personal discord-client to irc-server translation daemon.')
+		formatter_class=argparse.RawTextHelpFormatter,
+		description='Reliable personal discord-client <-> irc-server translation daemon.')
 
 	group = parser.add_argument_group('Configuration file(s)')
 	group.add_argument('-c', '--conf', metavar='file', action='append', help=dd(f'''
@@ -3490,16 +3490,16 @@ def main(args=None, conf=None):
 		Can be specified mutliple times to use multiple config files,
 			in which case only last one will be updated and has to be writable.
 		Default: {conf._conf_path}'''))
-	group.add_argument('--conf-dump', action='store_true',
-		help=fill('Print all configuration settings, which will be used with'
-			' currently detected (and/or specified) configuration file(s), and exit.'))
-	group.add_argument('--conf-dump-defaults', action='store_true',
-		help=fill('Print all default settings which would be used if no'
-			' configuration file(s) were overriding these, with some extra comments, and exit.'))
-	group.add_argument('--conf-dump-state', action='store_true',
-		help=fill('Print "state" section from the config file,'
-			' with keys corresponding to app startups and iso8601'
-			' time values of last received message for that run.'))
+	group.add_argument('--conf-dump', action='store_true', help=dd('''
+		Print all configuration settings, which will be used with
+			currently detected (and/or specified) configuration file(s), and exit.'''))
+	group.add_argument('--conf-dump-defaults', action='store_true', help=dd('''
+		Print all default settings which would be used if no configuration
+			file(s) were overriding these, with some extra comments, and exit.'''))
+	group.add_argument('--conf-dump-state', action='store_true', help=dd('''
+		Print "state" section from the config file,
+			with keys corresponding to app startups and iso8601
+			time values of last received message for that run.'''))
 
 	group = parser.add_argument_group('Interfaces')
 	group.add_argument('-i', '--irc-bind', metavar='host(:port)', help=dd(f'''
@@ -3513,9 +3513,9 @@ def main(args=None, conf=None):
 		action='store_true', help='Verbose operation mode.')
 	group.add_argument('--debug-asyncio',
 		action='store_true', help='Run asyncio event loop in debug mode. Very verbose.')
-	group.add_argument('-t', '--proto-cut', type=int, metavar='n',
-		help=fill('Truncate long strings in protocol dumps to specified length.'
-			' Set to <=0 to disable truncation (default).'))
+	group.add_argument('-t', '--proto-cut', type=int, metavar='n', help=dd('''
+		Truncate long strings in protocol dumps to specified length.
+		Set to <=0 to disable truncation (default).'''))
 	group.add_argument('-p', '--proto-log', metavar='file', help=dd('''
 		File to dump full non-truncated protocol logs to.
 		Max file size and rotation options can be configured via --conf file.'''))
