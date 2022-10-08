@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.9' # git-version: py-str
+	version = '22.10.10' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -684,7 +684,6 @@ class irc_name_dict(cs.UserDict):
 class IRCProtocolError(Exception): pass
 class IRCProtocolArgsError(IRCProtocolError): pass
 class IRCBridgeSignal(Exception): pass
-class IRCBridgeNotice(IRCBridgeSignal): pass # not logged as exceptions
 
 class IRCProtocol:
 
@@ -1276,19 +1275,18 @@ class Discord:
 		@ft.wraps(func)
 		async def _wrapper(self, *args, **kws):
 			try: return await func(self, *args, **kws)
+			except IRCBridgeSignal: raise
 			except Exception as err:
-				if not isinstance(err, IRCBridgeNotice):
-					self.log.exception('Failed discord-send: {}', err_str := err_fmt(err))
-				else: err_str = str(err)
+				self.log.exception('Failed discord-send: {}', err_str := err_fmt(err))
 				raise IRCBridgeSignal(err_str)
 		return _wrapper
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_edit_last(self, cc, aaa, bbb):
-		if not cc.last_msg_sent: raise IRCBridgeNotice('no-last-msg')
+		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		line = re.sub(aaa, bbb, line_old)
-		if line == line_old: raise IRCBridgeNotice('edit-changed-nothing')
+		if line == line_old: raise IRCBridgeSignal('edit-changed-nothing')
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line) )
 		line_tagged = await self.cmd_msg_send_annotate(cc, line)
@@ -1299,7 +1297,7 @@ class Discord:
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_del_last(self, cc):
-		if not cc.last_msg_sent: raise IRCBridgeNotice('no-last-msg')
+		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		self.log.debug(
 			'MSG:  D> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line_old) )
