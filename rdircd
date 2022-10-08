@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.2' # git-version: py-str
+	version = '22.10.3' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1977,8 +1977,11 @@ class DiscordSession:
 			self.op_ev_guilds(md.get('guilds'), sync=True)
 			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
 			self.ws_req_thread_list_sync()
-			self.log.debug('New session id: {}', self.st.session_id)
+			self.log.debug( 'New session id: {} gw=[ {} ]',
+				self.st.session_id, md.get('resume_gateway_url') )
 		else: resume = True
+		resume_url = md.get('resume_gateway_url')
+		if resume_url: self.conf.discord_gateway = resume_url
 		if self.conf.discord_ws_reconnect_warn_always:
 			ts1 = self.st.get('disconnect_ts') or ts
 			td_sess, td_conn = (
