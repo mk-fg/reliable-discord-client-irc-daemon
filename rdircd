@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.4' # git-version: py-str
+	version = '22.10.5' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -72,7 +72,6 @@ class RDIRCDConfigBase:
 	discord_http_delay_padding = 10.0 # added to retry_after
 	discord_http_timeout_conn = 40.0
 	discord_http_timeout_conn_sock = 30.0
-	discord_user_mention_cache_timeout = 3 * 24 * 3600
 	discord_gateway = ''
 
 	# discord_msg_mention_re should match only discord user mentions.
@@ -84,7 +83,17 @@ class RDIRCDConfigBase:
 	#  against full capture of the regexp above, not full line.
 	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
+
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
+	discord_user_mention_cache_timeout = 3 * 24 * 3600 # to remember nicks for user-mentions
+
+	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
+	# "aaa" group is used as a python regexp to match what to replace, "bbb" - replacement.
+	# Any msg matched by this regexp is treated as edit for re.sub(), never sent to channel.
+	# If re.sub() with these parameters makes no replacement(s), error notice is generated.
+	# Default regex matches s/A/B/ or s|A|B| or s:A:B: - sed/perl-like regexp-replace expressions.
+	discord_msg_edit_re = r'^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$'
+	discord_msg_del_re = r'^\s*//del\s*$' # deletes last-sent msg, if matched, never sent to channel
 
 	# Prefix for thread-id values, used in thread-chan names
 	#   and msg prefixes if propagation from these to parent channel is enabled.
@@ -134,13 +143,22 @@ class RDIRCDConfigBase:
 	_conf_sections = 'irc', 'discord', 'auth', 'debug'
 	_conf_sections_old = dict(auth_main='auth') # old -> new renames
 
-	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '^$')
-	_conv_discord_msg_mention_re_ignore = lambda s, v: v and re.compile(v)
+	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
+	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
+	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	def _conv_discord_msg_mention_re(self, v):
 		if not v: return
 		rx = re.compile(v)
 		if 'nick' not in rx.groupindex:
 			raise ValueError(f'Missing "nick" group in discord-mentions regexp: {v!r}')
+		return rx
+	def _conv_discord_msg_edit_re(self, v):
+		if not v: return re.compile('$x')
+		rx = re.compile(v)
+		if {'aaa', 'bbb'}.difference(rx.groupindex):
+			raise ValueError( 'discord-edit regexp must contain named'
+				f' "aaa" and "bbb" groups to capture pattern/replacement: {v!r}' )
 		return rx
 
 
@@ -783,6 +801,7 @@ class IRCProtocol:
 		return m
 
 	def send(self, line_or_code, *args, max_len=None, auto_split=True):
+		'Send msg or command to IRC client on the other end of this connection'
 		line = line_or_code
 		if isinstance(line, int): # code=0 only adds :host prefix
 			code, line = line, f':{self.bridge.server_host}'
@@ -827,6 +846,8 @@ class IRCProtocol:
 		finally: self.recv_queue = None
 
 	async def recv(self, line_raw):
+		'Runs on every IRC line received from the client on the other end'
+		# Dispatches call to recv_cmd_* funcs below, like recv_cmd_privmsg
 		if isinstance(line_raw, str): line = line_raw
 		else:
 			try: line = line_raw.decode().strip()
@@ -1090,7 +1111,7 @@ class IRCProtocol:
 		self.cmd_msg(self.st.nick, target, text, notice=True, from_self=True)
 
 	def cmd_msg(self, src, target, text, notice=False, from_self=False):
-		'''Handler for messages posted from irc.
+		'''Handler for messages posted from IRC.
 			With notice=True message is only handled in irc, without proxying it to discord.'''
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if self.chan_spec_check(target):
@@ -1099,9 +1120,9 @@ class IRCProtocol:
 			else: c = self.bridge.cmd_chan_map().get(name)
 			if not c: return
 			if from_self and c.t == c.t.mon:
-				self.send( f':monitor NOTICE {chan} :WARNING:'
-					' this is one of the monitor-channels, msgs posted here are not proxied to discord' )
-			for conn in self.bridge.cmd_chan_conns(name):
+				self.send( f':monitor NOTICE {chan} :WARNING: this is one of'
+					' the monitor-channels, msgs posted here are not proxied to discord' )
+			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
 				if name not in conn.st.chans: self.cmd_join(chan) # from chan_auto_join_re
 				conn.send(f':{src} {msg_type} {chan} :{text}')
@@ -1261,44 +1282,73 @@ class Discord:
 		self.bridge.cmd_msg_discord( cc, nick, line,
 			tags, notice=notice, ts=self.flake_parse(flake), skip_monitor=skip_monitor )
 
+	def _cmd_msg_err_wrap(func):
+		@ft.wraps(func)
+		async def _wrapper(self, *args, **kws):
+			try: return await func(self, *args, **kws)
+			except Exception as err:
+				err_str = err_fmt(err)
+				self.log.exception('Failed discord-send: {}', err_str)
+				raise IRCBridgeSignal(err_str)
+		return _wrapper
+
+	@_cmd_msg_err_wrap
+	async def cmd_msg_edit_last(self, cc, aaa, bbb):
+		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
+		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
+		line = re.sub(aaa, bbb, line_old)
+		if line == line_old: raise IRCBridgeSignal('edit-changed-nothing')
+		self.log.debug(
+			'MSG:  E> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line) )
+		line_tagged = await self.cmd_msg_send_annotate(cc, line)
+		await asyncio.create_task(self.session.req(
+			f'channels/{cc.id}/messages/{flake}',
+			m='patch', json=dict(content=line_tagged), raw=True ))
+
+	@_cmd_msg_err_wrap
+	async def cmd_msg_del_last(self, cc):
+		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
+		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
+		self.log.debug(
+			'MSG:  D> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line_old) )
+		await asyncio.create_task(self.session.req(
+			f'channels/{cc.id}/messages/{flake}', m='delete', raw=True ))
+
+	@_cmd_msg_err_wrap
 	async def cmd_msg_send(self, cc, line):
 		'Relay message from IRC to Discord.'
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
+
+		if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
+				and line.split(None, 1)[0].startswith(self.conf.discord_thread_id_prefix) ):
+			c_tid, line = line.split(None, 1)
+			cc = cc.threads.get(c_tid.lower())
+			if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
+
+		nonce = self.flake_build(time.time())
+		self.log.debug('MSG:  >> :: {} {} {} :: {}', cc.gid, cc.name, nonce, line)
 		try:
-			if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
-					and line.split(None, 1)[0].startswith(self.conf.discord_thread_id_prefix) ):
-				c_tid, line = line.split(None, 1)
-				cc = cc.threads.get(c_tid.lower())
-				if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
+			res = None
+			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
+				line_tagged = await self.cmd_msg_send_annotate(cc, line)
+				res = asyncio.create_task(self.session.req(
+					f'channels/{cc.id}/messages',
+					m='post', json=dict(content=line_tagged, nonce=nonce) ))
+				fut = self.msg_confirms[nonce] = asyncio.Future()
+				res = asyncio.gather(fut, res)
+				flake_gw, res = await res
+		except asyncio.TimeoutError:
+			if res: await aio_task_cancel(res)
+			raise IRCBridgeSignal('msg-confirm-timed-out')
+		finally: self.msg_confirms.pop(nonce, None)
 
-			nonce = self.flake_build(time.time())
-			self.log.debug('MSG:  >> :: {} {} {} :: {}', cc.gid, cc.name, nonce, line)
-			try:
-				res = None
-				async with aio_timeout(self.conf.discord_msg_confirm_timeout):
-					line = await self.cmd_msg_send_annotate(cc, line)
-					res = asyncio.create_task(self.session.req(
-						f'channels/{cc.id}/messages',
-						m='post', json=dict(content=line, nonce=nonce) ))
-					fut = self.msg_confirms[nonce] = asyncio.Future()
-					res = asyncio.gather(fut, res)
-					flake_gw, res = await res
-			except asyncio.TimeoutError:
-				if res: await aio_task_cancel(res)
-				raise IRCBridgeSignal('msg-confirm-timed-out')
-			finally: self.msg_confirms.pop(nonce, None)
-			try: flake_res = res['id']
-			except: raise DiscordError(f'Invalid response: {res}')
-			if flake_gw != flake_res:
-				self.log.warning( 'Same-nonce sent/received'
-					' msg-id mismatch: {} != {}', flake_gw, flake_res )
-			self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
-
-		except Exception as err:
-			if isinstance(err, IRCBridgeSignal): raise
-			err_str = err_fmt(err)
-			self.log.exception('Failed sending discord msg: {}', err_str)
-			raise IRCBridgeSignal(err_str)
+		try: flake_res = res['id']
+		except: raise DiscordError(f'Invalid response: {res}')
+		if flake_gw != flake_res:
+			self.log.warning( 'Same-nonce sent/received'
+				' msg-id mismatch: {} != {}', flake_gw, flake_res )
+		cc.last_msg_sent = adict(flake=flake_res, line=line)
+		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 
 	async def cmd_msg_send_annotate(self, cc, line):
 		'''Translate IRC nick mentions matched by
@@ -2187,9 +2237,9 @@ class DiscordSession:
 				name = alias
 
 			cc.update(
-				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
-				name_base=name, name=name, t=cc_type, private=cc_private,
-				pos=c.get('position', -1)+1, topic=topic, nsfw=c.get('nsfw'),
+				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', name_base=name, name=name,
+				topic=topic, last_msg_sent=None, t=cc_type, private=cc_private,
+				pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
 
 			if name_old and name_old != name_old_base:
@@ -2778,7 +2828,13 @@ class RDIRCD:
 				info = self.irc_chan_info(m.name)
 				try:
 					if not (info and info.cc): raise IRCBridgeSignal('no-matching-chan')
-					await self.discord.cmd_msg_send(info.cc, m.line)
+					edit = self.conf._discord_msg_edit_re.search(m.line)
+					if edit:
+						await self.discord.cmd_msg_edit_last(
+							info.cc, edit.group('aaa'), edit.group('bbb') )
+					elif self.conf._discord_msg_del_re.search(m.line):
+						await self.discord.cmd_msg_del_last(info.cc)
+					else: await self.discord.cmd_msg_send(info.cc, m.line)
 				except IRCBridgeSignal as err:
 					m.conn.cmd_msg_synth( self.nick_sys, m.chan,
 						f'ERR {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )

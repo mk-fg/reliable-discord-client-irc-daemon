@@ -58,7 +58,8 @@ Features
 
 - Per-server and global catch-all channels to track general activity.
 
-- Some quirky translation for discord user mentions, see below for specifics.
+- Some quirky translation for using discord user mentions in sent messages,
+  their edits and deletions, see below for specifics.
 
 - Configurable local name aliases.
 
@@ -70,7 +71,7 @@ Features
   etc - translation is mostly deterministic and does not depend on other names.
 
 - Translation for discord mentions, replies, attachments, stickers and emojis
-  in incoming msgs, basic annotations for some embedded links.
+  in incoming msgs, other events, basic annotations for some embedded links.
 
 - Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
@@ -476,6 +477,46 @@ by channel, and are not intended to be pre-fetched by the client, only queried
 for completions or visible parts, which doesn't map well to irc, hence all this magic.
 
 .. _python "re" syntax: https://docs.python.org/3/library/re.html#regular-expression-syntax
+
+Quick edits/deletes for just-sent messages
+``````````````````````````````````````````
+
+Similar to `Discord user mentions`_ above, there's a special regexp-option that
+matches special commands to be interpreted as edit or removal of last message
+sent to this channel.
+
+Default regexps look something like this (check ``--conf-dump-defaults`` jic)::
+
+  [discord]
+  msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$
+  msg-del-re = ^\s*//del\s*$
+
+They match sed/perl/irc-like edit follow-up lines like ``s/spam/ham/`` or
+``//del``, which will never be sent to discord, only used as internal commands.
+
+(``s|/some/path|/other/path|`` and
+``s:cat /dev/input/mouse0 | hexdump:hexdump </dev/input/mouse0:``
+syntaxes are also allowed by default edit-regexp, just like with sed_,
+to need less escaping for common stuff like paths)
+
+Both matched commands operate on last message sent by rdircd to the same discord
+channel, with ``//del`` simply removing that last message, and edit running
+`python re.sub()`_ regexp-replacement function on it.
+
+"msg-edit-re" regexp matching sed-like command must have named "aaa" and "bbb"
+groups in it, which will be used as pattern and replacement args to re.sub().
+
+If edit doesn't seem to alter last-sent message in any way, it gets discarded,
+but also generates IRC notice response, to signal that replacement didn't work.
+
+Successful edit/deletion will also be signaled as usual,
+with "[edit]" or such prefix (configurable under "[irc]" section).
+
+Any older-than-last messages can be edited through discord WebUI,
+this client only tracks last one for easy quick follow-up oops-fixes.
+
+.. _sed: https://en.wikipedia.org/wiki/Sed
+.. _python re.sub(): https://docs.python.org/3/library/re.html#re.sub
 
 Lookup Discord IDs
 ``````````````````
