@@ -19,11 +19,12 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.12' # git-version: py-str
+	version = '22.10.13' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
-	irc_password = ''
+	irc_password = '' # for plaintext password - do not use, use password-hash instead
+	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_host_af = 0
 	irc_auth_tbf = '30:8'
 	irc_uid_len = 4 # can be increased to fix conflicts
@@ -343,6 +344,30 @@ def str_hash(s, c=None, key='rdircd', strip=''):
 		if len(s) >= c: break
 	else: raise RuntimeError(f'str_hash() failed on: {s_raw!r} {[c, key, strip]}')
 	return s[:c]
+
+def pw_hash(pw, hash_str=None, salt=None):
+	'Generates scrypt-hash with random salt or checks pw against one'
+	scheme = 'rdircd.1'
+	if isinstance(pw, str): pw = pw.encode()
+	if not hash_str:
+		if not salt: salt = os.urandom(16)
+		crypt = salt + hashlib.scrypt( pw,
+			salt=hashlib.blake2s(salt, person=scheme.encode()).digest(),
+			n=2**15, r=8, p=1, maxmem=48*2**20, dklen=32 )
+		chk = base64.urlsafe_b64encode(hashlib.blake2s(
+			crypt, digest_size=3, person=scheme.encode()).digest() ).decode()
+		crypt = base64.urlsafe_b64encode(crypt).decode()
+		return f'{scheme}.{crypt}.{chk}'
+	elif hash_str.startswith(f'{scheme}.'):
+		try:
+			crypt, chk = hash_str[9:].split('.', 1)
+			crypt = base64.urlsafe_b64decode(crypt)
+			chk2 = base64.urlsafe_b64encode(hashlib.blake2s(
+				crypt, digest_size=3, person=scheme.encode()).digest() ).decode()
+			if not secrets.compare_digest(chk, chk2): raise ValueError
+		except: raise ValueError(f'corrupted {scheme} password hash string')
+		return secrets.compare_digest(hash_str, pw_hash(pw, salt=crypt[:16]))
+	raise ValueError('unrecognized password-hash type')
 
 def tuple_hash(t, c=None, key='rdircd'):
 	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
@@ -710,13 +735,9 @@ class IRCProtocol:
 		self.log = get_logger('rdircd.irc.init')
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
-			nick=None, user=None, pw=None, pw_hash=None,
+			nick=None, user=None, pw=None,
 			host=None, auth=False, cap_neg=False, away=None,
 			chans=irc_name_dict() )
-		if self.conf.irc_password:
-			salt = os.urandom(8)
-			self.st.pw_hash = salt, hashlib.blake2b(
-				self.conf.irc_password.encode(), salt=salt ).digest()
 
 
 	def connection_made(self, tr):
@@ -940,10 +961,8 @@ class IRCProtocol:
 	def check_auth_done_delayed(self):
 		if self.st.auth: return
 		if not (self.st.nick and self.st.user): return
-		if self.st.pw_hash:
-			salt, pw_hash = self.st.pw_hash
-			if not secrets.compare_digest( pw_hash,
-					hashlib.blake2b((self.st.pw or '').encode(), salt=salt).digest() ):
+		if self.conf.irc_password_hash:
+			if not pw_hash(self.st.pw or '', self.conf.irc_password_hash):
 				return self.send(464, ':Password incorrect')
 		self.st.auth = True
 		self.send(0, 'NOTICE * :*** registration completed')
@@ -3500,6 +3519,12 @@ def main(args=None, conf=None):
 		Print "state" section from the config file,
 			with keys corresponding to app startups and iso8601
 			time values of last received message for that run.'''))
+	group.add_argument('-H', '--conf-pw-scrypt', action='store_true', help=dd('''
+		Prompt/read password from stdin, generate and print
+			scrypt-hashed string of it to stdout for use in config file(s) and exit.
+		Such hash should be used with "password-hash" option under [irc] section.
+		If stdin is not a terminal, only first line is read from there as a password.
+		scrypt uses random 16B salt and N=2^15 r=8 p=1 parameters (min 32M memory).'''))
 
 	group = parser.add_argument_group('Interfaces')
 	group.add_argument('-i', '--irc-bind', metavar='host(:port)', help=dd(f'''
@@ -3529,6 +3554,12 @@ def main(args=None, conf=None):
 		conf.pprint( 'Default configuration options',
 			empty_vals=True, comments=parse_conf_code_comments() )
 		return
+	if opts.conf_pw_scrypt:
+		if sys.stdin.isatty():
+			import getpass
+			pw = getpass.getpass().encode()
+		else: pw = sys.stdin.buffer.readline()
+		return print(pw_hash(pw))
 
 	conf_user_paths = list(map(
 		os.path.expanduser, opts.conf or [conf._conf_path] ))
@@ -3540,8 +3571,7 @@ def main(args=None, conf=None):
 	conf.read_from_file(*conf_user_paths)
 
 	if opts.conf_dump:
-		conf.pprint('Current configuration options')
-		return
+		return conf.pprint('Current configuration options')
 	if opts.conf_dump_state:
 		print('state_timestamps:')
 		for v, k in sorted((v,k) for k,v in conf.state.items()):
@@ -3603,6 +3633,19 @@ def main(args=None, conf=None):
 		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
 		log.warning( 'Old and deprecated section'
 			' in config file(s) - {!r} - replace it with {!r}', k_old, k_new )
+
+	if conf.irc_password:
+		if conf.irc_password_hash:
+			parser.error( 'Both password= and password-hash= config-file'
+				' options cannot be used at the same time, use latter one only.' )
+		log.warning( 'Plaintext password= option is used in'
+			' configuration file(s) - use password-hash= instead, if possible' )
+		conf.irc_password_hash = pw_hash(conf.irc_password)
+		conf.irc_password = ''
+	try:
+		if pw_hash('hunter2', conf.irc_password_hash):
+			parser.error('Using "hunter2" as password is explicitly prohibited, sorry.')
+	except ValueError as err: parser.error(f'Invalid password-hash value - {err}')
 
 	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
