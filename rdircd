@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.8' # git-version: py-str
+	version = '22.10.9' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -1292,10 +1292,10 @@ class Discord:
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line) )
 		line_tagged = await self.cmd_msg_send_annotate(cc, line)
-		await asyncio.create_task(self.session.req(
+		await self.session.req(
 			f'channels/{cc.id}/messages/{flake}',
-			m='patch', json=dict(content=line_tagged), raw=True ))
-		cc.last_msg_sent.line = line
+			m='patch', json=dict(content=line_tagged) )
+		if cc.last_msg_sent.get('flake') == flake: cc.last_msg_sent.line = line
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_del_last(self, cc):
@@ -1303,9 +1303,9 @@ class Discord:
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		self.log.debug(
 			'MSG:  D> :: {} {} {} :: {}', cc.gid, cc.name, flake, self._repr(line_old) )
-		await asyncio.create_task(self.session.req(
-			f'channels/{cc.id}/messages/{flake}', m='delete', raw=True ))
-		cc.last_msg_sent = None
+		await self.session.req(
+			f'channels/{cc.id}/messages/{flake}', m='delete', raw=True )
+		if cc.last_msg_sent.get('flake') == flake: cc.last_msg_sent.clear()
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_send(self, cc, line):
@@ -2196,8 +2196,8 @@ class DiscordSession:
 			else: c_tid = None
 			cc_private = c.type in [ct.private, ct.private_group]
 
-			cc = cs.setdefault( c.id,
-				gg.chans.get(c.id, adict(users=adict(), threads=adict())) )
+			cc = cs.setdefault(c.id, gg.chans.get( c.id,
+				adict(users=adict(), threads=adict(), last_msg_sent=adict()) ))
 			cc.name_raw = name
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
 			if c_tid:
@@ -2226,9 +2226,9 @@ class DiscordSession:
 				name = alias
 
 			cc.update(
-				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}', name_base=name, name=name,
-				topic=topic, last_msg_sent=None, t=cc_type, private=cc_private,
-				pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
+				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
+				name=name, name_base=name, topic=topic,
+				t=cc_type, private=cc_private, pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
 
 			if name_old and name_old != name_old_base:
