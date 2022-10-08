@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.5' # git-version: py-str
+	version = '22.10.7' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -306,8 +306,8 @@ str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 def str_part(s, sep, default=None):
 	'Examples: str_part("user@host", "<@", "root"), str_part("host:port", ":>")'
-	c = sep.strip('<>')
-	if sep.strip(c) == '<': return (default, s) if c not in s else s.split(c, 1)
+	if sep.strip(c := sep.strip('<>')) == '<':
+		return (default, s) if c not in s else s.split(c, 1)
 	else: return (s, default) if c not in s else s.rsplit(c, 1)
 
 def str_cut(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
@@ -458,9 +458,7 @@ class StacklessContext:
 		async def _task_wrapper(coro=coro):
 			try:
 				await aio_await_wrap(coro)
-				if run_after:
-					coro = run_after()
-					await aio_await_wrap(coro)
+				if run_after: await aio_await_wrap(coro := run_after())
 			except asyncio.CancelledError: pass
 			except Exception as err:
 				self.log.exception( 'Background task failed: {} - {}',
@@ -498,8 +496,7 @@ def parse_iso8601( spec,
 		_re=re.compile(
 			r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
-	m = _re.search(spec)
-	if not m: raise ValueError(spec)
+	if not (m := _re.search(spec)): raise ValueError(spec)
 	if validate: return
 	if m.group('tz'):
 		tz = m.group('tz')
@@ -540,8 +537,7 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None):
 					if tss.strftime('%Y-%m-%d') == d0: ts_fmt = ts_fmt[9:]
 		ts = ts.strftime(ts_fmt)
 		return ts[:-3] if ts.endswith(':00') else ts
-	ts_ext = f'{ts.microsecond:06d}'[:ms]
-	if ts_ext: ts_ext = f'.{ts_ext}'
+	if ts_ext := f'{ts.microsecond:06d}'[:ms]: ts_ext = f'.{ts_ext}'
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 _short_ts_days = dict(
@@ -589,8 +585,7 @@ def repr_duration( ts, ts0=None,
 	if ext is True: ext = 'ago' if delta < 0 else 'from now'
 	res, s, n_last = list(), abs(delta), units_max - 1
 	for unit, unit_s in sorted(_units.items(), key=op.itemgetter(1), reverse=True):
-		val = math.floor(s / unit_s)
-		if not val:
+		if not (val := math.floor(s / unit_s)):
 			if units_res == unit: break
 			continue
 		if len(res) == n_last or units_res == unit:
@@ -856,8 +851,8 @@ class IRCProtocol:
 		try: m = self._parse(line)
 		except IRCProtocolLineError:
 			return self.log.error('Line protocol error: {!r}', self._repr_bin(line_raw))
-		cmd_cache = self._cmd_cache.get(m.cmd)
-		if cmd_cache: cmd_func, cmd_ps_n = cmd_cache
+		if cmd_cache := self._cmd_cache.get(m.cmd):
+			cmd_func, cmd_ps_n = cmd_cache
 		else:
 			cmd_func, cmd_ps_n = getattr(self, f'recv_cmd_{m.cmd}', None), 0
 			if cmd_func:
@@ -985,8 +980,7 @@ class IRCProtocol:
 			f':Current global users {s.total}, max {s.total_max}' )
 
 	def send_motd(self):
-		motd = self.conf.irc_motd_file_path
-		if motd:
+		if motd := self.conf.irc_motd_file_path:
 			try: motd = pl.Path(self.conf.irc_motd_file_path).read_text()
 			except FileNotFoundError: motd = ''
 		if not motd: return self.send(422, ':MOTD File is missing')
@@ -1003,8 +997,7 @@ class IRCProtocol:
 		if not self.chan_spec_check(chan):
 			return self.send(403, chan, ':No such channel')
 		if not cm: cm = self.bridge.cmd_chan_map()
-		c = cm.get(self.chan_name(chan))
-		if c: return c
+		if c := cm.get(self.chan_name(chan)): return c
 		if check: self.send(403, chan, ':No such channel')
 
 	def recv_cmd_join(self, chan, key=None):
@@ -1034,8 +1027,8 @@ class IRCProtocol:
 				self.send(f':{self.st.nick} PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
-		c = self.req_chan_info(chan)
-		if not c: return self.send(403, chan, ':No such channel')
+		if not (c := self.req_chan_info(chan)):
+			return self.send(403, chan, ':No such channel')
 		if not topic:
 			self.send_topic(chan)
 			return await self.bridge.irc_topic_cmd(self, c.name)
@@ -1052,8 +1045,7 @@ class IRCProtocol:
 			if topic_src: self.send(333, chan, topic_src.nick, int(topic_src.ts))
 
 	def recv_cmd_names(self, chan):
-		chan_list = chan.split(',')
-		for chan in chan_list: self.send_names(chan)
+		for chan in chan.split(','): self.send_names(chan)
 
 	def send_names(self, chan, own=False, c=..., msg_len_max=200):
 		if c is ...: c = self.req_chan_info(chan)
@@ -1128,8 +1120,7 @@ class IRCProtocol:
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
-			conn = self.bridge.cmd_conn(target)
-			if not conn:
+			if not (conn := self.bridge.cmd_conn(target)):
 				if not notice: self.send(401, target, ':No such nick/channel')
 			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
@@ -1168,8 +1159,7 @@ class IRCProtocol:
 		if re.search(r'^[#@%]\d+$', name):
 			self.bridge.cmd_delay(self.bridge.cmd_info(self, name[0], name[1:]))
 		else:
-			conn = self.bridge.cmd_conn_map().get(name)
-			if conn:
+			if conn := self.bridge.cmd_conn_map().get(name):
 				self.send( 352, '*', conn.st.user, conn.st.host,
 					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
 		self.send(315, name, ':End of /WHO list.')
@@ -1275,8 +1265,7 @@ class Discord:
 		if nonce and flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
 			# Thread-prefixed msgs can be mirrored to two chans, hence the check/skip here
-			fut = self.msg_confirms.pop(nonce, None)
-			if fut:
+			if fut := self.msg_confirms.pop(nonce, None):
 				self.log.debug('MSG: confirm nonce={} flake={}', nonce, flake)
 				return fut.set_result(flake)
 		self.bridge.cmd_msg_discord( cc, nick, line,
@@ -1287,8 +1276,7 @@ class Discord:
 		async def _wrapper(self, *args, **kws):
 			try: return await func(self, *args, **kws)
 			except Exception as err:
-				err_str = err_fmt(err)
-				self.log.exception('Failed discord-send: {}', err_str)
+				self.log.exception('Failed discord-send: {}', err_str := err_fmt(err))
 				raise IRCBridgeSignal(err_str)
 		return _wrapper
 
@@ -1390,8 +1378,7 @@ class Discord:
 				# This should make irc nicks usable for mention-tags as-is,
 				#  and fix matching e.g. discord names with spaces for default regexp.
 				nick = self.bridge.irc_name_revert(nick) or nick
-			uid = self.user_mention_cache[cc.gid].get(nick)
-			if uid: # exact match
+			if uid := self.user_mention_cache[cc.gid].get(nick): # exact match
 				nick = f'<@{uid}>'
 				self.cmd_user_cache(cc.gid, uid, replace=False)
 			else:
@@ -1651,8 +1638,7 @@ class DiscordSession:
 				req_limit, req_limit_ts = self.rate_limits[route] = req_limit_vals
 			if res.status == 429:
 				m = await res.json()
-				delay = m.get('retry_after')
-				if delay:
+				if delay := m.get('retry_after'):
 					self.log.debug( 'Rate-limiting request on route'
 							' {!r}: explicit-retry-after, delay={:,.1f}s, global={}, msg={!r}',
 						route, delay, m.get('global'), m.get('message') )
@@ -2030,8 +2016,8 @@ class DiscordSession:
 			self.log.debug( 'New session id: {} gw=[ {} ]',
 				self.st.session_id, md.get('resume_gateway_url') )
 		else: resume = True
-		resume_url = md.get('resume_gateway_url')
-		if resume_url: self.conf.discord_gateway = resume_url
+		if resume_url := md.get('resume_gateway_url'):
+			self.conf.discord_gateway = resume_url
 		if self.conf.discord_ws_reconnect_warn_always:
 			ts1 = self.st.get('disconnect_ts') or ts
 			td_sess, td_conn = (
@@ -2140,8 +2126,7 @@ class DiscordSession:
 		return m.user.id, m.user.username # used in queries
 
 	def op_ev_delete(self, gid=None, chan=...):
-		gg = self.st.guilds.get(gid)
-		if not gg: return
+		if not (gg := self.st.guilds.get(gid)): return
 		if chan is not ...: gg.chans.pop(chan, None)
 		else: self.st.guilds.pop(gid, None)
 
@@ -2173,8 +2158,7 @@ class DiscordSession:
 				return ( self.discord.bridge.cache.gid_prefix.get(gg.id)
 					or self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh')) )
 			except: return '???' # digs a bit too far to get that debug info
-		gg = self.st.guilds.get(gid)
-		if not gg: return
+		if not (gg := self.st.guilds.get(gid)): return
 		cs, ct = dict(), self.c_chan_type
 		chan_name_changes, new_threads = list(), list() # for disambiguation checks/notifications
 
@@ -2828,8 +2812,7 @@ class RDIRCD:
 				info = self.irc_chan_info(m.name)
 				try:
 					if not (info and info.cc): raise IRCBridgeSignal('no-matching-chan')
-					edit = self.conf._discord_msg_edit_re.search(m.line)
-					if edit:
+					if edit := self.conf._discord_msg_edit_re.search(m.line):
 						await self.discord.cmd_msg_edit_last(
 							info.cc, edit.group('aaa'), edit.group('bbb') )
 					elif self.conf._discord_msg_del_re.search(m.line):
@@ -2975,8 +2958,7 @@ class RDIRCD:
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ]))
 
 	def cmd_chan_sys_control(self, conn, chan, line_raw):
-		line = line_raw.strip().lower().split()
-		if not line: return
+		if not (line := line_raw.strip().lower().split()): return
 		cmd, send = line[0],\
 			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
 		if cmd in ['h', 'help']:
@@ -3120,8 +3102,7 @@ class RDIRCD:
 
 	def cmd_log(self, line):
 		if not self.init: return
-		conn = self.cmd_conn()
-		if not conn: return
+		if not (conn := self.cmd_conn()): return
 		conn.cmd_msg_synth( self.nick_sys,
 			conn.chan_spec(self.c.chan_debug), line )
 
@@ -3166,8 +3147,7 @@ class RDIRCD:
 		if nick:
 			if nick not in cc.users: cc.users[nick] = adict(name=nick)
 			cc.users[nick].ts = ts or time.time()
-		direct = bool(conn)
-		if direct: conn_list = [conn]
+		if direct := bool(conn): conn_list = [conn]
 		else:
 			conn_list = self.cmd_chan_conns(name) if name else list()
 			conn = conn_list[0] if conn_list else self.cmd_conn()
@@ -3243,12 +3223,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if title: print(f';; {title}')
 		if '_notes' in comms: print(comms['_notes'])
 		for k in sorted(dir(self)):
-			m = chk.search(k)
-			if not m: continue
+			if not (m := chk.search(k)): continue
 			v = self.get(k, raw=True)
 			if not empty_vals and not v: continue
-			cat_chk = m.group(1).replace('_', '-')
-			if cat_chk != cat:
+			if cat != (cat_chk := m.group(1).replace('_', '-')):
 				cat = cat_chk
 				print(f'\n[{cat}]')
 			if isinstance(v, bool): v = ['no', 'yes'][v]
@@ -3256,8 +3234,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if v[0] in ' \t': v = f'\\{v}'
 				if v[-1] in ' \t': v += '\\'
 			k = m.group(2).replace('_', '-')
-			k_full = f'{cat}-{k}'
-			if k_full in comms:
+			if (k_full := f'{cat}-{k}') in comms:
 				comm = comms[k_full]
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
@@ -3349,13 +3326,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		with path.open() as src, safe_replacement(path) as dst:
 			lines, sec, sec_parse = list(), list(), False
 			for n, line in enumerate(src):
-				m, line = sec_re.search(line.strip()), line.rstrip()
-				if m:
-					k = str_norm(m.group(1))
-					if k == sec_k:
+				line = line.rstrip()
+				if m := sec_re.search(line.strip()):
+					if sec_k == str_norm(m.group(1)):
 						sec_parse = True
 						if sec: line = '' # drop duplicate headers
-					if k != sec_k: sec_parse = False
+					else: sec_parse = False
 				if sec_parse: sec.append(line)
 				else: lines.append(line)
 			while sec and not sec[-1]: sec.pop()
@@ -3397,15 +3373,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		offsets, parse = dict(), False
 		val_re = re.compile(b'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
 		for line in iter(src.readline, b''):
-			m = sec_re.search(line.decode().strip())
-			if m:
-				k = str_norm(m.group(1))
-				if k == sec_k: parse = True
+			if m := sec_re.search(line.decode().strip()):
+				if sec_k == str_norm(m.group(1)): parse = True
 				else: parse = False
 				continue
 			if parse:
-				m = val_re.search(line)
-				if not m: continue
+				if not (m := val_re.search(line)): continue
 				k, v = m.group(1), m.group(2)
 				pos = src.tell() - len(line) + m.start(2)
 				offsets[k.decode()] = pos

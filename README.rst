@@ -157,7 +157,7 @@ Usage
 Requirements
 ````````````
 
-* `Python <http://python.org/>`_ (relatively modern one)
+* `Python <http://python.org/>`_ (relatively modern 3.8+ one)
 * `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
 
 Installation
