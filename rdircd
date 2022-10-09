@@ -1496,6 +1496,9 @@ class DiscordSession:
 		session_timeout = 4009
 		invalid_shard = 4010
 		sharding_required = 4011
+		invalid_api_ver = 4012
+		intent_invalid = 4013
+		intent_denied = 4014
 
 		oneshot = 10_000
 
@@ -1974,8 +1977,8 @@ class DiscordSession:
 				t='ready', func=self.op_ready, replace=True )
 			# Note: sending API intents seem to strip "contents" from other people's messages!
 			self.ws_send(self.c.identify, dict(
-				properties={'$os': 'linux', '$browser': 'rdircd', '$device': 'rdircd'},
-				token=token, compress=False, large_threshold=250 ))
+				properties={'os': 'Linux', 'browser': 'rdircd', 'device': ''},
+				token=token, compress=False ))
 		else:
 			self.state('hello.auth.resume')
 			self.ws_add_handler( self.c.dispatch,
