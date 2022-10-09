@@ -181,7 +181,7 @@ trying to use these as a first option, so that they get updates and to avoid
 extra local maintenance burden, and only fallback to installing module(s) via
 "pip" if that fails.
 
-On any arbitrary distro with python (python3) installed, using "pip" to
+On any arbitrary distro with python (python3) installed, using pip/venv to
 install aiohttp module (and its deps) to unprivileged "rdircd" user's home dir
 might work (which is also used to run rdircd in the next example below),
 but ignore this if you've already installed it via OS package manager or such::
@@ -189,8 +189,15 @@ but ignore this if you've already installed it via OS package manager or such::
   root # useradd -m rdircd
   root # su - rdircd
 
+  ## Option 1: install pip and use it directly
+
   rdircd % python3 -m ensurepip --user
   rdircd % python3 -m pip install --user aiohttp
+
+  ## OR Option 2: use more common venv to install same thing
+
+  rdircd % python3 -m venv _venv
+  rdircd % ./_venv/bin/pip install aiohttp
 
 After requirements above are installed, script itself can be fetched
 from this repo and run like this::
@@ -198,6 +205,9 @@ from this repo and run like this::
   ## Ignore "useradd" if you've already created a user when running "pip" above
   root # useradd -m rdircd
   root # su - rdircd
+
+  ## If using "venv" install example above - load its env vars
+  rdircd % source ./_venv/bin/activate
 
   rdircd % curl https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd > rdircd
   rdircd % chmod +x rdircd
@@ -226,15 +236,15 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
   [irc]
   password = hunter2
 
-  [auth-main]
+  [auth]
   email = discord-reg@email.com
   password = discord-password
 
 Note: IRC password can be omitted, but be sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
-If you set an IRC password though, maybe do not use irc ``password=`` option like
-above, and use ``password-hash=`` and ``-H/--conf-pw-scrypt`` to generate it instead.
+If you set password though, maybe do not use irc ``password=`` option like above,
+and use ``password-hash=`` and ``-H/--conf-pw-scrypt`` to generate it instead.
 Either way, make sure to use that password when configuring connection to this
 server in the IRC client as well.
 
@@ -577,9 +587,9 @@ other similar discord clients - see `issue-1`_ here and links in there.
 
 Fix is same as with bitlbee-discord_ - login via browser, maybe from the same
 IP Address, and put auth token extracted from this browser into configuration
-ini file's [auth-main] section, e.g.::
+ini file's [auth] section, e.g.::
 
-  [auth-main]
+  [auth]
   token = ...
 
 See "Usage" in README of bitlbee-discord_ (scroll down on that link) for how to
