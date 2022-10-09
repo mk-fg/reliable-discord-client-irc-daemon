@@ -58,8 +58,8 @@ Features
 
 - Per-server and global catch-all channels to track general activity.
 
-- Some quirky translation for using discord user mentions in sent messages,
-  their edits and deletions, see below for specifics.
+- Limited translation for using discord user mentions in sent messages,
+  edits and deletions.
 
 - Configurable local name aliases.
 
@@ -148,7 +148,7 @@ Limitations
 - Custom ad-hoc implementation of both discord and irc, not benefitting from any
   kind of exposure and testing on pypi and such wrt compatibility, bugs and corner-cases.
 
-- Seem to be against Discord ToS to use it - see WARNING section above for more details.
+- Seem to be against Discord guidelines to use it - see WARNING section above for more details.
 
 
 Usage
