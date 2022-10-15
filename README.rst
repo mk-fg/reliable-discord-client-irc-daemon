@@ -23,6 +23,12 @@ lacking in other similar clients at the time.
 
 See also Links_ section below for rarely-updated list of other alternative clients.
 
+Repository URLs:
+
+- https://github.com/mk-fg/reliable-discord-client-irc-daemon
+- https://codeberg.org/mk-fg/reliable-discord-client-irc-daemon
+- https://fraggod.net/code/git/reliable-discord-client-irc-daemon
+
 .. _Discord: http://discord.gg/
 .. _IRC: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 .. _#rdircd at libera.chat: https://web.libera.chat/?channels=#rdircd
