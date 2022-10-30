@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.19' # git-version: py-str
+	version = '22.10.20' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2163,7 +2163,7 @@ class DiscordSession:
 		chan_name_changes, new_threads = list(), list() # for disambiguation checks/notifications
 
 		for c in force_list(chans):
-			name, topic = c.get('name'), c.get('topic')
+			name, topic = c.get('name'), c.get('topic') or ''
 			if c.type in [ct.group, ct.store, ct.stage]: continue
 			try: cc_type = ct(c.type)
 			except ValueError:
@@ -2243,7 +2243,7 @@ class DiscordSession:
 			if not name_old:
 				if not cc.get('tid'): # logged separately below
 					self.log.debug( 'New channel [id={} gid={}]:'
-						' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
+						' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
 			elif cc.name != name_old: new_renames.append((cc, name_old))
 			cs_affected.pop(cc.id, None)
 		for cc, name_old in cs_affected.values(): new_renames.append((cc, name_old))
@@ -2255,7 +2255,7 @@ class DiscordSession:
 			# Should be needed if msgs from these to parent chan are disabled
 			for cc in new_threads:
 				self.log.debug( 'New thread-channel'
-					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic or '' )
+					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
 				self.discord.cmd_chan_thread(cc)
 		for cc, name_old in new_renames: self.discord.cmd_chan_rename(cc, name_old)
 
