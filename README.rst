@@ -60,7 +60,8 @@ Features
 - Reliable outgoing message ordering and delivery, with explicit notifications
   for detected issues of any kind.
 
-- Support for both private and public channels, channel ordering, threads.
+- Support for both private and public channels, channel ordering, threads,
+  forums, except for creating any new ones of these.
 
 - Per-server and global catch-all channels to track general activity.
 
@@ -120,6 +121,11 @@ Limitations
 - No discord-specific actions beyond all kinds of reading and sending messages
   to existing channels are supported - i.e. no creating accounts or channels on discord,
   managing roles, invites, bans, timeouts, etc - use WebUI, Harmony_ or proper discord bots.
+
+- Creating new private chats and channel/forum threads is not supported.
+
+  For private chats, it might be even dangerous to support - see `More info on
+  third-party client blocking`_ section below for details.
 
 - Does not track user presence (online, offline, afk, playing game, etc) at all.
 
@@ -862,6 +868,23 @@ Few other datapoints and anecdotes on the subject:
   initiating private chats. This client doesn't have such functionality, but
   maybe one should be more careful with private chats anyway, as that seem to be
   a major spam vector, so is more likely to be heavily-monitored, I think.
+
+- In the #rdircd IRC channel, a person mentioned that their discord account got
+  some anti-spam mechanism enabled on it, disallowing to log-in without
+  providing a phone number and SMS challenge (and services like Google Voice
+  don't work there), immediately after they've initiated private chat with
+  someone in Ripcord_ client.
+
+  "I contacted support at the time and they just responded that they can't
+  undo the phone number requirement once it has been engaged"
+
+  It also seems like Ripcord currently might be trying to mimic official client
+  way more closely than rdircd script here does (where latter even sends
+  "client"/"User-Agent" fields as "rdircd" and appears that way under Devices in
+  User Settings webui), and such similarity might look like Terms of Service
+  violation to Discord (modifying official client), instead of Community
+  Guidelines violation (third-party client), but obviously it's just a guess
+  on my part as to whether it matters.
 
 There are also `some HN comments clarifying Discord staff position in a thread here`_,
 though none of the above should probably be taken as definitive,
