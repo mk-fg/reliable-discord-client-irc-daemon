@@ -93,7 +93,7 @@ Features
 - Full unicode support everywhere.
 
 - IRC protocol is implemented from IRCv3 drafts, but doesn't use any of the
-  advanced features, so should be compatible with any clients.
+  advanced features, so should be compatible with any clients. Optional TLS wrapping.
 
 - Extensive protocol and debug logging options, some accessible at runtime via
   #rdircd.debug channel.
@@ -153,9 +153,6 @@ Limitations
   .. _Slash commands: https://discord.com/developers/docs/interactions/slash-commands
 
 - Not the most user-friendly thing, though probably same as IRC itself.
-
-- No TLS mode for IRC - use bouncers like `ZNC <http://znc.in/>`_ for that
-  (and for much more than that!).
 
 - I only run it on Linux, so it's unlikely to "just work" on OSX/Windows, but idk.
 
