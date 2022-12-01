@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.10.20' # git-version: py-str
+	version = '22.12.0' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -164,7 +164,7 @@ class RDIRCDConfigBase:
 
 
 
-err_fmt = lambda err: '[{}] {}'.format(err.__class__.__name__, err)
+err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
 
 class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k

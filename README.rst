@@ -29,6 +29,8 @@ Repository URLs:
 - https://codeberg.org/mk-fg/reliable-discord-client-irc-daemon
 - https://fraggod.net/code/git/reliable-discord-client-irc-daemon
 
+Last one has git-notes with todo list and such at the default ref for those.
+
 .. _Discord: http://discord.gg/
 .. _IRC: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 .. _#rdircd at libera.chat: https://web.libera.chat/?channels=#rdircd
