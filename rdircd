@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.0' # git-version: py-str
+	version = '22.12.2' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -146,6 +146,9 @@ class RDIRCDConfigBase:
 	debug_log_file_count = 9
 	debug_chan_proto_tail = 50
 	debug_chan_proto_cut = 230
+	# Randomly segfault-crash every 1<n<2*mmts
+	#   minutes, for backwards-compatibility with various legacy C daemons.
+	debug_mean_minutes_to_segfault = 0.0
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth', 'debug'
@@ -2617,6 +2620,12 @@ class RDIRCD:
 		if self.tasks: await self.tasks.close()
 		self.init = False
 
+	async def segfault_after_delay(self, delay):
+		'Folks keep mentioning on IRC that daemon is not crashing, this should fix it'
+		import ctypes
+		await asyncio.sleep(delay)
+		ctypes.string_at(0) # should reliably crash the process
+
 	def uid(self, k, v=None, kh=None, hash_len=None):
 		if v is None: return self.cache.uid.get(k, (None, None))
 		k = k, v
@@ -2637,6 +2646,13 @@ class RDIRCD:
 			IRCProtocol.factory_for_bridge(self),
 			self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False, ssl=self.conf.irc_tls )
+
+		if self.conf.debug_mean_minutes_to_segfault > 0:
+			mins_to_segfault = int( 1 + random.random()
+				* self.conf.debug_mean_minutes_to_segfault * 2 )
+			self.log.debug('Priming segfault timer ({:,d} min)...', mins_to_segfault)
+			self.tasks.add(self.segfault_after_delay(mins_to_segfault * 60))
+
 		self.log.debug('Initializing discord...')
 		try:
 			async with Discord(self) as discord:
@@ -3681,7 +3697,7 @@ def main(args=None, conf=None):
 					p_key, '-out', p_crt, '-subj', conf.irc_tls_pem_gen_subj ], check=True)
 				p_pem.touch(0o600)
 				try: p_pem.write_text('\n'.join([p_key.read_text(), p_crt.read_text()]))
-				except: p_pem.unlink(missing_ok=True); raise
+				except: p_pem.unlink(); raise
 			finally: p_key.unlink(missing_ok=True); p_crt.unlink(missing_ok=True)
 		conf.irc_tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 		conf.irc_tls.load_cert_chain(p_pem, p_pem)
