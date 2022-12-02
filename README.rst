@@ -251,7 +251,7 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
   email = discord-reg@email.com
   password = discord-password
 
-Note: IRC password can be omitted, but be sure to firewall that port from
+Note: IRC password can be omitted, but make sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
 If you set password though, maybe do not use irc ``password=`` option like above,
@@ -261,8 +261,11 @@ server in the IRC client as well.
 
 Start rdircd daemon: ``./rdircd --debug``
 
-Connect IRC client to "localhost:6667" (see ``./rdircd --conf-dump-defaults``
-or -i/--irc-bind option for using different host/port).
+Connect IRC client to "localhost:6667" - default listen/bind host and port.
+
+(see ``./rdircd --conf-dump-defaults`` or corresponding CLI ``-i/--irc-bind`` /
+``-s/--irc-tls-pem-file`` options for binding on different host/port and TLS
+socket wrapping, for non-localhost connections)
 
 Run ``/list`` to see channels for all joined discord servers/guilds::
 
@@ -348,13 +351,13 @@ Can be defined in the config file to replace hash-based discord prefixes or serv
 channel names with something more readable/memorable or meaningful to you::
 
   [renames]
-  guild.jvpp = game-X
+  guild.jvpp = game-x
   chan.some-long-and-weird-name = weird
-  chan.@710035588048224269 = memes
+  chan.@710035588048224269 = general-subs
 
 This should:
 
-- Turn e.g. #jvpp.info into #game-X.info (lettersoup-id to more humane prefix).
+- Turn e.g. #jvpp.info into #game-x.info (lettersoup-id to more humane prefix).
 
 - Rename that long channel to have a shorter name (retaining guild prefix).
 
@@ -364,10 +367,11 @@ This should:
 - Rename channel with id=710035588048224269 to "memes" (with guild prefix too).
 
   That long discord channel id (also called "snowflake") can be found by typing
-  "/t info" topic-command in irc channel from discord, and can be used to refer
-  to that specific channel, e.g. this #general on this server instead of everywhere.
+  "/t info" topic-command in corresponding irc channel, and can be used to refer
+  to that specific channel, i.e. renaming this one #general on this one discord
+  server instead of renaming all #general channels everywhere.
 
-Currently renames are implemented for guild IDs and chan names, like demonstrated above.
+Currently renames are only implemented for guild IDs and channels, like demonstrated above.
 
 #rdircd.monitor channels
 ````````````````````````
@@ -516,26 +520,26 @@ Default regexps look something like this (check ``--conf-dump-defaults`` jic)::
   msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$
   msg-del-re = ^\s*//del\s*$
 
-They match sed/perl/irc-like follow-up amendment lines like ``s/spam/ham/`` or
-``//del``, which will never be sent to discord, only used as internal commands.
+They match sed/perl/irc-like follow-up amendment lines like ``s/spam/ham/``, and
+``//del`` line, which will never be sent to discord, only used as internal commands.
 
 (``s|/some/path|/other/path|`` and
 ``s:cat /dev/input/mouse0 | hexdump:hexdump </dev/input/mouse0:``
-syntaxes are also allowed by default edit-regexp, just like with sed_,
-to not need as much escaping for common stuff like paths)
+syntaxes are also allowed by default edit-regexp, just like with sed_, for
+easier handling of common stuff like paths, which can have these chars in them)
 
 Both commands matched by these operate on last message sent by rdircd to the
 same discord channel, with ``//del`` simply removing that last message, and edit
 running `python re.sub()`_ (`PCRE-like`_) regexp-replacement function on it.
 
-"msg-edit-re" regexp matching sed-like command must have named "aaa" and "bbb"
-groups in it, which will be used as pattern and replacement args to re.sub(),
-respectively.
+"msg-edit-re" regexp option value matching sed-like command must have named
+"aaa" and "bbb" groups in it, which will be used as pattern and replacement
+args to re.sub(), respectively.
 
 If edit doesn't seem to alter last-sent message in any way, it gets discarded,
 and also generates IRC notice response, to signal that replacement didn't work.
 
-Successful edit/deletion will also be signaled as usual,
+Successful edit/deletion should also be signaled as usual by discord,
 with "[edit]" or such prefix (configurable under "[irc]" section).
 
 Any older-than-last messages can be edited through Discord WebUI - this client
