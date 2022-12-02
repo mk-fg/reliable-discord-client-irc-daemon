@@ -70,7 +70,7 @@ Features
 - Limited translation for using discord user mentions in sent messages,
   edits and deletions.
 
-- Configurable local name aliases.
+- Configurable local name aliases/renames.
 
 - Support for limited runtime reconfiguration via #rdircd.control channel.
 
@@ -342,10 +342,12 @@ Channel Commands
 Local Name Aliases
 ``````````````````
 
+(more like "renames" than "aliases", as old names don't continue to work for these)
+
 Can be defined in the config file to replace hash-based discord prefixes or server
 channel names with something more readable/memorable or meaningful to you::
 
-  [aliases]
+  [renames]
   guild.jvpp = game-X
   chan.some-long-and-weird-name = weird
   chan.@710035588048224269 = memes
@@ -365,7 +367,7 @@ This should:
   "/t info" topic-command in irc channel from discord, and can be used to refer
   to that specific channel, e.g. this #general on this server instead of everywhere.
 
-Currently aliases are implemented for guild IDs and chan names, like demonstrated above.
+Currently renames are implemented for guild IDs and chan names, like demonstrated above.
 
 #rdircd.monitor channels
 ````````````````````````

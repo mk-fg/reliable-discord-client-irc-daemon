@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.4' # git-version: py-str
+	version = '22.12.5' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -152,7 +152,7 @@ class RDIRCDConfigBase:
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'irc', 'discord', 'auth', 'debug'
-	_conf_sections_old = dict(auth_main='auth') # old -> new renames
+	_conf_sections_old = dict(auth_main='auth', aliases='renames') # old -> new renames
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
@@ -2256,13 +2256,13 @@ class DiscordSession:
 				else: name = f'chat.{self.op_ev_chans_priv_name(user_names)}'
 				if not topic: topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
 
-			alias = self.conf.aliases.get(('chan', f'@{c.id}'))
-			if not alias:
-				alias = self.conf.aliases.get(
+			rename = self.conf.renames.get(('chan', f'@{c.id}'))
+			if not rename:
+				rename = self.conf.renames.get(
 					('chan', self.discord.bridge.irc_name(name).lower()) )
-			if alias:
-				self.log.debug('Using alias-name for channel/thread: {} -> {}', name, alias)
-				name = alias
+			if rename:
+				self.log.debug('Renaming channel/thread: {} -> {}', name, rename)
+				name = rename
 			name = self.discord.bridge.irc_name(name)
 
 			cc.update(
@@ -2643,7 +2643,7 @@ class RDIRCD:
 			if kh is None:
 				kh = str_hash( '\0'.join(map(str, k)),
 					hash_len or self.uid_len, self.uid_seed ).lower()
-				kh = self.conf.aliases.get((k[0], kh), kh).lower()
+				kh = self.conf.renames.get((k[0], kh), kh).lower()
 			if kh in self.cache.uid:
 				# Hash collisions should not happen here - raise uid_len if they do
 				raise ValueError(k, kh, self.cache.uid[kh])
@@ -2745,7 +2745,7 @@ class RDIRCD:
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
 				'  set {topic...} - set topic, as usual irc /topic command would do.',
-				'  info - show some internal guild/channel information, like IDs and such for aliases.',
+				'  info - show some internal guild/channel information, like IDs and such for renames.',
 				'  log [state] - replay history since "state" point (default: last rdircd stop).',
 				'    "state" value can be either a number, state-id, relative or iso8601 timestamp.',
 				'    Where number indicates last Nth state recorded in the config (0 - current).',
@@ -3217,12 +3217,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	ws_dump_file = 'dump.json'
 	# ws_dump_filter = adict(op=0, t='READY')
 
-	state_tracked, state, aliases = True, None, None
+	state_tracked, state, renames = True, None, None
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
 	_debug_chan = _debug_proto = _debug_counts = None
 
 	def __init__(self):
-		self.state, self.aliases = dict(), dict()
+		self.state, self.renames = dict(), dict()
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -3273,9 +3273,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
 			print(f'{k} = {v}')
-		if self.aliases:
-			print('\n[aliases]')
-			for k, v in self.aliases.items(): print(f'{".".join(k)} = {v}')
+		if self.renames:
+			print('\n[renames]')
+			for k, v in self.renames.items(): print(f'{".".join(k)} = {v}')
 
 	def read_from_file(self, *conf_paths):
 		conf_file = configparser.ConfigParser(allow_no_value=True)
@@ -3283,6 +3283,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		conf_file.read(conf_paths)
 		self._conf_path = conf_paths[-1]
 		for k, k_new in list(self._conf_sections_old.items()):
+			if k_new not in self._conf_sections: continue # special sections
 			if not self.update_from_file_section(
 					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
 				# Warnings will be issued for existing keys after logging is configured later
@@ -3295,10 +3296,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			for k, v in conf_file['state'].items():
 				if k == 'tracked': continue
 				self.state[k] = parse_iso8601(v)
-		if conf_file.has_section('aliases'):
-			for k, v in conf_file['aliases'].items():
-				if '.' not in k: continue
-				self.aliases[tuple(k.lower().split('.', 1))] = v
+		for sk in 'aliases', 'renames':
+			if not conf_file.has_section(sk): continue
+			self.renames.update(
+				(tuple(k.lower().split('.', 1)), v)
+				for k, v in conf_file[sk].items() if '.' in k )
 
 	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
 		if v is str or isinstance(v, str):
