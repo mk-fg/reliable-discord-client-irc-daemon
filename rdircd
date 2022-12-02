@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.2' # git-version: py-str
+	version = '22.12.4' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -2163,16 +2163,50 @@ class DiscordSession:
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 
 	def op_ev_chans(self, gid, chans, sync=None):
+		if not (gg := self.st.guilds.get(gid)): return
+		proc = self.op_ev_chans_process(gg, chans)
+
+		# Process channel name changes, if any, send notifications
+		# Disambiguation here doesn't affect threads, as they have unique ids in them already
+		cs_affected = dict() # other channels affected by disambiguation
+		for cc, name, name_old in proc.new_names:
+			conflicts = self.op_ev_chans_update_disambiguation(proc.chans, name)
+			for cca, cca_name_old in conflicts:
+				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
+		new_renames = list()
+		for cc, name, name_old in proc.new_names:
+			if not name_old:
+				if not cc.get('tid'): # logged separately below
+					self.log.debug( 'New channel [id={} gid={}]:'
+						' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
+			elif cc.name != name_old: new_renames.append((cc, name_old))
+			cs_affected.pop(cc.id, None)
+		for cc, name_old in cs_affected.values(): new_renames.append((cc, name_old))
+
+		dict_update(gg.chans, proc.chans, sync=sync)
+		self.discord.cmd_chan_map_update()
+
+		if sync is None:
+			# "new_threads" is needed here to avoid mentioning them on every (re-)connect
+			# Notification is also needed in case msgs from these to parent chan are disabled
+			for cc in proc.new_threads:
+				self.log.debug( 'New thread-channel'
+					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
+				self.discord.cmd_chan_thread(cc)
+		for cc, name_old in new_renames: self.discord.cmd_chan_rename(cc, name_old)
+
+	def op_ev_chans_process(self, gg, chans):
+		'''Process channel data from discord into internal information.
+			Earlier information from gg.chans is used as a base and for diffs, if it is there.'''
 		def _gg_prefix():
 			try:
 				return ( self.discord.bridge.cache.gid_prefix.get(gg.id)
 					or self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh')) )
 			except: return '???' # digs a bit too far to get that debug info
-		if not (gg := self.st.guilds.get(gid)): return
-		cs, ct = dict(), self.c_chan_type
-		chan_name_changes, new_threads = list(), list() # for disambiguation checks/notifications
-
+		ct, proc = self.c_chan_type, adict(
+			chans=dict(), new_names=list(), new_threads=list() )
 		for c in force_list(chans):
+
 			name, topic = c.get('name'), c.get('topic') or ''
 			if c.type in [ct.group, ct.store, ct.stage]: continue
 			try: cc_type = ct(c.type)
@@ -2186,7 +2220,7 @@ class DiscordSession:
 			if c.type == ct.forum: topic = f'[forum] {topic}'
 
 			if c.type in [ct.thread, ct.thread_news, ct.thread_private]:
-				cc_parent = gg.chans.get(c.parent_id) or cs.get(c.parent_id)
+				cc_parent = gg.chans.get(c.parent_id) or proc.chans.get(c.parent_id)
 				if not cc_parent:
 					self.log.error( 'BUG - ignoring thread sub-channel with'
 							' unknown parent-chan={}: guild={!r} (id={} prefix={}) name={!r} id={}',
@@ -2201,16 +2235,16 @@ class DiscordSession:
 			else: c_tid = None
 			cc_private = c.type in [ct.private, ct.private_group]
 
-			cc = cs.setdefault(c.id, gg.chans.get( c.id,
+			cc = proc.chans.setdefault(c.id, gg.chans.get( c.id,
 				adict(users=adict(), threads=adict(), last_msg_sent=adict()) ))
 			cc.name_raw = name
 			name_old, name_old_base = cc.get('name'), cc.get('name_base')
 			if c_tid:
 				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
-				if not name_old: new_threads.append(cc)
+				if not name_old: proc.new_threads.append(cc)
 			elif cc_private:
 				ts, users= time.time(), c.get('recipients') or list()
-				for u in users: self.discord.cmd_user_cache(gid, u.id, u.username)
+				for u in users: self.discord.cmd_user_cache(gg.id, u.id, u.username)
 				dict_update( cc.users,
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
@@ -2229,6 +2263,7 @@ class DiscordSession:
 			if alias:
 				self.log.debug('Using alias-name for channel/thread: {} -> {}', name, alias)
 				name = alias
+			name = self.discord.bridge.irc_name(name)
 
 			cc.update(
 				id=c.id, gid=gg.id, did=f'#{gg.id}-{c.id}',
@@ -2239,42 +2274,17 @@ class DiscordSession:
 			if name_old and name_old != name_old_base:
 				# For already-disambiguated chans, all name_old_base channels might need update
 				# Might not affect cc if name was updated, but will change/remove suffix on others
-				chan_name_changes.append((cc, name_old_base, name_old))
-			if name != name_old: chan_name_changes.append((cc, name, name_old)) # new chans too
+				proc.new_names.append((cc, name_old_base, name_old))
+			if name != name_old: proc.new_names.append((cc, name, name_old)) # new chans too
 
-		# Process channel name changes, if any, send notifications
-		# Disambiguation here doesn't affect threads, as they have unique ids in them already
-		cs_affected = dict() # other channels affected by disambiguation
-		for cc, name, name_old in chan_name_changes:
-			for cca, cca_name_old in self.op_ev_chans_update_disambiguation(cs, name):
-				if cca.id != cc.id: cs_affected[cca.id] = cca, cca_name_old
-		new_renames = list()
-		for cc, name, name_old in chan_name_changes:
-			if not name_old:
-				if not cc.get('tid'): # logged separately below
-					self.log.debug( 'New channel [id={} gid={}]:'
-						' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
-			elif cc.name != name_old: new_renames.append((cc, name_old))
-			cs_affected.pop(cc.id, None)
-		for cc, name_old in cs_affected.values(): new_renames.append((cc, name_old))
-
-		dict_update(gg.chans, cs, sync=sync)
-		self.discord.cmd_chan_map_update()
-
-		if sync is None: # otherwise they'll be mentioned on every (re-)connect
-			# Should be needed if msgs from these to parent chan are disabled
-			for cc in new_threads:
-				self.log.debug( 'New thread-channel'
-					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
-				self.discord.cmd_chan_thread(cc)
-		for cc, name_old in new_renames: self.discord.cmd_chan_rename(cc, name_old)
+		return proc
 
 	def op_ev_chans_update_disambiguation(self, cs, name):
 		'Renames same-name channels to "chan.1" "chan.2" etc, yielding (cc, name_old) tuples'
 		# Must always yield same renames for same set(s) of channel names
-		irc_name, irc_chans = self.discord.bridge.irc_name(name).lower(), list()
+		irc_name, irc_chans = name.lower(), list()
 		for cc in cs.values():
-			if self.discord.bridge.irc_name(cc.name_base).lower() != irc_name: continue
+			if cc.name_base.lower() != irc_name: continue
 			irc_chans.append(cc)
 		if not irc_chans: return # can happen if old matching channels were removed
 		if len(irc_chans) == 1: # remove unnecessary disambiguation
@@ -3151,14 +3161,14 @@ class RDIRCD:
 		if gid is not None: gid = self.cache.gid_prefix.get(gid)
 		if gid:
 			name = self.c.chan_monitor_guild_prefix + gid
-			gid = conn.chan_spec(name)
+			chan_mon = conn.chan_spec(name)
 			if name not in self.chans_mon: # kinda bad: never removed, invisible until activity
 				self.chans_mon[name] = ( 'rdircd: read-only'
 					' catch-all channel for messages from one discord' )
 		for s in lines:
 			s = f'{pre}{str_cut(s, n, len_bytes=True)}'
 			conn.cmd_msg_synth(nick, c, s, notice=notice)
-			if gid: conn.cmd_msg_synth(nick, gid, s, notice=notice)
+			if gid: conn.cmd_msg_synth(nick, chan_mon, s, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick, line,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
