@@ -2633,7 +2633,7 @@ class RDIRCD:
 			if kh is None:
 				kh = str_hash( '\0'.join(map(str, k)),
 					hash_len or self.uid_len, self.uid_seed ).lower()
-				kh = self.conf.aliases.get((k[0], kh), kh)
+				kh = self.conf.aliases.get((k[0], kh), kh).lower()
 			if kh in self.cache.uid:
 				# Hash collisions should not happen here - raise uid_len if they do
 				raise ValueError(k, kh, self.cache.uid[kh])
