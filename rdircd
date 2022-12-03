@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.10' # git-version: py-str
+	version = '22.12.11' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -3351,8 +3351,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			for k, v in conf_file['state'].items():
 				if k == 'tracked': continue
 				self.state[k] = parse_iso8601(v)
-		for sk in 'aliases', 'renames':
-			if not conf_file.has_section(sk): continue
+		for new, sk in enumerate(['aliases', 'renames']):
+			if not conf_file.has_section(sk):
+				if not new: del self._conf_sections_old[sk]
+				continue
 			self.renames.update(
 				(tuple(k.lower().split('.', 1)), v)
 				for k, v in conf_file[sk].items() if '.' in k )
