@@ -271,19 +271,19 @@ Run ``/list`` to see channels for all joined discord servers/guilds::
 
   Channel          Users Topic
   -------          ----- -----
-  #rdircd.control      0  rdircd: control channel, type "help" for more info
-  #rdircd.debug        0  rdircd: debug logging channel, read-only
-  #rdircd.monitor      0  rdircd: read-only catch-all channel with messages from everywhere
-  #rdircd.monitor.jvpp 0  rdircd: read-only catch-all channel for messages from one discord
+  #rdircd.control      1  rdircd: control channel, type "help" for more info
+  #rdircd.debug        1  rdircd: debug logging channel, read-only
+  #rdircd.monitor      1  rdircd: read-only catch-all channel with messages from everywhere
+  #rdircd.monitor.jvpp 1  rdircd: read-only catch-all channel for messages from one discord
   #me.chat.SomeUser    1  me: private chat - SomeUser
   #me.chat.x2s456gl0t  3  me: private chat - some-other-user, another-user, user3
-  #jvpp.announcements  0  Server-A: Please keep this channel unmuted
-  #jvpp.info           0  Server-A:
-  #jvpp.rules          0  Server-A:
-  #jvpp.welcome        0  Server-A: Mute unless you like notification spam
+  #jvpp.announcements  1  Server-A: Please keep this channel unmuted
+  #jvpp.info           1  Server-A:
+  #jvpp.rules          1  Server-A:
+  #jvpp.welcome        1  Server-A: Mute unless you like notification spam
   ...
-  #axsd.intro          0  Server-B: Server info and welcomes.
-  #axsd.offtopic       0  Server-B: Anything goes. Civility is expected.
+  #axsd.intro          1  Server-B: Server info and welcomes.
+  #axsd.offtopic       1  Server-B: Anything goes. Civility is expected.
 
 Notes on information here:
 
@@ -296,6 +296,7 @@ Notes on information here:
   something to a channel, as discord has no concept of "joining" for publics.
 - Everything in that /list and everything used to talk through this app are IRC
   channels (with #, that you /join), it doesn't use /q or /msg pretty much anywhere.
+- Channels always list at least 1 user, to avoid clients hiding ones with 0.
 
 ``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
 Channels joins/parts in IRC side do not affect discord in any way.
