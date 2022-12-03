@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.7' # git-version: py-str
+	version = '22.12.9' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -636,9 +636,10 @@ def iter_gather(container):
 
 class adict(cs.UserDict):
 	'dict with simplier access via attrs and update-tracking for cache invalidation.'
-	__slots__ = 'data', '_track_keys', '_track_cb'
+	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
 
 	def __init__(self, *args, **kws):
+		self.attrs = dict()
 		self._track_keys = self._track_cb = None
 		super().__init__(*args, **kws)
 		self._make(self)
@@ -665,12 +666,17 @@ class adict(cs.UserDict):
 		self._track_cb()
 
 	def __getattr__(self, k):
-		if k not in self.__slots__: return self[k]
+		if k not in self.__slots__:
+			return self[k] if not k.startswith('ø_') else self.attrs[k[1:]]
 		else: return self.__getattribute__(k)
 	def __setattr__(self, k, v):
-		if k not in self.__slots__: self[k] = v
+		if k not in self.__slots__:
+			if not k.startswith('ø_'): self[k] = v
+			else: self.attrs[k[1:]] = v
 		else: return super().__setattr__(k, v)
-	def __delattr__(self, k, v): del self[k]
+	def __delattr__(self, k, v):
+		if not k.startswith('ø_'): del self[k]
+		else: del self.attrs[k[1:]]
 
 	def __setitem__(self, k, v):
 		super().__setitem__(k, v)
