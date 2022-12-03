@@ -19,7 +19,7 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# For values starting with spaces/tabs in ini files, prefix value with backslash.
 
-	version = '22.12.6' # git-version: py-str
+	version = '22.12.7' # git-version: py-str
 
 	irc_host = '127.0.0.1'
 	irc_port = 6667
@@ -40,6 +40,7 @@ class RDIRCDConfigBase:
 	irc_prefix_all_private = '' # universal prefix to include in all incoming private-chat msgs
 	irc_names_timeout = '1d' # time since last activity
 	irc_motd_file_path = '' # file path to read for motd command
+	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 
 	# Path to PEM file with cert and key to use TLS
 	#  for all IRC connections, with default python/openssl server-side parameters.
@@ -210,7 +211,7 @@ class LogEmptyMsgFilter(logging.Filter):
 log_empty_filter = LogEmptyMsgFilter()
 
 class LogProtoDebugFilter(logging.Filter):
-	debug_re = re.compile(rb'^:core (PRIVMSG|NOTICE) #rdircd\.debug :')
+	debug_re = re.compile(rb'^:\S+ (PRIVMSG|NOTICE) #rdircd\.debug :')
 	def filter(self, record):
 		try: st, msg = record.extra
 		except: return True
@@ -682,9 +683,10 @@ class adict(cs.UserDict):
 irc_name_eq = lambda a, b: a.lower() == b.lower()
 
 class irc_name_dict(cs.UserDict):
+	'Mapping to resolve IRC ascii-casefolded names'
 	value_map = classmethod(
 		lambda cls, names: cls((v, v) for v in names) )
-	def add(self, name): self[name] = name
+	def add(self, name): self[name] = name # for ci-name -> name mappings
 	def remove(self, name): del self[name]
 	def __contains__(self, key): return key.lower() in self.data
 	def __getitem__(self, k): return self.data[k.lower()]
@@ -698,6 +700,8 @@ class IRCProtocolArgsError(IRCProtocolError): pass
 class IRCBridgeSignal(Exception): pass
 
 class IRCProtocol:
+	'''IRC protocol state and implementation.
+		It's unique to each connected IRC client, and they don't ever interact.'''
 
 	# Extensive lists of modes are copied from freenode to make clients happy
 	feats_modes = 'DOQRSZaghilopswz CFILMPQSbcefgijklmnopqrstvz'
@@ -724,6 +728,8 @@ class IRCProtocol:
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None,
 			host=None, auth=False, cap_neg=False, away=None,
+			# Channels here get initialized on joins and removed on parts
+			# There is no need to track them otherwise
 			chans=irc_name_dict() )
 
 
@@ -1118,8 +1124,8 @@ class IRCProtocol:
 			else: c = self.bridge.cmd_chan_map().get(name)
 			if not c: return
 			if from_self and c.t == c.t.mon:
-				self.send( f':monitor NOTICE {chan} :WARNING: this is one of'
-					' the monitor-channels, msgs posted here are not proxied to discord' )
+				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING: this is'
+					' one of the monitor-channels, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
 				if name not in conn.st.chans: self.cmd_join(chan) # from chan_auto_join_re
@@ -1235,7 +1241,7 @@ class Discord:
 
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
-		return list(self.bridge.cmd_chan_map()) # to trigger re-caching
+		return list(self.bridge.cmd_chan_map()) # to trigger re-caching, if needed
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
 		if not self.session: return list()
@@ -2216,9 +2222,7 @@ class DiscordSession:
 					c.type, gg.name, gg.id, _gg_prefix(), name, topic, c.id )
 				continue
 			# Voice chats often have same name as text ones, so disambiguate via suffix
-			if c.type == ct.voice: topic, name = f'[voice] {topic}', f'{name}.vc'
-			if c.type == ct.forum: topic = f'[forum] {topic}'
-
+			if c.type == ct.voice: name = f'{name}.vc'
 			if c.type in [ct.thread, ct.thread_news, ct.thread_private]:
 				cc_parent = gg.chans.get(c.parent_id) or proc.chans.get(c.parent_id)
 				if not cc_parent:
@@ -2559,7 +2563,7 @@ class DiscordSession:
 			else: emo = f' {emo}'
 		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
 		try: u = m.member.user
-		except: nick = None # notice from nick_sys
+		except: nick = None # notice from irc_nick_sys
 		else:
 			self.discord.cmd_user_cache(gg.id, u.id, u.username)
 			nick = u.username
@@ -2573,6 +2577,8 @@ class DiscordSession:
 			f'--- gift-code: uses={m.uses} sku={m.sku_id} code={m.code}' )
 
 
+
+class RDIRCDError(Exception): pass
 
 class RDIRCD:
 
@@ -2591,6 +2597,8 @@ class RDIRCD:
 	def __init__(self, conf):
 		self.conf, self.init = conf, None
 		self.log = get_logger('rdircd.bridge')
+		if ' ' in (self.conf.irc_nick_sys or ' '):
+			raise RDIRCDError('Invalid irc-nick-sys value: {self.conf.irc_nick_sys!r}')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
@@ -2601,7 +2609,6 @@ class RDIRCD:
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_names_timeout = parse_duration(self.conf.irc_names_timeout)
 		self.irc_msg_queue = asyncio.Queue()
-		self.nick_sys = 'core'
 		self.chans_sys = adict({
 			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
 			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' })
@@ -2739,7 +2746,7 @@ class RDIRCD:
 	async def irc_topic_cmd(self, conn, name, line=''):
 		chan = conn.chan_spec(name)
 		notice_cmd = ft.partial( conn.cmd_msg_synth,
-			self.nick_sys, chan, notice=True, direct=True )
+			self.conf.irc_nick_sys, chan, notice=True, direct=True )
 		cmd = line.split(None, 1)
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd('\n'.join([ '--- Topic-commands:',
@@ -2827,7 +2834,7 @@ class RDIRCD:
 		line = self.irc_msg_translate(line)
 		if not line.strip(): return
 		if not self.irc_msg_queue:
-			conn.cmd_msg_synth( self.nick_sys, chan,
+			conn.cmd_msg_synth( self.conf.irc_nick_sys, chan,
 				f'ERR {{irc-msg-queue-failed}}: {line}', notice=True, direct=True )
 		else: self.irc_msg_queue.put_nowait(
 			adict(conn=conn, chan=chan, name=name, line=line) )
@@ -2851,13 +2858,13 @@ class RDIRCD:
 						await self.discord.cmd_msg_del_last(info.cc)
 					else: await self.discord.cmd_msg_send(info.cc, m.line)
 				except IRCBridgeSignal as err:
-					m.conn.cmd_msg_synth( self.nick_sys, m.chan,
+					m.conn.cmd_msg_synth( self.conf.irc_nick_sys, m.chan,
 						f'ERR {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
 					while True: # flush queue to ensure ordering
 						try: m = self.irc_msg_queue.get_nowait()
 						except asyncio.QueueEmpty: break
 						if m is StopIteration: break
-						m.conn.cmd_msg_synth( self.nick_sys, m.chan,
+						m.conn.cmd_msg_synth( self.conf.irc_nick_sys, m.chan,
 							f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
 					if m is StopIteration: break
 		finally: self.irc_msg_queue = None
@@ -2950,9 +2957,12 @@ class RDIRCD:
 					gg.chans.values(),
 					key=lambda cc: (cc.get('pos') or 999, cc.name) ):
 				cache_track(cc, 'name topic pos nsfw')
-				name = f'{gid_pre}.{self.irc_name(cc.name)}'
-				tags = '[NSFW] ' if cc.nsfw else ''
+				tags, name = '', f'{gid_pre}.{self.irc_name(cc.name)}'
+				if cc.nsfw: tags += '[nsfw] '
+				if cc.t is cc.t.voice: tags += '[voice] '
+				elif cc.t is cc.t.forum: tags += '[forum] '
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
+				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.did_chan[cc.did] = name
 				# Note: lowercase translation is handled by using different (proper) internal name
@@ -2991,8 +3001,7 @@ class RDIRCD:
 
 	def cmd_chan_sys_control(self, conn, chan, line_raw):
 		if not (line := line_raw.strip().lower().split()): return
-		cmd, send = line[0],\
-			ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
+		cmd, send = line[0], ft.partial(conn.cmd_msg_synth, self.conf.irc_nick_sys, chan)
 		if cmd in ['h', 'help']:
 			self.cmd_chan_sys_control_status(send)
 			send('\n'.join([
@@ -3060,7 +3069,7 @@ class RDIRCD:
 		line_src, line = line, line.strip().lower().split()
 		pt_n, pt_cut = (self.conf.get(f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
 		if not line: return
-		send = ft.partial(conn.cmd_msg_synth, self.nick_sys, chan)
+		send = ft.partial(conn.cmd_msg_synth, self.conf.irc_nick_sys, chan)
 		if line[0] in ['h', 'help', 'st', 'status']:
 			level = proto_log_info = '???'
 			proto_log_shared = ['no', 'yes'][bool(log_proto_root.propagate)]
@@ -3135,16 +3144,14 @@ class RDIRCD:
 	def cmd_log(self, line):
 		if not self.init: return
 		if not (conn := self.cmd_conn()): return
-		conn.cmd_msg_synth( self.nick_sys,
-			conn.chan_spec(self.c.chan_debug), line )
+		conn.cmd_msg_synth(
+			self.conf.irc_nick_sys, conn.chan_spec(self.c.chan_debug), line )
 
 	async def cmd_info(self, conn, t, id_str):
 		t = {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
-		info_url = f'{t}/{id_str}'
+		info_url, send = f'{t}/{id_str}', ft.partial(conn.cmd_msg_self, self.conf.irc_nick_sys)
 		info = await self.discord.cmd_info_dump(info_url)
-		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] info follows')
-		conn.cmd_msg_self(self.nick_sys, info)
-		conn.cmd_msg_self(self.nick_sys, f'--- [{info_url}] end')
+		send(f'--- [{info_url}] info follows'); send(info); send(f'--- [{info_url}] end')
 
 	def cmd_msg_monitor( self, msg,
 			conn=None, nick=None, pre='', notice=True, gid=None ):
@@ -3156,7 +3163,7 @@ class RDIRCD:
 			lines_n, lines = len(lines), lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
 		c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
-		nick = nick or self.nick_sys
+		nick = nick or self.conf.irc_nick_sys
 		if gid is not None: gid = self.cache.gid_prefix.get(gid)
 		if gid:
 			name = self.c.chan_monitor_guild_prefix + gid
@@ -3192,7 +3199,7 @@ class RDIRCD:
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
 		else:
-			nick = self.nick_sys
+			nick = self.conf.irc_nick_sys
 			if notice is None: notice = True
 		if not notice:
 			if self.conf.irc_prefix_all_private and cc.private:
