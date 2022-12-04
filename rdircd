@@ -13,20 +13,22 @@ import aiohttp
 
 
 class RDIRCDConfigBase:
+	# This is a regular ini file with key=value lines under couple sections.
 	# String time intervals can be either simple floats or stuff like
 	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 	# For values ending with whitespace (like prefixes) in ini config files,
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
-	# For values starting with spaces/tabs in ini files, prefix value with backslash.
+	# Values starting with spaces/tabs should be prefixed
+	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.11' # git-version: py-str
+	version = '22.12.13' # git-version: py-str
 
-	irc_host = '127.0.0.1'
-	irc_port = 6667
-	irc_password = '' # for plaintext password - do not use, use password-hash instead
+	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
+	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
-	irc_host_af = 0
-	irc_auth_tbf = '30:8'
+	irc_password = '' # for plaintext password - do not use, use password-hash instead
+	irc_auth_tbf = '30:8' # token-bucket filter, rate=1/30s burst=8
+	irc_host_af = 0 # auto-picked by getaddrinfo(), 2=IPv4 10=IPv6
 	irc_uid_len = 4 # can be increased to fix conflicts
 	irc_uid_seed = ''
 	irc_prefix_edit = '[edit] '
@@ -45,7 +47,8 @@ class RDIRCDConfigBase:
 	# Path to PEM file with cert and key to use TLS
 	#  for all IRC connections, with default python/openssl server-side parameters.
 	irc_tls_pem_file = ''
-	# Subject line to generate pem file with, if specified path is missing. Empty - disabled.
+	# openssl req -subj to generate cert pem
+	#  file with, if specified path is missing. Empty - disabled.
 	irc_tls_pem_gen_subj = '/CN=rdircd'
 	irc_tls = None # socket tls context, if enabled
 
@@ -81,7 +84,7 @@ class RDIRCDConfigBase:
 	discord_http_delay_padding = 10.0 # added to retry_after
 	discord_http_timeout_conn = 40.0
 	discord_http_timeout_conn_sock = 30.0
-	discord_gateway = ''
+	discord_gateway = '' # fetched and stored in last config, region-specific
 
 	# discord_msg_mention_re should match only discord user mentions.
 	# "nick" group must be irc nick, to be replaced with
@@ -127,32 +130,32 @@ class RDIRCDConfigBase:
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
 
-	auth_email = ''
+	auth_email = '' # discord account email, used to login there
 	auth_password = ''
-	auth_token = '' # can be fetched using email/password, unless mfa/captcha is in the way
+	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
 	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	debug_verbose = False
-	debug_asyncio = False
+	debug_asyncio_logs = False
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50 # message part length in debug logs
 	debug_proto_cut = 90 # cut-length for irc/discord protocol dump in debug msgs
-	debug_proto_log_shared = True # sends protocol logs to normal debug logging and log-file
-	debug_proto_log_file = ''
+	debug_proto_log_shared = True # send protocol logs to normal debug logging and log-file too
+	debug_proto_log_file = '' # log file(s) for all irc/discord protocol messages
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
 	debug_proto_aiohttp = True # log aiohttp request/response info
-	debug_log_file = '' # not affected by "verbose" option in any way
+	debug_log_file = '' # debug-level log, not affected by "verbose" option
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
 	debug_chan_proto_tail = 50
 	debug_chan_proto_cut = 230
 	# Randomly segfault-crash every 1<n<2*mmts
-	#   minutes, for backwards-compatibility with various legacy C daemons.
+	#   minutes, for backwards-compatibility with various legacy C daemons :)
 	debug_mean_minutes_to_segfault = 0.0
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'irc', 'discord', 'auth', 'debug'
+	_conf_sections = 'auth', 'irc', 'discord', 'debug'
 	_conf_sections_old = dict(auth_main='auth', aliases='renames') # old -> new renames
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
@@ -1129,7 +1132,7 @@ class IRCProtocol:
 		self.cmd_msg(self.st.nick, target, text, notice=True, from_self=True)
 
 	def cmd_chan_list_sync(self, cm):
-		for name, ch in list(self.st.chans.items()):
+		for name, ch in self.st.chans.items():
 			topic = cm[name].topic if name in cm else self.nx_chan_warn
 			if topic == ch.topic: continue
 			self.log.debug('Client-topic update [ {} ]: {!r} -> {!r}', name, ch.topic, topic)
@@ -1473,7 +1476,7 @@ class Discord:
 	def cmd_chan_rename_func(self, cc, name_old):
 		name_old = self.bridge.irc_name(name_old).lower()
 		send_func = self.bridge.cmd_msg_rename_func(cc)
-		return lambda: send_func(cc, line=(
+		return ft.partial(send_func, cc, line=(
 			'-----== Discord channel renamed:'
 				f' {name_old} -> {self.irc_chan_name(cc)} ==-----' ))
 
@@ -3310,10 +3313,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
 		if title: print(f';; {title}')
 		if '_notes' in comms: print(comms['_notes'])
-		for k in sorted(dir(self)):
+		conf_sec_order = ' '.join(self._conf_sections)
+		conf_opt_order = ''.join(f' {k} ' for k in comms).replace('-', '_')
+		for k in sorted( dir(self),
+				key=lambda k: (conf_sec_order.find(
+					k.split('_', 1)[0] ), conf_opt_order.find(f' {k} '), k) ):
 			if not (m := chk.search(k)): continue
-			v = self.get(k, raw=True)
-			if v is None: continue # internal stuff
+			if (v := self.get(k, raw=True)) is None: continue # internal stuff
 			if not empty_vals and not v: continue
 			if cat != (cat_chk := m.group(1).replace('_', '-')):
 				cat = cat_chk
@@ -3323,8 +3329,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if v[0] in ' \t': v = f'\\{v}'
 				if v[-1] in ' \t': v += '\\'
 			k = m.group(2).replace('_', '-')
-			if (k_full := f'{cat}-{k}') in comms:
-				comm = comms[k_full]
+			if comm := comms.get(k_full := f'{cat}-{k}'):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
 			print(f'{k} = {v}')
@@ -3520,8 +3525,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 
 
-def parse_conf_code_comments():
-	'Parses "class RDIRCDConfigBase" in __file__, returns {var: comment} dict'
+def parse_conf_code_comments(lines):
+	'Parses "class RDIRCDConfigBase" in this script, returns {var: comment} dict'
 	def line_proc(line):
 		var = line.split(None, 1)[0] if re.search(r'^\S+\s+=', line) else ''
 		var, var_code = var.replace('_', '-'), var
@@ -3530,36 +3535,29 @@ def parse_conf_code_comments():
 		if comm.lstrip().startswith('XXX:'): comm = ''
 		if comm.startswith(' '): comm = comm[1:]
 		return var, var_code, comm
-	comms = dict()
-	if __file__.endswith('.pyc'): return
-	try: src_file = open(__file__, errors='replace')
-	except OSError: return
-	with src_file as src:
-		if src.read(3) != '#!/': return
-		for line in src:
-			if line.startswith('class RDIRCDConfigBase'): break
-		comm_buffer = list()
-		for line in src:
-			ls = line.strip()
-			if ls and not line.startswith('\t'): break
-			var, var_code, comm = line_proc(ls)
-			if var_code.startswith('_'): break
-			if not var:
-				if comm: comm_buffer.append(comm)
-			else:
-				if comm_buffer: comm = ((comm or '') + '\n' + '\n'.join(comm_buffer)).strip()
-				if comm:
-					if var and re.search('^' + re.escape(var_code) + r'\s+', comm):
-						comm = var + comm[len(var_code):]
-					if comm.split(None, 1)[0].istitle():
-						word1, *comm = comm.split(None, 1)
-						comm = ' '.join([word1.lower(), *comm])
-					if not comm.startswith(var): comm = f'{var}: {comm}'
-					comms[var] = comm
-			if comm_buffer and (not comm or var):
-				if not comms: comms['_notes'] = '\n'.join(comm_buffer)
-				comm_buffer.clear()
-	for k, comm in comms.items(): comms[k] = '\n'.join(f'; {line}' for line in comm.split('\n'))
+	comms, comm_buffer = dict(), list()
+	for ls in lines:
+		var, var_code, comm = line_proc(ls)
+		if var_code.startswith('_'): break
+		if not var:
+			if comm: comm_buffer.append(comm)
+		else:
+			if comm_buffer:
+				comm = ((comm or '') + '\n' + '\n'.join(comm_buffer)).strip()
+			if comm:
+				if var and re.search('^' + re.escape(var_code) + r'\s+', comm):
+					comm = var + comm[len(var_code):]
+				if comm.split(None, 1)[0].istitle():
+					word1, *comm = comm.split(None, 1)
+					comm = ' '.join([word1.lower(), *comm])
+				if not comm.startswith(var): comm = f'{var}: {comm}'
+			comms[var] = comm
+		if comm_buffer and (not comm or var):
+			if not comms: comms['_notes'] = '\n'.join(comm_buffer)
+			comm_buffer.clear()
+	comms.update(
+		(k, '\n'.join(f'; {line}' for line in comm.split('\n')))
+		for k, comm in comms.items() if comm )
 	return comms
 
 def main(args=None, conf=None):
@@ -3633,9 +3631,21 @@ def main(args=None, conf=None):
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
 	if opts.conf_dump_defaults:
-		conf.pprint( 'Default configuration options',
-			empty_vals=True, comments=parse_conf_code_comments() )
-		return
+		try: # parse config comments from this script
+			lines = list()
+			if __file__.endswith('.pyc'): raise OSError
+			with open(__file__, errors='replace') as src:
+				if src.read(3) != '#!/': raise OSError
+				for line in src:
+					ls = line.strip()
+					if not (lines or ls == 'class RDIRCDConfigBase:'): continue
+					if lines and ls and not line.startswith('\t'): break
+					lines.append(ls)
+		except OSError: comms = None
+		else: comms = parse_conf_code_comments(lines)
+		return conf.pprint(
+			'Default configuration options', empty_vals=True, comments=comms )
+
 	if opts.conf_pw_scrypt:
 		if sys.stdin.isatty():
 			import getpass
@@ -3661,7 +3671,7 @@ def main(args=None, conf=None):
 		return
 
 	if opts.debug: conf.debug_verbose = True
-	if opts.debug_asyncio: conf.debug_asyncio = True
+	if opts.debug_asyncio: conf.debug_asyncio_logs = True
 	if opts.debug_log: conf.debug_log_file = opts.debug_log
 	if opts.proto_cut: conf.debug_proto_cut = opts.proto_cut
 	if opts.proto_log: conf.debug_proto_log_file = opts.proto_log
@@ -3788,7 +3798,7 @@ def main(args=None, conf=None):
 		with cl.suppress(asyncio.CancelledError): return await rdircd_task
 
 	log.debug('Starting eventloop...')
-	return asyncio.run(run_rdircd(), debug=conf.debug_asyncio)
+	return asyncio.run(run_rdircd(), debug=conf.debug_asyncio_logs)
 	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
