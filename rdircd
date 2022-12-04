@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.13' # git-version: py-str
+	version = '22.12.14' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -135,21 +135,21 @@ class RDIRCDConfigBase:
 	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
 	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
-	debug_verbose = False
-	debug_asyncio_logs = False
+	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50 # message part length in debug logs
-	debug_proto_cut = 90 # cut-length for irc/discord protocol dump in debug msgs
 	debug_proto_log_shared = True # send protocol logs to normal debug logging and log-file too
+	debug_proto_cut = 90 # cut-length for irc/discord protocol msgs in debug logs, if shared
 	debug_proto_log_file = '' # log file(s) for all irc/discord protocol messages
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
-	debug_proto_aiohttp = True # log aiohttp request/response info
+	debug_proto_aiohttp = True # log aiohttp request/response info in proto-log
 	debug_log_file = '' # debug-level log, not affected by "verbose" option
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
+	debug_chan_proto_cut = 230 # limit for printing protocol msgs via debug-channel command
 	debug_chan_proto_tail = 50
-	debug_chan_proto_cut = 230
+	debug_asyncio_logs = False # debug= value in asyncio.run()
 	# Randomly segfault-crash every 1<n<2*mmts
 	#   minutes, for backwards-compatibility with various legacy C daemons :)
 	debug_mean_minutes_to_segfault = 0.0
