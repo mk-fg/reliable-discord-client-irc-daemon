@@ -2178,8 +2178,8 @@ class DiscordSession:
 
 	def op_ev_member(self, m, gid=None, delete=False):
 		if not gid: gid = m.guild_id
-		self.discord.cmd_user_cache(
-			gid, m.user.id, m.user.username if not delete else None )
+		if delete: return self.discord.cmd_user_cache(gid, m.user.id)
+		self.discord.cmd_user_cache(gid, m.user.id, m.user.username)
 		return m.user.id, m.user.username # used in queries
 
 	def op_ev_delete(self, gid=None, chan=...):
