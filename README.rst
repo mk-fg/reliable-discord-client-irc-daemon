@@ -92,8 +92,8 @@ Features
 
 - Full unicode support everywhere.
 
-- IRC protocol is implemented from IRCv3 drafts, but doesn't use any of the
-  advanced features, so should be compatible with any clients. Optional TLS wrapping.
+- IRC protocol is implemented from IRCv3 docs, but doesn't use any non-RFC stuff,
+  so should be compatible with any old clients. Optional TLS wrapping.
 
 - Extensive protocol and debug logging options, some accessible at runtime via
   #rdircd.debug channel.

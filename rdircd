@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.14' # git-version: py-str
+	version = '22.12.15' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -547,7 +547,7 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None):
 			if strip_date is True: ts_fmt = ts_fmt[9:]
 			else: # strip specified redundant or rolled-over (next) date
 				tss, d0 = strip_date, ts.strftime('%Y-%m-%d')
-				if not isinstance(tss, (dt.datetime, dt.date)):
+				if not isinstance(tss, dt.date): # includes datetime
 					tss = dt.datetime.fromtimestamp(tss)
 				for tss in [tss, tss + dt.timedelta(days=1)]:
 					if tss.strftime('%Y-%m-%d') == d0: ts_fmt = ts_fmt[9:]
