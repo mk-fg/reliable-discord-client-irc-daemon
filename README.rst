@@ -355,24 +355,50 @@ channel names with something more readable/memorable or meaningful to you::
   guild.jvpp = game-x
   chan.some-long-and-weird-name = weird
   chan.@710035588048224269 = general-subs
+  monitor = junk
+  monitor.game-x = game-x.firehose
+  sys.control = config
+  sys.debug = junk.logs
 
 This should:
 
-- Turn e.g. #jvpp.info into #game-x.info (lettersoup-id to more humane prefix).
+- Turn e.g. #jvpp.info into #game-x.info - lettersoup guild-id to more
+  meaningful prefix. This will apply to all channels in that discord -
+  "guild" renames.
 
-- Rename that long channel to have a shorter name (retaining guild prefix).
+- Rename that long channel to have a shorter name (retaining guild prefix) -
+  "chan" renames.
 
   Note that this affects all guilds where such channel name exists, and source name
   should be in irc format, same as in /list, and is case-insensitive (as it is on irc).
 
-- Rename channel with id=710035588048224269 to "memes" (with guild prefix too).
+- Rename channel with id=710035588048224269 to "memes" (retaining guild prefix) -
+  "chan" renames using \@channel-id spec.
 
-  That long discord channel id (also called "snowflake") can be found by typing
-  "/t info" topic-command in corresponding irc channel, and can be used to refer
-  to that specific channel, i.e. renaming this one #general on this one discord
-  server instead of renaming all #general channels everywhere.
+  That long discord channel identifier (also called "snowflake") can be found by
+  typing "/t info" topic-command in corresponding irc channel, and can be used to
+  refer to that specific channel, i.e. renaming this one #general on this one
+  discord server instead of renaming all #general channels everywhere.
 
-Currently renames are only implemented for guild IDs and channels, like demonstrated above.
+  This is especially useful when two channels have same exact name within same
+  discord, and normally will be assigned .1, .2 and such non-descriptive suffixes.
+
+- Rename #rdircd.monitor -> #junk, and #rdircd.monitor.game-x to #game-x.firehose -
+  "monitor" renames.
+
+  This type of renames only affect internal #rdircd.monitor[.guild-id] channels,
+  which must be matched by suffix that they get after guild-renames - i.e.
+  "monitor.game-x" instead of "monitor.jvpp" in above example.
+  Resulting name doesn't have to have any special prefix, can be called anything.
+
+- Rename system #rdircd.control channel to #config, #rdircd.debug -> #junk.logs -
+  "sys" renames.
+
+  Similar to monitor-channel renames, resulting name does not have to have
+  "rdircd." prefix as these names normally do.
+
+Currently only listed types of renaming are implemented, i.e. for
+discord prefixes, discord channels, system and monitor channel names.
 
 #rdircd.monitor channels
 ````````````````````````

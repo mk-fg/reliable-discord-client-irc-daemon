@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.16' # git-version: py-str
+	version = '22.12.18' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2630,12 +2630,17 @@ class RDIRCD:
 	class c:
 		chan_prefix = 'rdircd.'
 
-		chan_control = f'{chan_prefix}control'
-		chan_debug = f'{chan_prefix}debug'
-		chan_sys_list = [chan_control, chan_debug]
+		chan_sys_types = 'control', 'debug'
+		chan_sys_control = f'{chan_prefix}control'
+		chan_sys_control_topic = 'rdircd: control channel, type "help" for more info'
+		chan_sys_debug = f'{chan_prefix}debug'
+		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
 
 		chan_monitor = f'{chan_prefix}monitor'
+		chan_monitor_topic = ( 'rdircd: read-only'
+			' catch-all channel with messages from everywhere' )
 		chan_monitor_guild_prefix = f'{chan_prefix}monitor.'
+		chan_monitor_guild_topic_tpl = 'rdircd: catch-all channel for discord [ {} ]'
 
 	c_chan_type = enum.Enum('c_chan_type', 'sys mon proxy')
 
@@ -2654,9 +2659,7 @@ class RDIRCD:
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_names_timeout = parse_duration(self.conf.irc_names_timeout)
 		self.irc_msg_queue = asyncio.Queue()
-		self.chans_sys = adict({
-			self.c.chan_control: 'rdircd: control channel, type "help" for more info',
-			self.c.chan_debug: 'rdircd: debug logging channel, type "help" for more info' })
+		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict( chan_map=None,
 			uid=dict(), gid_prefix=dict(), did_chan=dict(),
@@ -2773,6 +2776,13 @@ class RDIRCD:
 	def irc_name_revert(self, nick):
 		return self.cache.i2d.get(nick)
 
+	def irc_name_monitor(self, gg_prefix=None):
+		'Return name for a monitor-channel, taking renames into account'
+		rename_key, name_default = (
+			[('monitor',), self.c.chan_monitor] if not gg_prefix else
+			[('monitor', gg_prefix), self.c.chan_monitor_guild_prefix + gg_prefix] )
+		return self.conf.renames.get(rename_key, name_default)
+
 	def irc_chan_info(self, name):
 		# Note: internal name (cc.name) must always be passed, not lowercased irc one
 		if '.' not in name: return
@@ -2872,8 +2882,8 @@ class RDIRCD:
 
 	def irc_msg(self, conn, chan, line):
 		name = conn.chan_name(chan)
-		if name in self.chans_sys:
-			return self.cmd_chan_sys(name, conn, chan, line)
+		if sys_type := self.irc_chans_sys.get(name):
+			return self.cmd_chan_sys(sys_type, conn, chan, line)
 		line = self.irc_msg_translate(line)
 		if not line.strip(): return
 		if not self.irc_msg_queue:
@@ -2982,27 +2992,30 @@ class RDIRCD:
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 
 	def _cmd_chan_map_build(self, cache_track):
-		cache_track(self.chans_sys)
-		for name, topic in self.chans_sys.items():
-			yield (name, adict(
-				t=self.c_chan_type.sys, name=name,
-				topic=topic, ts_created=self.server_ts.timestamp() ))
 		cache_track(self.discord.st.guilds)
 		gg_list = list(
 			(self.uid('guild', gg.id, kh=gg.get('kh')), gg) for gg in
 			sorted(self.discord.st.guilds.values(), key=op.itemgetter('ts_joined')) )
 
+		# System debug/control channels
+		self.irc_chans_sys.clear()
+		for sys_type in self.c.chan_sys_types:
+			name = self.conf.renames.get(
+				('sys', sys_type), getattr(self.c, f'chan_sys_{sys_type}') )
+			self.irc_chans_sys.update({name: sys_type, f'ø_{sys_type}': name})
+			yield (name, adict( t=self.c_chan_type.sys,
+				name=name, ts_created=self.server_ts.timestamp(),
+				topic=getattr(self.c, f'chan_sys_{sys_type}_topic') ))
+
 		# Order monitor channels at the top
-		yield (self.c.chan_monitor, adict(
-			t=self.c_chan_type.mon, name=self.c.chan_monitor,
-			topic='rdircd: read-only catch-all channel with messages from everywhere',
-			ts_created=self.server_ts.timestamp() ))
+		yield (name := self.irc_name_monitor(), adict(
+			t=self.c_chan_type.mon, name=name,
+			ts_created=self.server_ts.timestamp(), topic=self.c.chan_monitor_topic ))
 		for gg_pre, gg in gg_list:
 			self.cache.gid_prefix[gg.id] = gg_pre # used when sending msgs
-			name = self.c.chan_monitor_guild_prefix + gg_pre
-			yield (name, adict(
+			yield (name := self.irc_name_monitor(gg_pre), adict(
 				t=self.c_chan_type.mon, name=name, ts_created=gg.ts_joined,
-				topic=f'rdircd: catch-all channel for discord [ {gg.name} ]' ))
+				topic=self.c.chan_monitor_guild_topic_tpl.format(gg.name) ))
 
 		# Normal channels for each discord-guild
 		for gg_pre, gg in gg_list:
@@ -3024,11 +3037,9 @@ class RDIRCD:
 					t=self.c_chan_type.proxy, name=name,
 					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 
-	def cmd_chan_sys(self, name, conn, chan, line):
-		if name not in self.c.chan_sys_list: return
-		cmd_func = name[len(self.c.chan_prefix):]
-		cmd_func = getattr(self, f'cmd_chan_sys_{cmd_func}', None)
-		if cmd_func: cmd_func(conn, chan, line)
+	def cmd_chan_sys(self, sys_type, conn, chan, line):
+		if sys_type not in self.c.chan_sys_types: return
+		getattr(self, f'cmd_chan_sys_{sys_type}')(conn, chan, line)
 
 	def cmd_chan_sys_log_counts(self):
 		counts = self.conf._debug_counts
@@ -3197,8 +3208,8 @@ class RDIRCD:
 	def cmd_log(self, line):
 		if not self.init: return
 		if not (conn := self.cmd_conn()): return
-		conn.cmd_msg_synth(
-			self.conf.irc_nick_sys, conn.chan_spec(self.c.chan_debug), line )
+		conn.cmd_msg_synth( self.conf.irc_nick_sys,
+			conn.chan_spec(self.irc_chans_sys['ø_debug']), line )
 
 	async def cmd_info(self, conn, t, id_str):
 		t = {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
@@ -3216,14 +3227,14 @@ class RDIRCD:
 		if len(lines) > n:
 			lines_n, lines = len(lines), lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
-		c, n = conn.chan_spec(self.c.chan_monitor), self.conf.irc_len_monitor
-		nick = nick or self.conf.irc_nick_sys
 		if gid is not None: gid = self.cache.gid_prefix.get(gid)
-		if gid: chan_mon = conn.chan_spec(self.c.chan_monitor_guild_prefix + gid)
+		nick, n = nick or self.conf.irc_nick_sys, self.conf.irc_len_monitor
+		chan_mon_global = conn.chan_spec(self.irc_name_monitor())
+		chan_mon = gid and conn.chan_spec(self.irc_name_monitor(gid))
 		for s in lines:
 			s = f'{pre}{str_cut(s, n, len_bytes=True)}'
-			conn.cmd_msg_synth(nick, c, s, notice=notice)
-			if gid: conn.cmd_msg_synth(nick, chan_mon, s, notice=notice)
+			conn.cmd_msg_synth(nick, chan_mon_global, s, notice=notice)
+			if chan_mon: conn.cmd_msg_synth(nick, chan_mon, s, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
@@ -3363,8 +3374,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if not new: del self._conf_sections_old[sk]
 				continue
 			self.renames.update(
-				(tuple(k.lower().split('.', 1)), v)
-				for k, v in conf_file[sk].items() if '.' in k )
+				(tuple(k.lower().split('.', 1)), v) for k, v in conf_file[sk].items() )
 
 	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
 		if v is str or isinstance(v, str):
