@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 
 import itertools as it, operator as op, functools as ft
-import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
-import asyncio, socket, signal, inspect, contextlib as cl
-import hashlib, base64, random, unicodedata, ast, urllib.parse
-import configparser, tempfile, datetime as dt, pathlib as pl
+import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
+import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
+import asyncio, socket, signal, inspect, configparser, tempfile
+import hashlib, base64, random, unicodedata, ast, urllib.parse
 import logging, logging.handlers
 
 import aiohttp
@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.15' # git-version: py-str
+	version = '22.12.16' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2080,8 +2080,9 @@ class DiscordSession:
 		td_sess, td_conn = ((repr_duration(self.st.get(
 			'disconnect_ts' ) or ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_start)
 		level = 'warning' if self.conf.discord_ws_reconnect_warn_always else 'debug'
-		getattr(self.log, level)( 'Discord session (re-)connected{}: id={}{}',
-			' [resumed]' if resume else ' [new]', self.st.session_id[:6],
+		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
+		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
+			' [resumed]' if resume else ' [new]', self.st.session_id[:6], ws_addr,
 			'' if not (td_sess + td_conn).strip('-') else
 				' {}sess-lifetime=[{}] last-conn-duration=[{}]'\
 					.format('last-' if not resume else '', td_sess, td_conn) )
