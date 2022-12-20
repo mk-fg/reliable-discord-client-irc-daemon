@@ -343,6 +343,28 @@ Channel Commands
 | In special channels like #rdircd.control and #rdircd.debug: send "h" or "help".
 | All discord channels - send "/t" or "/topic".
 
+#rdircd.monitor channels
+````````````````````````
+
+#rdircd.monitor can be used to check on activity from all connected servers -
+gets all messages, prefixed by the relevant irc channel name.
+
+#rdircd.monitor.guild (where "guild" is a hash or alias, see above)
+is a similar catch-all channels for specific discord server/guild.
+
+They are currently created on-first-message, so might not be listed initially,
+but can be joined anytime (same as with any other channels).
+Joining #rdircd.monitor.me can be useful in particular to monitor any private
+chats and messages for the account.
+
+Messages in these channels are limited to specific length/lines
+to avoid excessive flooding of these by multi-line msgs.
+
+"len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
+can be used to control max length for these,
+see ``./rdircd --conf-dump-defaults`` output for their default values.
+There are also options to name these channels differently there.
+
 Local Name Aliases
 ``````````````````
 
@@ -392,30 +414,8 @@ system/monitor channels (from ``./rdircd --conf-dump-defaults`` output)::
   ; chan-monitor-guild: name fmt of per-discord monitor channels
   chan-monitor-guild = rdircd.monitor.{prefix}
 
-Set e.g. ``chan-monitor-guild = {prefix}`` there to have #game-x channel be
-catch-all channel for all messages in that discord, without default long
-"#rdircd.monitor." prefix.
-
-#rdircd.monitor channels
-````````````````````````
-
-#rdircd.monitor can be used to check on activity from all connected servers -
-gets all messages, prefixed by the relevant irc channel name.
-
-#rdircd.monitor.guild (where "guild" is a hash or alias, see above)
-is a similar catch-all channels for specific discord server/guild.
-
-They are currently created on-first-message, so might not be listed initially,
-but can be joined anytime (same as with any other channels).
-Joining #rdircd.monitor.me can be useful in particular to monitor any private
-chats and messages for the account.
-
-Messages in these channels are limited to specific length/lines
-to avoid excessive flooding of these by multi-line msgs.
-
-"len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
-can be used to control max length for these,
-see ``./rdircd --conf-dump-defaults`` output for their default values.
+Set ``chan-monitor-guild = {prefix}`` there for example, to have #game-x channel be
+catch-all for all messages in that discord, without default long #rdircd.monitor.\* prefix.
 
 Private messages and friends
 ````````````````````````````
