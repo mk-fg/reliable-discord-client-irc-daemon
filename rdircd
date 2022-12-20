@@ -64,15 +64,18 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # 0 = disable
 
-	irc_chan_sys = 'rdircd.{type}' # name format for type=control and type=debug channels
-	irc_chan_monitor = 'rdircd.monitor' # name of monitor catch-all channel for all msgs
-	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}' # name fmt of per-discord monitor channels
-
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
 	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
 
 	irc_thread_chan_name_len = 30 # truncate thread-name to this len in thread-chans, 0 = just id
+
+	irc_chan_sys = 'rdircd.{type}' # name format for type=control and type=debug channels
+	irc_chan_monitor = 'rdircd.monitor' # name of monitor catch-all channel for all msgs
+	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}' # name fmt of per-discord monitor channels
+	# Name format for private chat channels.
+	# {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
+	irc_chan_private = 'chat.{names_or_id}'
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -2302,12 +2305,19 @@ class DiscordSession:
 					( (u.username, adict(name=u.username, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
 				user_names = list(u.name for u in cc.users.values())
-				if len(user_names) >= self.conf.irc_private_chat_min_others_to_use_id_name:
-					# Hash-name is not descriptive, but should stay the same
+				name_kws = dict(id=(name_hash := str_hash(c.id, 8)))
+				if any(f'{{{k}}}' in self.conf.irc_chan_private for k in ['names', 'names_or_id']):
+					# {id} hash-name is not descriptive, but should stay the same for group chats
 					# Caveat: channel names are case-insensitive, even if hash is not
-					name = f'chat.{str_hash(c.id, 10)}'
-				else: name = f'chat.{self.op_ev_chans_priv_name(user_names)}'
-				if not topic: topic = f'private chat [{len(user_names)}] - ' + ', '.join(user_names)
+					name_kws['names_or_id'] = name_kws['id']
+					if '{names}' in self.conf.irc_chan_private or (
+							len(user_names) < self.conf.irc_private_chat_min_others_to_use_id_name ):
+						name_kws['names'] = self.op_ev_chans_priv_name(user_names)
+						name_kws['names_or_id'] = name_kws['names']
+				name = self.conf.irc_chan_private.format(**name_kws)
+				if not topic:
+					topic = ( f'private chat <{name_hash}>'
+						f' [{len(user_names)}] - ' + ', '.join(user_names) )
 
 			rename = self.conf.renames.get(('chan', f'@{c.id}'))
 			if not rename:

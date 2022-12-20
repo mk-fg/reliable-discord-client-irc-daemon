@@ -403,7 +403,7 @@ This should:
 
 Currently only listed types of renaming are implemented, for discord prefixes
 and channels, but there are also options under "irc" section to set names for
-system/monitor channels (from ``./rdircd --conf-dump-defaults`` output)::
+system/monitor and private-chat channels (from ``./rdircd --conf-dump-defaults`` output)::
 
   [irc]
   ...
@@ -413,6 +413,9 @@ system/monitor channels (from ``./rdircd --conf-dump-defaults`` output)::
   chan-monitor = rdircd.monitor
   ; chan-monitor-guild: name fmt of per-discord monitor channels
   chan-monitor-guild = rdircd.monitor.{prefix}
+  ; chan-private: name format for private chat channels.
+  ; {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
+  chan-private = chat.{names_or_id}
 
 Set ``chan-monitor-guild = {prefix}`` there for example, to have #game-x channel be
 catch-all for all messages in that discord, without default long #rdircd.monitor.\* prefix.
