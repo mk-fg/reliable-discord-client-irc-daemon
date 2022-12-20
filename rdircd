@@ -64,6 +64,10 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # 0 = disable
 
+	irc_chan_sys = 'rdircd.{type}' # name format for type=control and type=debug channels
+	irc_chan_monitor = 'rdircd.monitor' # name of monitor catch-all channel for all msgs
+	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}' # name fmt of per-discord monitor channels
+
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
 	irc_private_chat_name_user_min_len = 20 # don't truncate usernames in userlist-name beyond that
@@ -2631,15 +2635,11 @@ class RDIRCD:
 		chan_prefix = 'rdircd.'
 
 		chan_sys_types = 'control', 'debug'
-		chan_sys_control = f'{chan_prefix}control'
 		chan_sys_control_topic = 'rdircd: control channel, type "help" for more info'
-		chan_sys_debug = f'{chan_prefix}debug'
 		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
 
-		chan_monitor = f'{chan_prefix}monitor'
 		chan_monitor_topic = ( 'rdircd: read-only'
 			' catch-all channel with messages from everywhere' )
-		chan_monitor_guild_prefix = f'{chan_prefix}monitor.'
 		chan_monitor_guild_topic_tpl = 'rdircd: catch-all channel for discord [ {} ]'
 
 	c_chan_type = enum.Enum('c_chan_type', 'sys mon proxy')
@@ -2778,10 +2778,8 @@ class RDIRCD:
 
 	def irc_name_monitor(self, gg_prefix=None):
 		'Return name for a monitor-channel, taking renames into account'
-		rename_key, name_default = (
-			[('monitor',), self.c.chan_monitor] if not gg_prefix else
-			[('monitor', gg_prefix), self.c.chan_monitor_guild_prefix + gg_prefix] )
-		return self.conf.renames.get(rename_key, name_default)
+		return ( self.conf.irc_chan_monitor if not gg_prefix
+			else self.conf.irc_chan_monitor_guild.format(prefix=gg_prefix) )
 
 	def irc_chan_info(self, name):
 		# Note: internal name (cc.name) must always be passed, not lowercased irc one
@@ -3000,8 +2998,7 @@ class RDIRCD:
 		# System debug/control channels
 		self.irc_chans_sys.clear()
 		for sys_type in self.c.chan_sys_types:
-			name = self.conf.renames.get(
-				('sys', sys_type), getattr(self.c, f'chan_sys_{sys_type}') )
+			name = self.conf.irc_chan_sys.format(type=sys_type)
 			self.irc_chans_sys.update({name: sys_type, f'ø_{sys_type}': name})
 			yield (name, adict( t=self.c_chan_type.sys,
 				name=name, ts_created=self.server_ts.timestamp(),

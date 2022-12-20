@@ -355,10 +355,6 @@ channel names with something more readable/memorable or meaningful to you::
   guild.jvpp = game-x
   chan.some-long-and-weird-name = weird
   chan.@710035588048224269 = general-subs
-  monitor = junk
-  monitor.game-x = game-x.firehose
-  sys.control = config
-  sys.debug = junk.logs
 
 This should:
 
@@ -383,22 +379,22 @@ This should:
   This is especially useful when two channels have same exact name within same
   discord, and normally will be assigned .1, .2 and such non-descriptive suffixes.
 
-- Rename #rdircd.monitor -> #junk, and #rdircd.monitor.game-x to #game-x.firehose -
-  "monitor" renames.
+Currently only listed types of renaming are implemented, for discord prefixes
+and channels, but there are also options under "irc" section to set names for
+system/monitor channels (from ``./rdircd --conf-dump-defaults`` output)::
 
-  This type of renames only affect internal #rdircd.monitor[.guild-id] channels,
-  which must be matched by suffix that they get after guild-renames - i.e.
-  "monitor.game-x" instead of "monitor.jvpp" in above example.
-  Resulting name doesn't have to have any special prefix, can be called anything.
+  [irc]
+  ...
+  ; chan-sys: name format for type=control and type=debug channels
+  chan-sys = rdircd.{type}
+  ; chan-monitor: name of monitor catch-all channel for all msgs
+  chan-monitor = rdircd.monitor
+  ; chan-monitor-guild: name fmt of per-discord monitor channels
+  chan-monitor-guild = rdircd.monitor.{prefix}
 
-- Rename system #rdircd.control channel to #config, #rdircd.debug -> #junk.logs -
-  "sys" renames.
-
-  Similar to monitor-channel renames, resulting name does not have to have
-  "rdircd." prefix as these names normally do.
-
-Currently only listed types of renaming are implemented, i.e. for
-discord prefixes, discord channels, system and monitor channel names.
+Set e.g. ``chan-monitor-guild = {prefix}`` there to have #game-x channel be
+catch-all channel for all messages in that discord, without default long
+"#rdircd.monitor." prefix.
 
 #rdircd.monitor channels
 ````````````````````````
