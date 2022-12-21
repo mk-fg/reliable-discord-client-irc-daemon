@@ -5,7 +5,7 @@ import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
 import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, configparser, tempfile
-import hashlib, base64, random, unicodedata, ast, urllib.parse
+import hashlib, base64, random, unicodedata, string, ast, urllib.parse
 import logging, logging.handlers
 
 import aiohttp
@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.19' # git-version: py-str
+	version = '22.12.20' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -324,7 +324,7 @@ def sockopt_resolve(prefix, v):
 	return v
 
 
-# str_norm is NOT used in irc, where ascii-only casefold is more traditional
+# str_norm is NOT used in irc, where rfc1459 (ascii letters/chars) casefold is more traditional
 str_norm = lambda v: unicodedata.normalize('NFKC', v.strip()).casefold()
 
 def str_part(s, sep, default=None):
@@ -697,18 +697,22 @@ class adict(cs.UserDict):
 		self._track_check(k)
 
 
-irc_name_eq = lambda a, b: a.lower() == b.lower()
+def irc_casefold_rfc1459(name, _irc_rfc1459_table=dict(zip(
+		map(ord, string.ascii_uppercase + '\\[]'), string.ascii_lowercase + '|{}' ))):
+	return name.translate(_irc_rfc1459_table)
+irc_name_eq = lambda a, b: irc_casefold_rfc1459(a) == irc_casefold_rfc1459(b)
 
 class irc_name_dict(cs.UserDict):
-	'Mapping to resolve IRC ascii-casefolded names'
+	'Mapping that uses IRC rfc1459-casefolded keys'
 	value_map = classmethod(
 		lambda cls, names: cls((v, v) for v in names) )
 	def add(self, name): self[name] = name # for ci-name -> name mappings
 	def remove(self, name): del self[name]
-	def __contains__(self, key): return key.lower() in self.data
-	def __getitem__(self, k): return self.data[k.lower()]
-	def __setitem__(self, k, v): self.data[k.lower()] = v
-	def __delitem__(self, k): del self.data[k.lower()]
+	def get(self, k, default=None): return super().get(irc_casefold_rfc1459(k), default)
+	def __contains__(self, k): return irc_casefold_rfc1459(k) in self.data
+	def __getitem__(self, k): return self.data[irc_casefold_rfc1459(k)]
+	def __setitem__(self, k, v): self.data[irc_casefold_rfc1459(k)] = v
+	def __delitem__(self, k): del self.data[irc_casefold_rfc1459(k)]
 
 
 
@@ -722,7 +726,7 @@ class IRCProtocol:
 
 	# Extensive lists of modes are copied from freenode to make clients happy
 	feats_modes = 'DOQRSZaghilopswz CFILMPQSbcefgijklmnopqrstvz'
-	feats_support = ( 'AWAYLEN=200 CASEMAPPING=ascii'
+	feats_support = ( 'AWAYLEN=200 CASEMAPPING=rfc1459'
 		' CHANLIMIT=#:512 CHANTYPES=# CHANMODES=eIbq,k,flj,CFLMPQScgimnprstz'
 		' CHANNELLEN=80 ELIST=C NETWORK=rdircd NICKLEN=64'
 		' PREFIX=(ov)@+ SAFELIST STATUSMSG=@+ TOPICLEN=390 USERLEN=32' ).split()
@@ -925,13 +929,13 @@ class IRCProtocol:
 			return cmd in ['cap', 'quit', 'ping']
 		return True # any commands allowed outside of phases above
 
-	# chan_spec=#lower(some-channel), chan_name=lower(some-channel)
+	# chan_spec=#casemap(some-channel), chan_name=casemap(some-channel)
 	_csc = lambda c: c.startswith('#')
 	chan_spec_check = staticmethod(_csc)
 	chan_spec = staticmethod(
-		lambda name,_csc=_csc: name if _csc(name) else f'#{name.lower()}' )
+		lambda name,_csc=_csc: name if _csc(name) else f'#{name}' )
 	chan_name = staticmethod(
-		lambda chan,_csc=_csc: (chan if not _csc(chan) else chan[1:]).lower() )
+		lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:] )
 
 
 	def recv_cmd_ping(self, server, server_dst=None):
@@ -1025,6 +1029,11 @@ class IRCProtocol:
 		self.transport.close()
 
 	def req_chan_info(self, chan, cm=None, check=True):
+		info = self._req_chan_info(chan, cm, check)
+		# print('------ req_chan_info req', [chan, info])
+		# print('---- TEST', self.bridge.cmd_chan_map().get('RDIRCD'))
+		return info
+	def _req_chan_info(self, chan, cm=None, check=True):
 		if not self.chan_spec_check(chan):
 			return self.send(403, chan, ':No such channel')
 		if not cm: cm = self.bridge.cmd_chan_map()
@@ -1482,7 +1491,7 @@ class Discord:
 				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
 
 	def cmd_chan_rename_func(self, cc, name_old):
-		name_old = self.bridge.irc_name(name_old).lower()
+		name_old = self.bridge.irc_name(name_old)
 		send_func = self.bridge.cmd_msg_rename_func(cc)
 		return ft.partial(send_func, cc, line=(
 			'-----== Discord channel renamed:'
@@ -2321,8 +2330,7 @@ class DiscordSession:
 
 			rename = self.conf.renames.get(('chan', f'@{c.id}'))
 			if not rename:
-				rename = self.conf.renames.get(
-					('chan', self.discord.bridge.irc_name(name).lower()) )
+				rename = self.conf.renames.get(('chan', self.discord.bridge.irc_name(name)))
 			if rename:
 				self.log.debug('Renaming channel/thread: {} -> {}', name, rename)
 				name = rename
@@ -2344,9 +2352,9 @@ class DiscordSession:
 	def op_ev_chans_update_disambiguation(self, cs, name):
 		'Renames same-name channels to "chan.1" "chan.2" etc, yielding (cc, name_old) tuples'
 		# Must always yield same renames for same set(s) of channel names
-		irc_name, irc_chans = self.discord.bridge.irc_name(name).lower(), list()
+		irc_name, irc_chans = self.discord.bridge.irc_name(name, casefold=True), list()
 		for cc in cs.values():
-			if self.discord.bridge.irc_name(cc.name_base).lower() != irc_name: continue
+			if self.discord.bridge.irc_name(cc.name_base, casefold=True) != irc_name: continue
 			irc_chans.append(cc)
 		if not irc_chans: return # can happen if old matching channels were removed
 		if len(irc_chans) == 1: # remove unnecessary disambiguation
@@ -2762,7 +2770,8 @@ class RDIRCD:
 		for conn in self.irc_conns.values():
 			if conn.st.auth: yield conn.st.nick
 
-	def irc_name(self, name):
+	def irc_name(self, name, casefold=False):
+		'Return IRC name for a Discord name'
 		# Must be deterministic but ideally not create collisions by stripping too much
 		# General idea is to replace all irc-problematic chars by lookalike unicode
 		if name not in self.cache.d2i:
@@ -2781,10 +2790,13 @@ class RDIRCD:
 				elif c == '>': name_irc += '►'
 				else: name_irc += c
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
-		return self.cache.d2i[name]
+		name = self.cache.d2i[name]
+		if casefold: name = irc_casefold_rfc1459(name)
+		return name
 
-	def irc_name_revert(self, nick):
-		return self.cache.i2d.get(nick)
+	def irc_name_revert(self, name_irc):
+		'Return Discord name for an IRC name'
+		return self.cache.i2d.get(name_irc)
 
 	def irc_name_monitor(self, gg_prefix=None):
 		'Return name for a monitor-channel, taking renames into account'
@@ -2905,10 +2917,17 @@ class RDIRCD:
 		return re.sub(r'^\x01ACTION ?(.*)\x01$', r'_\1_', line)
 
 	async def irc_msg_queue_proc(self):
+		'''Process msgs from IRC in strict order from irc_msg_queue.
+			If any of them fails to be confirmed-delivered,
+				discards all msgs after it too, signaling errors about each.
+			Idea is that it's better to make user re-send messages
+				than to deliver only some of them, and/or doing it out of order.
+			Special edit/delete message-commands are processed here as well.'''
 		try:
 			while True:
 				m = await self.irc_msg_queue.get()
 				if m is StopIteration: break
+
 				info = self.irc_chan_info(m.name)
 				try:
 					if not (info and info.cc): raise IRCBridgeSignal('no-matching-chan')
@@ -2918,6 +2937,7 @@ class RDIRCD:
 					elif self.conf._discord_msg_del_re.search(m.line):
 						await self.discord.cmd_msg_del_last(info.cc)
 					else: await self.discord.cmd_msg_send(info.cc, m.line)
+
 				except IRCBridgeSignal as err:
 					m.conn.cmd_msg_synth( self.conf.irc_nick_sys, m.chan,
 						f'ERR {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
@@ -2928,6 +2948,7 @@ class RDIRCD:
 						m.conn.cmd_msg_synth( self.conf.irc_nick_sys, m.chan,
 							f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True, direct=True )
 					if m is StopIteration: break
+
 		finally: self.irc_msg_queue = None
 
 
@@ -2989,7 +3010,8 @@ class RDIRCD:
 		else:
 			cache_drop = ft.partial(self.cache.update, chan_map=None)
 			cache_track = lambda d, keys=None: d._track(keys, cb=cache_drop)
-			cm = self.cache.chan_map = adict(self._cmd_chan_map_build(cache_track))
+			cm = self.cache.chan_map = \
+				irc_name_dict(self._cmd_chan_map_build(cache_track))
 		cm.ø_online = self.discord.online
 		if not cm0 and cm.ø_online: self.cmd_chan_map_sync(cm)
 		return cm
@@ -3000,6 +3022,7 @@ class RDIRCD:
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 
 	def _cmd_chan_map_build(self, cache_track):
+		# Name-keys returned here are used in irc_name_dict, so don't need casemapping
 		cache_track(self.discord.st.guilds)
 		gg_list = list(
 			(self.uid('guild', gg.id, kh=gg.get('kh')), gg) for gg in
@@ -3039,8 +3062,7 @@ class RDIRCD:
 				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = f'{gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.did_chan[cc.did] = name
-				# Note: lowercase translation is handled by using different (proper) internal name
-				yield (name.lower(), adict(
+				yield (name, adict(
 					t=self.c_chan_type.proxy, name=name,
 					topic=topic, did=cc.did, ts_created=gg.ts_joined ))
 

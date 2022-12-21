@@ -388,7 +388,7 @@ This should:
   "chan" renames.
 
   Note that this affects all guilds where such channel name exists, and source name
-  should be in irc format, same as in /list, and is case-insensitive (as it is on irc).
+  should be in irc format, same as in /list, and is rfc1459-casemapped (same as on irc).
 
 - Rename channel with id=710035588048224269 to "memes" (retaining guild prefix) -
   "chan" renames using \@channel-id spec.
