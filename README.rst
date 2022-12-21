@@ -749,6 +749,47 @@ info above can still be helpful to identify any of the more non-obvious problems
 or maybe give an idea where to look at for fixing or working around these.
 
 
+Random tips and tricks
+----------------------
+
+Some cool configurations mentioned in #rdircd on IRC and such.
+
+Rename #rdircd.monitor.XYZ channels to #XYZ
+```````````````````````````````````````````
+
+Normally rdircd uses these long strange "#rdircd.monitor" channel names,
+as well as unnecessary "#me.chat."  prefixes, instead of this::
+
+  #rdircd
+  #rdircd.control
+  #rdircd.debug
+  #dm
+  #dm.some-friend
+  #dm.some-friend+other-friend+more-ppl
+  #minecraft
+  #minecraft.general
+  #minecraft.modding
+
+Use these lines in any loaded ini config file to make it work like that::
+
+  [irc]
+  chan-monitor = rdircd
+  chan-monitor-guild = {prefix}
+  chan-private = {names}
+
+  [renames]
+  guild.me = dm
+
+What these options do, in the same order: rename "#rdircd.monitor" to "#rdircd",
+set names for all discord-specific monitor channels to just "{prefix}"
+(e.g. "#dm" or "#minecraft"), set private-chat channels to use people's name(s)
+without "chat." prefix, rename default "me" guild (for private chats and such) to "dm".
+
+Defaults are that way to try to be more explicit and descriptive, but once you
+know what all these channels are for, can easily rename them to something
+shorter/nicer and more convenient for yourself.
+
+
 Links
 -----
 
