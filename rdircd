@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.23' # git-version: py-str
+	version = '22.12.24' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -1030,8 +1030,6 @@ class IRCProtocol:
 
 	def req_chan_info(self, chan, cm=None, check=True):
 		info = self._req_chan_info(chan, cm, check)
-		# print('------ req_chan_info req', [chan, info])
-		# print('---- TEST', self.bridge.cmd_chan_map().get('RDIRCD'))
 		return info
 	def _req_chan_info(self, chan, cm=None, check=True):
 		if not self.chan_spec_check(chan):
@@ -1043,8 +1041,8 @@ class IRCProtocol:
 
 	def recv_cmd_join(self, chan, key=None):
 		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans))
-		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
-		for chan in chan_list: self.cmd_join(chan, cm=chan_map)
+		chan_list, cm = chan.split(','), self.bridge.cmd_chan_map()
+		for chan in chan_list: self.cmd_join(chan, cm=cm)
 
 	def cmd_join(self, chan, cm=None):
 		if not cm: cm = self.bridge.cmd_chan_map()
@@ -1059,9 +1057,9 @@ class IRCProtocol:
 		self.st.chans[name] = adict(topic=c and c.topic)
 
 	def recv_cmd_part(self, chan, reason=None):
-		chan_list, chan_map = chan.split(','), self.bridge.cmd_chan_map()
+		chan_list, cm = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
-			c = self.req_chan_info(chan, cm=chan_map, check=False)
+			c = self.req_chan_info(chan, cm=cm, check=False)
 			name = c.name if c else self.chan_name(chan)
 			if name not in self.st.chans:
 				self.send(442, chan, ':You are not on that channel')
@@ -1196,8 +1194,7 @@ class IRCProtocol:
 					self.conf._irc_chan_auto_join_re.search(name) ):
 				self.cmd_join(chan)
 			return self.send(f':{src} {msg_type} {chan} :{text}')
-		cm = self.bridge.cmd_chan_map()
-		if not cm.get(name): return
+		if not (cm := self.bridge.cmd_chan_map()).get(name): return
 		for conn in self.bridge.cmd_chan_conns(name):
 			if name not in conn.st.chans: self.cmd_join(chan, cm=cm) # from chan_auto_join_re
 			conn.send(f':{src} {msg_type} {chan} :{text}')
@@ -1380,7 +1377,7 @@ class Discord:
 		if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
 				and line.split(None, 1)[0].startswith(self.conf.discord_thread_id_prefix) ):
 			c_tid, line = line.split(None, 1)
-			cc = cc.threads.get(c_tid.lower())
+			cc = cc.threads.get(str_norm(c_tid))
 			if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
 
 		nonce = self.flake_build(time.time())
@@ -2292,8 +2289,8 @@ class DiscordSession:
 						c.parent_id, gg.name, gg.id, _gg_prefix(), name, c.id )
 					continue
 				c_tid = self.conf.discord_thread_id_prefix
-				c_tid += str_hash( c.id, 4,
-					strip=(c_tid.lower() + c_tid.upper()) if len(c_tid) == 1 else '' ).lower()
+				c_tid += str_norm(str_hash( c.id, 4,
+					strip=(c_tid.lower() + c_tid.upper()) if len(c_tid) == 1 else '' ))
 				topic, name = f'[thread {c_tid}] {name}', name[:self.conf.irc_thread_chan_name_len]
 				if name: name = f'.{name}'
 				name = f'{cc_parent.name}.{c_tid}{name}'
@@ -2785,6 +2782,8 @@ class RDIRCD:
 
 	def irc_name_revert(self, name_irc):
 		'Return Discord name for an IRC name'
+		# Relies on a i2d cache being set by earlier irc_name() call for this name
+		# Which is done for every channel/user, notably in cmd_chan_map
 		return self.cache.i2d.get(name_irc)
 
 	def irc_name_monitor(self, gg_prefix=None):
@@ -3243,7 +3242,7 @@ class RDIRCD:
 
 	def cmd_msg_monitor( self, msg,
 			conn=None, nick=None, pre='', notice=True, gid=None ):
-		'Sends notice to monitor IRC channel(s).'
+		'Sends notice to monitor IRC channel(s)'
 		if not conn: conn = self.cmd_conn()
 		if not conn: return
 		lines, n = list(filter(None, msg.splitlines())), self.conf.irc_len_monitor_lines
@@ -3261,7 +3260,7 @@ class RDIRCD:
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
-		'Sends annotated Discord message to all corresponding/monitor IRC channels.'
+		'Sends annotated Discord message to all corresponding/monitor IRC channels'
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
@@ -3300,8 +3299,8 @@ class RDIRCD:
 
 	def cmd_msg_rename_func(self, cc):
 		'Returns cmd_msg_discord func to send rename-notice to old channel'
-		name_irc = self.cache.did_chan.get(cc.did)
-		return ft.partial(self.cmd_msg_discord, name_irc=name_irc)
+		return ft.partial( self.cmd_msg_discord,
+			name_irc=self.cache.did_chan.get(cc.did) )
 
 
 
