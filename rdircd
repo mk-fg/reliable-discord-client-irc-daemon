@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.20' # git-version: py-str
+	version = '22.12.23' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2650,12 +2650,9 @@ class RDIRCDError(Exception): pass
 class RDIRCD:
 
 	class c:
-		chan_prefix = 'rdircd.'
-
 		chan_sys_types = 'control', 'debug'
 		chan_sys_control_topic = 'rdircd: control channel, type "help" for more info'
 		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
-
 		chan_monitor_topic = ( 'rdircd: read-only'
 			' catch-all channel with messages from everywhere' )
 		chan_monitor_guild_topic_tpl = 'rdircd: catch-all channel for discord [ {} ]'
@@ -2770,7 +2767,9 @@ class RDIRCD:
 		for conn in self.irc_conns.values():
 			if conn.st.auth: yield conn.st.nick
 
-	def irc_name(self, name, casefold=False):
+	def irc_name(self, name, casefold=False, _irc_remap=dict([
+			*((n, f'°{n:02d}') for n in range(32)),
+			*((ord(a), b) for a, b in zip(' ,:@!+<>', '·„¦∂¡×◄►')) ])):
 		'Return IRC name for a Discord name'
 		# Must be deterministic but ideally not create collisions by stripping too much
 		# General idea is to replace all irc-problematic chars by lookalike unicode
@@ -2778,17 +2777,7 @@ class RDIRCD:
 			name_irc, sub_chars = '', '°×·„∂¦◄►'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
 			if name_clean != name: name = name_clean + '×' + self.uid('name', name)
-			for n, c in enumerate(name):
-				if ord(c) < 32: name_irc += f'°{ord(c):02d}'
-				elif c == ' ': name_irc += '·'
-				elif c == ',': name_irc += '„'
-				elif c == ':': name_irc += '¦'
-				elif c == '@': name_irc += '∂'
-				elif c == '!': name_irc += '¡'
-				elif c == '+': name_irc += '×'
-				elif c == '<': name_irc += '◄'
-				elif c == '>': name_irc += '►'
-				else: name_irc += c
+			name_irc = name.translate(_irc_remap)
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
 		name = self.cache.d2i[name]
 		if casefold: name = irc_casefold_rfc1459(name)
@@ -3010,8 +2999,13 @@ class RDIRCD:
 		else:
 			cache_drop = ft.partial(self.cache.update, chan_map=None)
 			cache_track = lambda d, keys=None: d._track(keys, cb=cache_drop)
-			cm = self.cache.chan_map = \
-				irc_name_dict(self._cmd_chan_map_build(cache_track))
+			cm_list = list(self._cmd_chan_map_build(cache_track))
+			cm = self.cache.chan_map = irc_name_dict(cm_list)
+			if len(cm) < len(cm_list):
+				cm_repeats = ' '.join( k for k, n in
+					cs.Counter(k for k, v in cm_list).items() if n > 1 )
+				raise RDIRCDError( 'Duplicate channel-name(s) produced'
+					f' by guild/channel naming (mis-)configuration: {cm_repeats}' )
 		cm.ø_online = self.discord.online
 		if not cm0 and cm.ø_online: self.cmd_chan_map_sync(cm)
 		return cm
