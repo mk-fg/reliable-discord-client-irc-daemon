@@ -375,6 +375,8 @@ channel names with something more readable/memorable or meaningful to you::
 
   [renames]
   guild.jvpp = game-x
+  guild.sn3y = log-bot
+  guild.sn3y.chan-fmt = logs/{name}.log
   chan.some-long-and-weird-name = weird
   chan.@710035588048224269 = general-subs
 
@@ -383,6 +385,19 @@ This should:
 - Turn e.g. #jvpp.info into #game-x.info - lettersoup guild-id to more
   meaningful prefix. This will apply to all channels in that discord -
   "guild" renames.
+
+- Change format for channel names of "sn3y" discord from something like
+  #sn3y.debug to #logs/debug.log - changing of channel name format.
+
+  Format template uses `python str.format syntax`_ with "name" (channel name)
+  and "prefix" (guild prefix - will be "log-bot" in this example) values.
+  Default format is ``{prefix}.{name}``.
+
+  This format option does not affect monitor-channel name - should be
+  #rdircd.monitor.log-bot here - see "chan-monitor-guild" option under [irc]
+  section for changing that.
+
+  .. _python str.format syntax: https://docs.python.org/3/library/string.html#format-string-syntax
 
 - Rename that long channel to have a shorter name (retaining guild prefix) -
   "chan" renames.
@@ -760,12 +775,12 @@ Rename #rdircd.monitor.XYZ channels to #XYZ
 Normally rdircd uses these long strange "#rdircd.monitor" channel names,
 as well as unnecessary "#me.chat."  prefixes, instead of this::
 
+  #DMs
+  #@some-friend
+  #@some-friend+other-friend+more-ppl
   #rdircd
   #rdircd.control
   #rdircd.debug
-  #dm
-  #dm.some-friend
-  #dm.some-friend+other-friend+more-ppl
   #minecraft
   #minecraft.general
   #minecraft.modding
@@ -778,16 +793,18 @@ Use these lines in any loaded ini config file to make it work like that::
   chan-private = {names}
 
   [renames]
-  guild.me = dm
+  guild.me = DMs
+  guild.me.chan-fmt = @{name}
 
 What these options do, in the same order: rename "#rdircd.monitor" to "#rdircd",
 set names for all discord-specific monitor channels to just "{prefix}"
 (e.g. "#dm" or "#minecraft"), set private-chat channels to use people's name(s)
-without "chat." prefix, rename default "me" guild (for private chats and such) to "dm".
+without "chat." prefix, rename default "me" guild (private chats) to "DMs",
+use simplier @ + name format for any channels there.
 
-Defaults are that way to try to be more explicit and descriptive, but once you
-know what all these channels are for, can easily rename them to something
-shorter/nicer and more convenient for yourself.
+Defaults are that way to try to be more explicit and descriptive,
+but once you know what all these channels are for, can easily rename
+them to something shorter/nicer and more convenient for yourself.
 
 
 Links
