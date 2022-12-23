@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.25' # git-version: py-str
+	version = '22.12.26' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2706,16 +2706,15 @@ class RDIRCD:
 		ck = t, v, alias_key
 		if ck not in self.cache.uid:
 			if kh is None:
-				kh = self.cache.uid.get(tv := f'{t}\0{v}')
-				if not kh:
+				if not (kh := self.cache.uid.get(tv := f'{t}\0{v}')):
 					kh = self.cache.uid[tv] = str_hash(
 						tv, hash_len or self.uid_len, self.uid_seed )
-			kh = self.conf.renames.get(
+					if kh in self.cache.uid: # raise irc uid-len if this happens
+						raise ValueError( f'Unique-id hash collision [ {t}={v} ]: key={kh}'
+							f' len/seed=[ {self.uid_len} {self.uid_seed} ] other={self.cache.uid[kh]}' )
+					self.cache.uid[kh] = ck
+			self.cache.uid[ck] = self.conf.renames.get(
 				(t, str_norm(alias_key.format(kh=kh))), alias_default or kh )
-			if kh in self.cache.uid: # raise irc uid-len if this happens
-				raise ValueError( f'Unique-id hash collision [ {t}={v} ]: key={kh}'
-					f' len/seed=[ {self.uid_len} {self.uid_seed} ] other={self.cache.uid[kh]}' )
-			self.cache.uid[ck], self.cache.uid[kh] = kh, ck
 		return self.cache.uid[ck]
 
 	async def run(self):
