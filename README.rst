@@ -254,7 +254,7 @@ Create configuration file with discord and ircd auth credentials in ~/.rdircd.in
 Note: IRC password can be omitted, but make sure to firewall that port from
 everything in the system then (or maybe do it anyway).
 
-If you set password though, maybe do not use irc ``password=`` option like above,
+If you set password though, maybe do not use IRC ``password=`` option like above,
 and use ``password-hash=`` and ``-H/--conf-pw-scrypt`` to generate it instead.
 Either way, make sure to use that password when configuring connection to this
 server in the IRC client as well.

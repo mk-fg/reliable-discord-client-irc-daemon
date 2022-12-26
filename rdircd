@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.26' # git-version: py-str
+	version = '22.12.27' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -71,11 +71,13 @@ class RDIRCDConfigBase:
 	irc_thread_chan_name_len = 30 # truncate thread-name to this len in thread-chans, 0 = just id
 
 	irc_chan_sys = 'rdircd.{type}' # name format for type=control and type=debug channels
-	irc_chan_monitor = 'rdircd.monitor' # name of monitor catch-all channel for all msgs
-	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}' # name fmt of per-discord monitor channels
-	# Name format for private chat channels.
+	# Name format (python str.format) for private chat channels.
 	# {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
 	irc_chan_private = 'chat.{names_or_id}'
+	# Name of catch-all "monitor" channel for all msgs. Empty - won't be created.
+	irc_chan_monitor = 'rdircd.monitor'
+	# Name format of per-discord "monitor" channels for all msgs in there. Empty - disabled.
+	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}'
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -3028,10 +3030,12 @@ class RDIRCD:
 
 		# Order monitor channels at the top
 		name = self.cache.gid_mon_chan[None] = self.irc_name_monitor()
-		yield (name, adict( name=name, t=self.c_chan_type.mon,
-			ts_created=self.server_ts.timestamp(), topic=self.c.chan_monitor_topic ))
+		if name:
+			yield (name, adict( name=name, t=self.c_chan_type.mon,
+				ts_created=self.server_ts.timestamp(), topic=self.c.chan_monitor_topic ))
 		for gi in gg_info:
 			name = self.cache.gid_mon_chan[gi.gg.id] = self.irc_name_monitor(gi.prefix)
+			if not name: continue
 			yield (name, adict( name=name,
 				t=self.c_chan_type.mon, ts_created=gi.gg.ts_joined,
 				topic=self.c.chan_monitor_guild_topic_tpl.format(gi.gg.name) ))
@@ -3246,12 +3250,14 @@ class RDIRCD:
 			lines_n, lines = len(lines), lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
 		nick, n = nick or self.conf.irc_nick_sys, self.conf.irc_len_monitor
-		chan_mon_global = conn.chan_spec(self.cache.gid_mon_chan[None])
-		chan_mon = gid and conn.chan_spec(self.cache.gid_mon_chan.get(gid))
+		if chan_mon_global := self.cache.gid_mon_chan[None]:
+			chan_mon_global = conn.chan_spec(chan_mon_global)
+		if chan_mon := gid and self.cache.gid_mon_chan.get(gid):
+			chan_mon = conn.chan_spec(chan_mon)
 		for s in lines:
 			s = f'{pre}{str_cut(s, n, len_bytes=True)}'
-			conn.cmd_msg_synth(nick, chan_mon_global, s, notice=notice)
 			if chan_mon: conn.cmd_msg_synth(nick, chan_mon, s, notice=notice)
+			if chan_mon_global: conn.cmd_msg_synth(nick, chan_mon_global, s, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
