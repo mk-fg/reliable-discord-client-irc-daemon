@@ -269,21 +269,24 @@ socket wrapping, for non-localhost connections)
 
 Run ``/list`` to see channels for all joined discord servers/guilds::
 
-  Channel          Users Topic
-  -------          ----- -----
-  #rdircd.control      1  rdircd: control channel, type "help" for more info
-  #rdircd.debug        1  rdircd: debug logging channel, read-only
-  #rdircd.monitor      1  rdircd: read-only catch-all channel with messages from everywhere
-  #rdircd.monitor.jvpp 1  rdircd: read-only catch-all channel for messages from one discord
-  #me.chat.SomeUser    1  me: private chat - SomeUser
-  #me.chat.x2s456gl0t  3  me: private chat - some-other-user, another-user, user3
-  #jvpp.announcements  1  Server-A: Please keep this channel unmuted
-  #jvpp.info           1  Server-A:
-  #jvpp.rules          1  Server-A:
-  #jvpp.welcome        1  Server-A: Mute unless you like notification spam
+  Channel           Users Topic
+  -------           ----- -----
+  #rdircd.control       1  rdircd: control channel, type "help" for more info
+  #rdircd.debug         1  rdircd: debug logging channel, read-only
+  #rdircd.monitor       1  rdircd: read-only catch-all channel with messages from everywhere
+  #rdircd.leftover      1  rdircd: read-only channel for any discord messages in channels ...
+  #rdircd.monitor.jvpp  1  rdircd: read-only catch-all channel for discord [ Server-A ]
+  #rdircd.leftover.jvpp 1  rdircd: read-only msgs for non-joined channels of discord [ Server-A ]
   ...
-  #axsd.intro          1  Server-B: Server info and welcomes.
-  #axsd.offtopic       1  Server-B: Anything goes. Civility is expected.
+  #me.chat.SomeUser     1  me: private chat - SomeUser
+  #me.chat.x2s456gl0t   3  me: private chat - some-other-user, another-user, user3
+  #jvpp.announcements   1  Server-A: Please keep this channel unmuted
+  #jvpp.info            1  Server-A:
+  #jvpp.rules           1  Server-A:
+  #jvpp.welcome         1  Server-A: Mute unless you like notification spam
+  ...
+  #axsd.intro           1  Server-B: Server info and welcomes.
+  #axsd.offtopic        1  Server-B: Anything goes. Civility is expected.
 
 Notes on information here:
 
@@ -292,6 +295,7 @@ Notes on information here:
 - "#me." is a prefix of discord @me guild, where all private channels are.
 - #rdircd.control and #rdircd.debug are special channels, send "help" there for more info.
 - There's #rdircd.monitor catch-all channel and guild-specific ones (see notes below).
+- #rdircd.leftover channels are like #rdircd.monitor, but skip msgs from already-joined channels.
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
 - Everything in that /list and everything used to talk through this app are IRC
@@ -343,25 +347,28 @@ Channel Commands
 | In special channels like #rdircd.control and #rdircd.debug: send "h" or "help".
 | All discord channels - send "/t" or "/topic".
 
-#rdircd.monitor channels
-````````````````````````
+#rdircd.monitor and #rdircd.leftover channels
+`````````````````````````````````````````````
 
-#rdircd.monitor can be used to check on activity from all connected servers -
+#rdircd.monitor can be used to see activity from all connected servers -
 gets all messages, prefixed by the relevant irc channel name.
 
 #rdircd.monitor.guild (where "guild" is a hash or alias, see above)
 is a similar catch-all channels for specific discord server/guild.
 
-They are currently created on-first-message, so might not be listed initially,
-but can be joined anytime (same as with any other channels).
-Joining #rdircd.monitor.me can be useful in particular to monitor any private
-chats and messages for the account.
+#rdircd.monitor.me can be useful, for example, to monitor any private chats
+and messages for discord account (see also `Auto-joining channels`_ example).
+
+#rdircd.leftover and similar #rdircd.leftover.guild channels are like monitor
+channels, but skip messages from any channels that IRC client have JOIN-ed,
+i.e. leftover messages in any other discord channels.
+Joining monitor-channels does not count for the purposes of leftover-channels.
 
 Messages in these channels are limited to specific length/lines
 to avoid excessive flooding of these by multi-line msgs.
 
 "len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
-can be used to control max length for these,
+can be used to control max length for all these,
 see ``./rdircd --conf-dump-defaults`` output for their default values.
 There are also options to name these channels differently there.
 
@@ -393,9 +400,10 @@ This should:
   and "prefix" (guild prefix - will be "log-bot" in this example) values.
   Default format is ``{prefix}.{name}``.
 
-  This format option does not affect monitor-channel name - should be
-  #rdircd.monitor.log-bot here - see "chan-monitor-guild" option under [irc]
-  section for changing that.
+  This format option does not affect monitor/leftover channel name(s)
+  (e.g. #rdircd.monitor.log-bot or #rdircd.leftover.game-x) -
+  see "chan-monitor-guild" and "chan-leftover-guild" options under
+  [irc] section for changing that.
 
   .. _python str.format syntax: https://docs.python.org/3/library/string.html#format-string-syntax
 
@@ -417,20 +425,9 @@ This should:
   discord, and normally will be assigned .1, .2 and such non-descriptive suffixes.
 
 Currently only listed types of renaming are implemented, for discord prefixes
-and channels, but there are also options under "irc" section to set names for
-system/monitor and private-chat channels (from ``./rdircd --conf-dump-defaults`` output)::
-
-  [irc]
-  ...
-  ; chan-sys: name format for type=control and type=debug channels
-  chan-sys = rdircd.{type}
-  ; chan-monitor: name of monitor catch-all channel for all msgs
-  chan-monitor = rdircd.monitor
-  ; chan-monitor-guild: name fmt of per-discord monitor channels
-  chan-monitor-guild = rdircd.monitor.{prefix}
-  ; chan-private: name format for private chat channels.
-  ; {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
-  chan-private = chat.{names_or_id}
+and channels, but there are also options under [irc] section to set names for
+system/monitor/leftover and private-chat channels - "chan-sys", "chan-private",
+"chan-monitor" and such (see ``./rdircd --conf-dump-defaults`` output).
 
 Set ``chan-monitor-guild = {prefix}`` there for example, to have #game-x channel be
 catch-all for all messages in that discord, without default long #rdircd.monitor.\* prefix.
@@ -448,6 +445,9 @@ requests/adds/removes) as notices.
 
 Accepting friend requests and adding/removing these can be done via regular
 discord webui and is not implemented in this client in any special way.
+
+See also `Auto-joining channels`_ section below for an easy way to pop-up
+new private chats in the IRC client via invites.
 
 Discord channel threads
 ```````````````````````
@@ -485,7 +485,8 @@ regular expression value (`python "re" syntax`_) can be used::
 | Or to have irc client auto-join all channels, use ``chan-auto-join-re = .``
 | Empty value for this option (default) will match nothing.
 
-This can be used as an alternative to tracking new stuff via #rdircd.monitor channels.
+This can be used as an alternative to tracking new stuff via
+#rdircd.monitor/leftover channels.
 
 This regexp can be tweaked at runtime using "set" command in #rdircd.control
 channel, same as any other values, to e.g. temporary enable/disable this feature
@@ -614,9 +615,9 @@ suffixes, regardless of any ordering quirks.
 
 Renaming conflicting channels will rename IRC chans to unsuffixed ones as well.
 
-Note that when channels are renamed (incl. during such conflicts), IRC notice
-lines about it are always issued in both affected channels and relevant
-#rdircd.monitor channels.
+Note that when channels are renamed (incl. during such conflicts),
+IRC notice lines about it are always issued in both affected channels
+and any relevant monitor/leftover channels.
 
 WARNING :: Session/auth rejected unexpectedly - disabling connection
 ````````````````````````````````````````````````````````````````````
@@ -769,11 +770,11 @@ Random tips and tricks
 
 Some cool configurations mentioned in #rdircd on IRC and such.
 
-Rename #rdircd.monitor.XYZ channels to #XYZ
-```````````````````````````````````````````
+Simplier DM and monitor channel names
+`````````````````````````````````````
 
-Normally rdircd uses these long strange "#rdircd.monitor" channel names,
-as well as unnecessary "#me.chat."  prefixes, instead of this::
+Normally rdircd uses these long strange "#rdircd.monitor" channel name
+templates, as well as unnecessary "#me.chat."  prefixes, instead of this::
 
   #DMs
   #@some-friend

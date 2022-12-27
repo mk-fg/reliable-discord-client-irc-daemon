@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.27' # git-version: py-str
+	version = '22.12.28' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -56,8 +56,8 @@ class RDIRCDConfigBase:
 	irc_len_hwm = 450 # split irc lines when they're longer than hwm to lwm length
 	irc_len_lwm = 300
 	irc_len_topic = 300 # cannot be split, so is truncated instead
-	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor
-	irc_len_monitor_lines = 4 # to tuncate multiline msgs in #rdircd.monitor
+	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor/leftover channels
+	irc_len_monitor_lines = 4 # to limit multiline msgs in #rdircd.monitor/leftover channels
 
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
@@ -74,10 +74,18 @@ class RDIRCDConfigBase:
 	# Name format (python str.format) for private chat channels.
 	# {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
 	irc_chan_private = 'chat.{names_or_id}'
-	# Name of catch-all "monitor" channel for all msgs. Empty - won't be created.
+	# Name of catch-all "monitor" channel for all msgs. Set to empty - won't be created.
 	irc_chan_monitor = 'rdircd.monitor'
-	# Name format of per-discord "monitor" channels for all msgs in there. Empty - disabled.
+	# Name format of per-discord
+	#  "monitor" channels for all msgs in there. Empty - disabled.
 	irc_chan_monitor_guild = 'rdircd.monitor.{prefix}'
+
+	# Name of "leftover" channel for any discord messages in channels that
+	#  IRC client is not connected to. "monitor" channels don't count. Empty - won't be created.
+	irc_chan_leftover = 'rdircd.leftover'
+	# Name of "leftover" chan for msgs in any
+	#  non-joined channels of one specific discord server/guild. Empty - disable.
+	irc_chan_leftover_guild = 'rdircd.leftover.{prefix}'
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -1172,9 +1180,9 @@ class IRCProtocol:
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' there is no corresponding discord channel, msgs here are discarded' )
 			if not c: return
-			if from_self and c.t == c.t.mon:
-				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING: this is'
-					' one of the monitor-channels, msgs posted here are not proxied to discord' )
+			if from_self and c.t != c.t.proxy:
+				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
+					' this is read-only channel, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
 				if name not in conn.st.chans: self.cmd_join(chan) # from chan_auto_join_re
@@ -1507,8 +1515,8 @@ class Discord:
 		else:
 			gg = self.st.guilds.get(gid)
 			guild_prefix = '[' + (gg.name if gg else f'%{m.guild_id}') + '] '
-		self.bridge.cmd_msg_monitor(
-			f'{self.conf.irc_prefix_guild_event}{guild_prefix}{msg}', gid=gid )
+		self.bridge.cmd_msg_monitor( gid=gid, leftover=True,
+			msg=f'{self.conf.irc_prefix_guild_event}{guild_prefix}{msg}' )
 
 
 
@@ -2651,9 +2659,13 @@ class RDIRCD:
 		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
 		chan_monitor_topic = ( 'rdircd: read-only'
 			' catch-all channel with messages from everywhere' )
-		chan_monitor_guild_topic_tpl = 'rdircd: catch-all channel for discord [ {} ]'
+		chan_monitor_topic_guild_tpl = 'rdircd: read-only catch-all channel for discord [ {} ]'
+		chan_leftover_topic = ( 'rdircd: read-only channel for any'
+			' discord messages in channels that IRC client is not connected to' )
+		chan_leftover_topic_guild_tpl = (
+			'rdircd: read-only msgs for non-joined channels of discord [ {} ]' )
 
-	c_chan_type = enum.Enum('c_chan_type', 'sys mon proxy')
+	c_chan_type = enum.Enum('c_chan_type', 'sys mon nc proxy')
 
 	def __init__(self, conf):
 		self.conf, self.init = conf, None
@@ -2673,7 +2685,9 @@ class RDIRCD:
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict( chan_map=None, uid=dict(),
-			gid_mon_chan=dict(), did_chan=dict(), # to get mon/discord irc chan-name by id
+			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
+			# None is used as an id for global monitor/leftover channel
+			gid_mon_chan=dict(), gid_nc_chan=dict(), did_chan=dict(),
 			d2i=irc_name_dict(), i2d=irc_name_dict() ) # for all irc <-> discord names
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
 		if not self.uid_seed:
@@ -2790,11 +2804,6 @@ class RDIRCD:
 		# Relies on a i2d cache being set by earlier irc_name() call for this name
 		# Which is done for every channel/user, notably in cmd_chan_map
 		return self.cache.i2d.get(name_irc)
-
-	def irc_name_monitor(self, gg_prefix=None):
-		'Return name for a monitor-channel, taking renames into account'
-		return ( self.conf.irc_chan_monitor if not gg_prefix
-			else self.conf.irc_chan_monitor_guild.format(prefix=gg_prefix) )
 
 	def irc_discord_info(self, name):
 		'Return info{gg, cc} object for IRC name for discord channel or None'
@@ -3018,6 +3027,7 @@ class RDIRCD:
 			adict( gg=gg, prefix=gg_uid(gg),
 				name_fmt=gg_uid(gg, alias_key='{kh}.chan-fmt', alias_default='{prefix}.{name}') )
 			for gg in sorted(self.discord.st.guilds.values(), key=op.itemgetter('ts_joined')) )
+		sys_chan_ts = self.server_ts.timestamp()
 
 		# System debug/control channels
 		self.irc_chans_sys.clear()
@@ -3028,17 +3038,22 @@ class RDIRCD:
 				name=name, ts_created=self.server_ts.timestamp(),
 				topic=getattr(self.c, f'chan_sys_{sys_type}_topic') ))
 
-		# Order monitor channels at the top
-		name = self.cache.gid_mon_chan[None] = self.irc_name_monitor()
-		if name:
-			yield (name, adict( name=name, t=self.c_chan_type.mon,
-				ts_created=self.server_ts.timestamp(), topic=self.c.chan_monitor_topic ))
+		# Order monitor/leftover channels at the top
+		def _agg_chan(k, gi=None, _kc=dict(mon='monitor', nc='leftover')):
+			kc = _kc[k]
+			name = ( getattr(self.conf, f'irc_chan_{kc}') if not gi else
+				getattr(self.conf, f'irc_chan_{kc}_guild').format(prefix=gi.prefix) )
+			getattr(self.cache, f'gid_{k}_chan')[gi and gi.gg.id] = name
+			if not name: return
+			topic = ( getattr(self.c, f'chan_{kc}_topic') if not gi else
+				getattr(self.c, f'chan_{kc}_topic_guild_tpl').format(gi.gg.name) )
+			yield (name, adict( name=name, topic=topic,
+				t=getattr(self.c_chan_type, k), ts_created=sys_chan_ts ))
+		yield from _agg_chan('mon')
+		yield from _agg_chan('nc')
 		for gi in gg_info:
-			name = self.cache.gid_mon_chan[gi.gg.id] = self.irc_name_monitor(gi.prefix)
-			if not name: continue
-			yield (name, adict( name=name,
-				t=self.c_chan_type.mon, ts_created=gi.gg.ts_joined,
-				topic=self.c.chan_monitor_guild_topic_tpl.format(gi.gg.name) ))
+			yield from _agg_chan('mon', gi)
+			yield from _agg_chan('nc', gi)
 
 		# Normal channels for each discord-guild
 		for gi in gg_info:
@@ -3241,23 +3256,25 @@ class RDIRCD:
 		send(f'--- [{info_url}] info follows'); send(info); send(f'--- [{info_url}] end')
 
 	def cmd_msg_monitor( self, msg,
-			conn=None, nick=None, pre='', notice=True, gid=None ):
-		'Sends notice to monitor IRC channel(s)'
+			conn=None, nick=None, pre='', notice=True, gid=None, leftover=False ):
+		'Sends notice to monitor/leftover IRC channel(s)'
 		if not conn: conn = self.cmd_conn()
 		if not conn: return
 		lines, n = list(filter(None, msg.splitlines())), self.conf.irc_len_monitor_lines
 		if len(lines) > n:
 			lines_n, lines = len(lines), lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
+		def _agg_chans(k):
+			if k == 'nc' and not leftover: return
+			cache = getattr(self.cache, f'gid_{k}_chan')
+			yield cache[None]
+			if gid: yield cache.get(gid)
+		if not (chan_list := list( conn.chan_spec(name)
+			for name in [*_agg_chans('mon'), *_agg_chans('nc')] if name )): return
 		nick, n = nick or self.conf.irc_nick_sys, self.conf.irc_len_monitor
-		if chan_mon_global := self.cache.gid_mon_chan[None]:
-			chan_mon_global = conn.chan_spec(chan_mon_global)
-		if chan_mon := gid and self.cache.gid_mon_chan.get(gid):
-			chan_mon = conn.chan_spec(chan_mon)
 		for s in lines:
 			s = f'{pre}{str_cut(s, n, len_bytes=True)}'
-			if chan_mon: conn.cmd_msg_synth(nick, chan_mon, s, notice=notice)
-			if chan_mon_global: conn.cmd_msg_synth(nick, chan_mon_global, s, notice=notice)
+			for chan in chan_list: conn.cmd_msg_synth(nick, chan, s, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
@@ -3271,9 +3288,9 @@ class RDIRCD:
 			cc.users[nick].ts = ts or time.time()
 		if direct := bool(conn): conn_list = [conn]
 		else:
-			conn_list = self.cmd_chan_conns(name) if name else list()
+			conn_list = name and self.cmd_chan_conns(name)
 			conn = conn_list[0] if conn_list else self.cmd_conn()
-		if not conn: return
+		if not conn: return # no clients connected at all
 		if tags:
 			mt, prefix = DiscordSession.c_msg_tags, tags.pop('_prefix', prefix)
 			for k, (tt, v) in tags.items():
@@ -3288,15 +3305,16 @@ class RDIRCD:
 			if self.conf.irc_prefix_all_private and cc.private:
 				prefix = f'{self.conf.irc_prefix_all_private}{prefix}'
 			if self.conf.irc_prefix_all: prefix = f'{self.conf.irc_prefix_all}{prefix}'
-		if not (direct or skip_monitor):
-			self.cmd_msg_monitor( line, conn=conn, nick=nick,
-				pre=f'#{name} :: {prefix}', notice=notice, gid=cc.gg.id )
 		if not name:
 			self.log.warning( 'Failed to resolve channel did'
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
+		chan = conn.chan_spec(name or cc.name)
 		for conn, line in it.product(conn_list, line.splitlines()):
-			conn.cmd_msg_synth( nick,
-				conn.chan_spec(name), f'{prefix}{line}', notice=notice, direct=True )
+			conn.cmd_msg_synth(nick, chan, f'{prefix}{line}', notice=notice, direct=True)
+		if not (direct or skip_monitor):
+			self.cmd_msg_monitor(
+				line, conn=conn, nick=nick, pre=f'{chan} :: {prefix}',
+				notice=notice, gid=cc.gg.id, leftover=not conn_list )
 
 	def cmd_msg_rename_func(self, cc):
 		'Returns cmd_msg_discord func to send rename-notice to old channel'
