@@ -371,13 +371,16 @@ channel-names to ignore in such monitor/leftover channels, for example::
   [filter]
   game-x.spam
   game-x.bot-commands
+  game-x.forum+threads
 
 Any value or no value at all (like in example above) will make lines like
 ``#game-x.spam :: ...`` for chan-names set there (rfc1459 case-insensitive)
 be omitted from monitor channels - to define a list of spammy channels that
 you don't care about or don't want to see even there.
+Special "+threads" suffix also ignores all threads of that channel.
+
 Use "unmonitor" (or "um") command in #rdircd.control channel to add/remove
-these filters on-the-fly anytime.
+such filters on-the-fly anytime.
 
 Messages in monitor-channels are limited to specific length/lines
 to avoid excessive flooding of these by multi-line msgs.

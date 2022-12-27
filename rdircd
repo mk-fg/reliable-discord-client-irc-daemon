@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.31' # git-version: py-str
+	version = '22.12.32' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3101,12 +3101,12 @@ class RDIRCD:
 					'     saving it to the last ini file if -s/--save is specified.',
 					'    Run without args to get full list of options with their current values.',
 				'',
-				# XXX: add -t/--threads option here
 				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
 					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
 					'    Adds line to a [filter] ini config section, to skip any msgs',
 					'     from specified discord channel, in monitor/leftover channels.',
 					'    Channel name should be same as prefix printed there. Leading # is optional.',
+					'    Chan-name can have "+threads" suffix to ignore all threads in there, if any.',
 					'    Removes channel from last config-file instead with -r/--rm option.',
 					'    Run without args to print a list of current filters for these channels.',
 				'',
@@ -3356,13 +3356,19 @@ class RDIRCD:
 		if not name:
 			self.log.warning( 'Failed to resolve channel did'
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
-		chan = conn.chan_spec(name := name or cc.name)
-		for conn, line in it.product(conn_list, line.splitlines()):
-			conn.cmd_msg_synth(nick, chan, f'{prefix}{line}', notice=notice, direct=True)
-		if not (direct or skip_monitor or name in self.conf.filters):
-			self.cmd_msg_monitor(
-				line, conn=conn, nick=nick, pre=f'{chan} :: {prefix}',
-				notice=notice, gid=cc.gg.id, leftover=not conn_list )
+			chan = conn.chan_spec(name := f'ERR [ {cc.gg.name} ] {cc.name}')
+		else:
+			chan = conn.chan_spec(name)
+			for conn, line in it.product(conn_list, line.splitlines()):
+				conn.cmd_msg_synth(nick, chan, f'{prefix}{line}', notice=notice, direct=True)
+		if direct or skip_monitor: return
+		if name in self.conf.filters or f'{name}+threads' in self.conf.filters: return
+		if cc.get('tid') and any( # thread-name format hardcoded in op_ev_chans
+			re.search('^' + re.escape(f'{k[:-8]}.{cc.tid}') + r'(\.|$)', name)
+			for k in self.conf.filters if k.endswith('+threads') ): return
+		self.cmd_msg_monitor(
+			line, conn=conn, nick=nick, pre=f'{chan} :: {prefix}',
+			notice=notice, gid=cc.gg.id, leftover=not conn_list )
 
 	def cmd_msg_rename_func(self, cc):
 		'Returns cmd_msg_discord func to send rename-notice to old channel'
