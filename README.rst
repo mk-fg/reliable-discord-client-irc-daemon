@@ -142,7 +142,8 @@ Limitations
   only global usernames.
 
 - Discord tracks "read_state" server-side, which is not used here in any way -
-  triggering history replay is only done manually (/t commands in chans).
+  triggering history replay is only done manually (/t commands in chans),
+  so can sometimes be easy to miss on quiet reconnects.
 
 - Does not support discord multifactor authentication mode, but manual-token
   auth can probably work around that - see note on captchas below.

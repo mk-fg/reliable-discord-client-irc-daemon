@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.28' # git-version: py-str
+	version = '22.12.29' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -571,7 +571,7 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None):
 					if tss.strftime('%Y-%m-%d') == d0: ts_fmt = ts_fmt[9:]
 		ts = ts.strftime(ts_fmt)
 		return ts[:-3] if ts.endswith(':00') else ts
-	if ts_ext := f'{ts.microsecond:06d}'[:ms]: ts_ext = f'.{ts_ext}'
+	if int(ts_ext := f'{ts.microsecond:06d}'[:ms]): ts_ext = f'.{ts_ext}'
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 _short_ts_days = dict(
@@ -2106,9 +2106,9 @@ class DiscordSession:
 		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
 		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
 			' [resumed]' if resume else ' [new]', self.st.session_id[:6], ws_addr,
-			'' if not (td_sess + td_conn).strip('-') else
-				' {}sess-lifetime=[{}] last-conn-duration=[{}]'\
-					.format('last-' if not resume else '', td_sess, td_conn) )
+			'' if not (td_sess + td_conn).strip('-') else ' {}sess-lifetime=[{}]{}'.format(
+				'last-' if not resume else '', td_sess,
+				'' if td_conn == td_sess else f' last-conn-duration=[{td_conn}]' ) )
 		self.st.connect_ts, self.st.disconnect_ts = ts, None
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
