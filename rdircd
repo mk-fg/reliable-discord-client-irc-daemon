@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.29' # git-version: py-str
+	version = '22.12.31' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3085,7 +3085,49 @@ class RDIRCD:
 			if counts[k] > 0 ) + f' all={counts["all"]:,d}').strip()
 		return counts
 
-	def cmd_chan_sys_control_status(self, send):
+	def cmd_chan_sys_control(self, conn, chan, line_raw):
+		if not (line := line_raw.strip().lower().split()): return
+		cmd, send = line[0], ft.partial(conn.cmd_msg_synth, self.conf.irc_nick_sys, chan)
+		if cmd in ['h', 'help']:
+			self._cmd_chan_sys_status(send)
+			return send('\n'.join([
+				'',
+				'Commands:',
+				'  status - (alias: st) show whether discord is connected and working',
+				'  connect - (alias: on) connect/login to discord',
+				'  disconnect - (alias: off) disconnect from discord',
+				'',
+				'  set [-s|--save] [option value] - set config option value,',
+					'     saving it to the last ini file if -s/--save is specified.',
+					'    Run without args to get full list of options with their current values.',
+				'',
+				# XXX: add -t/--threads option here
+				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
+					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
+					'    Adds line to a [filter] ini config section, to skip any msgs',
+					'     from specified discord channel, in monitor/leftover channels.',
+					'    Channel name should be same as prefix printed there. Leading # is optional.',
+					'    Removes channel from last config-file instead with -r/--rm option.',
+					'    Run without args to print a list of current filters for these channels.',
+				'',
+				'Only immediate response to sent commands is logged here - no noise over time.' ]))
+		elif cmd in ['status', 'st']: return self._cmd_chan_sys_status(send)
+		try:
+			if cmd in ['connect', 'on']:
+				send('discord: connection started')
+				self.discord.connect()
+			elif cmd in ['disconnect', 'off']:
+				send('discord: disconnecting')
+				self.discord.disconnect()
+			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line)
+			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
+			else: send(f'Unknown command: {cmd}')
+		except Exception as err:
+			send(f'ERROR: BUG - "{cmd}" command failed: {err_fmt(err)}')
+			raise
+
+	def _cmd_chan_sys_status(self, send):
+		'Implementation for status display in control-channel'
 		st, ts = self.discord.st, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
 		sess_time, conn_time = (
@@ -3100,71 +3142,77 @@ class RDIRCD:
 			f'  connection-gateway: {self.conf.discord_gateway}',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ]))
 
-	def cmd_chan_sys_control(self, conn, chan, line_raw):
-		if not (line := line_raw.strip().lower().split()): return
-		cmd, send = line[0], ft.partial(conn.cmd_msg_synth, self.conf.irc_nick_sys, chan)
-		if cmd in ['h', 'help']:
-			self.cmd_chan_sys_control_status(send)
-			send('\n'.join([
-				'Commands:',
-				'  status - (alias: st) show whether discord is connected and working',
-				'  connect - (alias: on) connect/login to discord',
-				'  disconnect - (alias: off) disconnect from discord',
-				'  set [-s|--save] [option value] - set config option value,'
-						' saving it to the last ini file if -s/--save is specified.'
-					'\n    Run without args to get full list of options with their current values.',
-				'Only immediate response to sent commands is logged here - no noise over time.' ]))
-		elif cmd in ['status', 'st']: self.cmd_chan_sys_control_status(send)
-		elif cmd in ['connect', 'on']:
-			send('discord: connection started')
-			self.discord.connect()
-		elif cmd in ['disconnect', 'off']:
-			send('discord: disconnecting')
-			self.discord.disconnect()
-		elif cmd == 'set':
-			sec_re = re.compile('^({})_(.*)$'.format(
-				'|'.join(map(re.escape, self.conf._conf_sections)) ))
-			if len(line) == 1:
-				send(f'Current config options/values:')
-				val_types = [str, bool, int, float]
-				for k in sorted(dir(self.conf)):
-					if not sec_re.search(k): continue
-					k_ini, v = k.replace('_', '-'), self.conf.get(k, raw=True)
-					for vt in val_types:
-						if isinstance(v, vt): break
-					else: continue
-					v = ['no', 'yes'][v] if vt is bool else repr(v)
-					if vt is str and k == 'auth' or 'password' in k: v = '<hidden>'
-					send(f'  {k_ini} = {v} [{vt.__name__}]')
-				send( 'Note: string values must be quoted when setting'
-					' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
-				return send( 'Note: not all option changes take effect'
-					' without reconnect or full restart, save them to config for latter' )
-			conf_save = line[1] in ['-s', '--save']
-			line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
-			if not 1 <= len(line) <= 2:
-				return send('ERROR: "set" command needs "option [value]" arguments')
-			v_conf = None
-			try:
-				k_ini, v_raw = line if len(line) != 1 else (line[0], '""')
-				k, v = k_ini.replace('-', '_'), v_raw
-				v_conf, sec = self.conf.get(k, raw=True), sec_re.search(k)
-				if not sec: raise KeyError(k)
-				vt, (sec, k_sec) = type(v_conf), sec.groups()
-				if isinstance(v_conf, str):
-					v = ast.literal_eval(v)
-					if not isinstance(v, str): raise ValueError(v)
-				v = self.conf.get_val_conv_func(v_conf)(v)
-				if vt is not type(v): raise TypeError(v)
-			except Exception as err:
-				vt = f' ({vt.__name__})' if v_conf is not None else ''
-				return send(f'ERROR: failed to parse {k_ini} = [{v_raw}]{vt} - {err_fmt(err)}')
-			self.conf.set(k, v)
-			if conf_save:
-				save = self.conf.update_file_section(sec, k_sec)
-				save = f' [saved to a file: {save}]'
-			else: save = ''
-			send(f'Updated conf value: {k_ini} = {v!r}{save}')
+	def _cmd_chan_sys_set(self, send, line, line_raw):
+		'Implementation for control-channel "set" command'
+		sec_re = re.compile('^({})_(.*)$'.format(
+			'|'.join(map(re.escape, self.conf._conf_sections)) ))
+		if len(line) == 1:
+			send('Current config options/values:')
+			val_types = [str, bool, int, float]
+			for k in sorted(dir(self.conf)):
+				if not sec_re.search(k): continue
+				k_ini, v = k.replace('_', '-'), self.conf.get(k, raw=True)
+				for vt in val_types:
+					if isinstance(v, vt): break
+				else: continue
+				v = ['no', 'yes'][v] if vt is bool else repr(v)
+				if vt is str and k == 'auth' or 'password' in k: v = '<hidden>'
+				send(f'  {k_ini} = {v} [{vt.__name__}]')
+			send( 'Note: string values must be quoted when setting'
+				' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
+			return send( 'Note: not all option changes take effect'
+				' without reconnect or full restart, save them to config for latter' )
+		conf_save = line[1] in ['-s', '--save']
+		line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
+		if not 1 <= len(line) <= 2:
+			return send('ERROR: "set" command needs "option [value]" arguments')
+		v_conf = None
+		try:
+			k_ini, v_raw = line if len(line) != 1 else (line[0], '""')
+			k, v = k_ini.replace('-', '_'), v_raw
+			v_conf, sec = self.conf.get(k, raw=True), sec_re.search(k)
+			if not sec: raise KeyError(k)
+			vt, (sec, k_sec) = type(v_conf), sec.groups()
+			if isinstance(v_conf, str):
+				v = ast.literal_eval(v)
+				if not isinstance(v, str): raise ValueError(v)
+			v = self.conf.get_val_conv_func(v_conf)(v)
+			if vt is not type(v): raise TypeError(v)
+		except Exception as err:
+			vt = f' ({vt.__name__})' if v_conf is not None else ''
+			return send(f'ERROR: failed to parse {k_ini} = [{v_raw}]{vt} - {err_fmt(err)}')
+		self.conf.set(k, v)
+		if conf_save:
+			save = self.conf.update_file_section(sec, k_sec)
+			save = f' [saved to a file: {save}]'
+		else: save = ''
+		send(f'Updated conf value: {k_ini} = {v!r}{save}')
+
+	def _cmd_chan_sys_unmonitor(self, send, line):
+		'Implementation for control-channel "unmonitor" command'
+		upd, (rm, chans) = dict(), ( (True, line[2:])
+			if len(line) > 1 and line[1] in ['-r', '--rm'] else (False, line[1:]) )
+		if not chans:
+			send('Current monitor/leftover channel filters:')
+			for c in self.conf.filters: send(f'  {c}')
+			return
+		for c in chans:
+			c = c.lstrip('#')
+			if rm:
+				if c not in self.conf.filters:
+					send(f'ERROR: There was no filter for channel [ {c} ]')
+				else: upd[c] = None
+			elif c in self.conf.filters:
+				send(f'ERROR: Filter was/is already set for channel [ {c} ]')
+			else: upd[c] = ''
+		if not upd: return send('Nothing to update in the configuration file')
+		for k, v in upd.items():
+			if v is None: del self.conf.filters[k]
+			else: self.conf.filters[k] = v
+		try: p = self.conf.update_file_section('filters', upd)
+		except OSError as err:
+			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
+		send(f'Updated [filters] section in config file [ {p.name} ]: {len(upd)} change(s)')
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
@@ -3308,10 +3356,10 @@ class RDIRCD:
 		if not name:
 			self.log.warning( 'Failed to resolve channel did'
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
-		chan = conn.chan_spec(name or cc.name)
+		chan = conn.chan_spec(name := name or cc.name)
 		for conn, line in it.product(conn_list, line.splitlines()):
 			conn.cmd_msg_synth(nick, chan, f'{prefix}{line}', notice=notice, direct=True)
-		if not (direct or skip_monitor):
+		if not (direct or skip_monitor or name in self.conf.filters):
 			self.cmd_msg_monitor(
 				line, conn=conn, nick=nick, pre=f'{chan} :: {prefix}',
 				notice=notice, gid=cc.gg.id, leftover=not conn_list )
@@ -3334,7 +3382,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	_debug_chan = _debug_proto = _debug_counts = None
 
 	def __init__(self):
-		self.state, self.renames = dict(), dict()
+		self.state, self.renames, self.filters = dict(), dict(), irc_name_dict()
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -3387,9 +3435,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
 			print(f'{k} = {v}')
-		if self.renames:
-			print('\n[renames]')
-			for k, v in self.renames.items(): print(f'{".".join(k)} = {v}')
+		for sk in 'renames', 'filters':
+			if not (sec := getattr(self, sk)): continue
+			print(f'\n[{sk}]')
+			for k, v in sec.items():
+				print(''.join([
+					'.'.join(k) if isinstance(k, tuple) else k,
+					'' if sk == 'filters' and not v else f' = {v}' ]))
 
 	def read_from_file(self, *conf_paths):
 		conf_file = configparser.ConfigParser(allow_no_value=True)
@@ -3416,6 +3468,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				continue
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
+		if conf_file.has_section('filters'):
+			self.filters.update((k, v or '') for k, v in conf_file['filters'].items())
 
 	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
 		if v is str or isinstance(v, str):
@@ -3455,12 +3509,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		return section_old_warn
 
 
-	def update_file_section(self, section, keys=None, path=None):
-		section = section.replace('_', '-')
-		if not path: path = self._conf_path
-		if isinstance(path, str): path = pl.Path(path)
-		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
-		sec_prefix = section.lower().replace('-', '_') + '_'
+	def _get_section_updates(self, section, keys, key_set=False):
+		'Returns {key: (val_str, line_re)} to replace/add in specified ini section'
+		sec_k, sec_prefix = str_norm(section), section.lower().replace('-', '_') + '_'
 		if not keys: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
 		if isinstance(keys, str): keys = keys.split()
 		if isinstance(keys, dict): keys = list(keys.items())
@@ -3471,10 +3522,28 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if not k.startswith(sec_prefix): k = sec_prefix + k
 			if v is ...: v = self.get(k, raw=True)
 			k = k[len(sec_prefix):]
-			if isinstance(v, bool): v = ['no', 'yes'][v]
-			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*=')
-		keys = dict((k, (v, rx)) for k, v, rx in keys)
+			if v is None: pass
+			elif isinstance(v, bool): v = ['no', 'yes'][v]
+			elif v := str(v): # basic py->ini conversion for all other types
+				if v[-1] in ' \t': v += '\\'
+				if v[0] in ' \t': v = '\\' + v
+				v = f' = {v}'
+			elif not key_set: v = ' ='
+			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*(=|$)')
+		return dict((k, (v, rx)) for k, v, rx in keys)
+
+	def update_file_section(self, section, keys=None, path=None, key_set=False):
+		'''Safely replaces last config file, updating some keys in specified section there.
+			keys=None or a str/list of keys stores/updates specified section keys to a file.
+				None value set for the key removes it from config section.
+			key_set=True will print empty-string values as "key" instead of default "key =".'''
+		section = section.replace('_', '-')
+		sec_k, sec_re = str_norm(section), re.compile(r'(?i)^\[\s*(\S+)\s*\]$')
+		if not path: path = self._conf_path
+		if isinstance(path, str): path = pl.Path(path)
+		keys = self._get_section_updates(section, keys, key_set=key_set)
 		with path.open() as src, safe_replacement(path) as dst:
+			## Pass-through existing config file, except for target section lines
 			lines, sec, sec_parse = list(), list(), False
 			for n, line in enumerate(src):
 				line = line.rstrip()
@@ -3489,15 +3558,17 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if not sec: sec.append(f'[{section}]')
 			if lines and lines[-1]: lines.append('')
 			for line in lines: dst.write(f'{line}\n')
-			for n, line in enumerate(sec):
+			## Update target section
+			for n, line in enumerate(sec): # replace updated key(s)
 				for k, (v, rx) in keys.items():
 					if not rx.search(line): continue
 					if v is None: line = None
-					else: line, keys[k] = f'{k} = {v}', (None, rx)
+					else: line, keys[k] = f'{k}{v}', (None, rx)
+					break
 				if line is not None: dst.write(f'{line}\n')
-			for k, (v, rx) in keys.items():
+			for k, (v, rx) in keys.items(): # dump all other keys as-is
 				if v is None: continue
-				dst.write(f'{k} = {v}\n')
+				dst.write(f'{k}{v}\n')
 		self._state_source_flush()
 		return path
 

@@ -365,9 +365,22 @@ channels, but skip messages from any channels that IRC client have JOIN-ed,
 i.e. leftover messages in any other discord channels.
 Joining monitor-channels does not count for the purposes of leftover-channels.
 
-Messages in these channels are limited to specific length/lines
-to avoid excessive flooding of these by multi-line msgs.
+Configuration file also has [filter] section for an optional list of
+channel-names to ignore in such monitor/leftover channels, for example::
 
+  [filter]
+  game-x.spam
+  game-x.bot-commands
+
+Any value or no value at all (like in example above) will make lines like
+``#game-x.spam :: ...`` for chan-names set there (rfc1459 case-insensitive)
+be omitted from monitor channels - to define a list of spammy channels that
+you don't care about or don't want to see even there.
+Use "unmonitor" (or "um") command in #rdircd.control channel to add/remove
+these filters on-the-fly anytime.
+
+Messages in monitor-channels are limited to specific length/lines
+to avoid excessive flooding of these by multi-line msgs.
 "len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
 can be used to control max length for all these,
 see ``./rdircd --conf-dump-defaults`` output for their default values.
