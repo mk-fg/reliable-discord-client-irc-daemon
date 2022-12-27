@@ -1180,7 +1180,7 @@ class IRCProtocol:
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' there is no corresponding discord channel, msgs here are discarded' )
 			if not c: return
-			if from_self and c.t != c.t.proxy:
+			if from_self and c.t not in [c.t.proxy, c.t.sys]:
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' this is read-only channel, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
