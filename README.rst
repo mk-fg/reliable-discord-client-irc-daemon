@@ -366,28 +366,29 @@ i.e. leftover messages in any other discord channels.
 Joining monitor-channels does not count for the purposes of leftover-channels.
 
 Configuration file also has [filter] section for an optional list of
-channel-names to ignore in such monitor/leftover channels, for example::
+channel-names to ignore in monitor/leftover channels, for example::
 
   [filter]
   game-x.spam
   game-x.bot-commands
   game-x.forum+threads
 
-Any value or no value at all (like in example above) will make lines like
-``#game-x.spam :: ...`` for chan-names set there (rfc1459 case-insensitive)
-be omitted from monitor channels - to define a list of spammy channels that
-you don't care about or don't want to see even there.
+All keys there, with any value (or no value at all, like in example above)
+will make lines like ``#game-x.spam :: ...`` for corresponding chan-names
+set there (rfc1459 case-insensitive) be omitted from monitor channels -
+e.g. to define a list of spammy ones that you don't care about or don't want
+to see even there.
 Special "+threads" suffix also ignores all threads of that channel.
 
-Use "unmonitor" (or "um") command in #rdircd.control channel to add/remove
+"unmonitor" (or "um") command in #rdircd.control can be used to add/remove
 such filters on-the-fly anytime.
 
-Messages in monitor-channels are limited to specific length/lines
-to avoid excessive flooding of these by multi-line msgs.
-"len-monitor" and "len-monitor-lines" parameters under "[irc]" config section
-can be used to control max length for all these,
+Messages in monitor-channels are limited to specific length/lines,
+to avoid excessive flooding by long and/or multi-line msgs.
+"len-monitor" and "len-monitor-lines" parameters under "[irc]" config
+section can be used to control these limits,
 see ``./rdircd --conf-dump-defaults`` output for their default values.
-There are also options to name these channels differently there.
+There are also options to change name format of monitor channels.
 
 Local Name Aliases
 ``````````````````

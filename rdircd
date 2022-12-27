@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.32' # git-version: py-str
+	version = '22.12.33' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3353,20 +3353,20 @@ class RDIRCD:
 			if self.conf.irc_prefix_all_private and cc.private:
 				prefix = f'{self.conf.irc_prefix_all_private}{prefix}'
 			if self.conf.irc_prefix_all: prefix = f'{self.conf.irc_prefix_all}{prefix}'
-		if not name:
-			self.log.warning( 'Failed to resolve channel did'
-				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
-			chan = conn.chan_spec(name := f'ERR [ {cc.gg.name} ] {cc.name}')
-		else:
+		if name: # relay message to associated proxy IRC channel
 			chan = conn.chan_spec(name)
 			for conn, line in it.product(conn_list, line.splitlines()):
 				conn.cmd_msg_synth(nick, chan, f'{prefix}{line}', notice=notice, direct=True)
+		else:
+			self.log.warning( 'Failed to resolve channel did'
+				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
+			chan = conn.chan_spec(name := f'ERR [ {cc.gg.name} ] {cc.name}')
 		if direct or skip_monitor: return
 		if name in self.conf.filters or f'{name}+threads' in self.conf.filters: return
 		if cc.get('tid') and any( # thread-name format hardcoded in op_ev_chans
 			re.search('^' + re.escape(f'{k[:-8]}.{cc.tid}') + r'(\.|$)', name)
 			for k in self.conf.filters if k.endswith('+threads') ): return
-		self.cmd_msg_monitor(
+		self.cmd_msg_monitor( # relay msg to all relevant monitor/leftover channels
 			line, conn=conn, nick=nick, pre=f'{chan} :: {prefix}',
 			notice=notice, gid=cc.gg.id, leftover=not conn_list )
 
