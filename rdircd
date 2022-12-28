@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.36' # git-version: py-str
+	version = '22.12.37' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3205,7 +3205,7 @@ class RDIRCD:
 		for k, v in upd.items():
 			if v is None: del self.conf.filters[k]
 			else: self.conf.filters[k] = v
-		try: p = self.conf.update_file_section('filters', upd)
+		try: p = self.conf.update_file_section('filters', upd, key_set=True)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		send(
