@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.33' # git-version: py-str
+	version = '22.12.34' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3193,7 +3193,7 @@ class RDIRCD:
 		upd, (rm, chans) = dict(), ( (True, line[2:])
 			if len(line) > 1 and line[1] in ['-r', '--rm'] else (False, line[1:]) )
 		if not chans:
-			send('Current monitor/leftover channel filters:')
+			send(f'Current monitor/leftover channel filters [{len(self.conf.filters)}]:')
 			for c in self.conf.filters: send(f'  {c}')
 			return
 		for c in chans:
@@ -3212,7 +3212,9 @@ class RDIRCD:
 		try: p = self.conf.update_file_section('filters', upd)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		send(f'Updated [filters] section in config file [ {p.name} ]: {len(upd)} change(s)')
+		send(
+			f'Updated filters in config file [ {p.name} ]:'
+			f' {len(upd)} change(s), {len(self.conf.filters)} total' )
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
@@ -3535,7 +3537,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if v[0] in ' \t': v = '\\' + v
 				v = f' = {v}'
 			elif not key_set: v = ' ='
-			keys[n] = k, v, re.compile(r'(?i)^' + k.replace('-', '[-_]') + r'\s*(=|$)')
+			keys[n] = k, v, re.compile(r'(?i)^' + re.escape(k.replace('-', '[-_]')) + r'\s*(=|$)')
 		return dict((k, (v, rx)) for k, v, rx in keys)
 
 	def update_file_section(self, section, keys=None, path=None, key_set=False):
