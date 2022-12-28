@@ -1288,7 +1288,8 @@ class Discord:
 		except KeyError: return adict(guilds=dict())
 
 	def irc_chan_name(self, cc):
-		return f'#{self.bridge.cache.did_chan.get(cc.did)}'
+		return IRCProtocol.chan_spec(
+			self.bridge.cache.did_chan.get(cc.did, '???') )
 
 	online = False
 	def cmd_online_state(self, st):
@@ -3340,8 +3341,9 @@ class RDIRCD:
 		if tags:
 			mt, prefix = DiscordSession.c_msg_tags, tags.pop('_prefix', prefix)
 			for k, (tt, v) in tags.items():
-				if tt == mt.user: v = '@' + self.irc_name(v)
-				elif tt == mt.chan: v = conn.chan_spec(self.cache.did_chan.get(v, v))
+				if tt == mt.user: v = f'@{self.irc_name(v)}'
+				elif tt == mt.chan:
+					v = IRCProtocol.chan_spec(self.cache.did_chan.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick = self.irc_name(nick)
 		else:
@@ -3372,8 +3374,9 @@ class RDIRCD:
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
 				conns_joined += self.cmd_chan_conns(cc.parent)
-		self.cmd_msg_monitor( nick, line, notice=notice,
-			prefix=f'#{name} :: {prefix}', gid=cc.gg.id, leftover_skip=conns_joined )
+		self.cmd_msg_monitor( nick, line,
+			prefix=f'{IRCProtocol.chan_spec(name)} :: {prefix}',
+			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined )
 
 	def cmd_msg_rename_func(self, cc):
 		'Returns cmd_msg_discord func to send rename-notice to old channel'
