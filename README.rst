@@ -362,8 +362,9 @@ and messages for discord account (see also `Auto-joining channels`_ example).
 
 #rdircd.leftover and similar #rdircd.leftover.guild channels are like monitor
 channels, but skip messages from any channels that IRC client have JOIN-ed,
-i.e. leftover messages in any other discord channels.
-Joining monitor-channels does not count for the purposes of leftover-channels.
+including e.g. ``/join #rdircd.leftover.game-x`` hiding that "game-x" discord
+msgs from global catch-all #rdircd.leftover, but not counting #rdircd.monitor
+channels (i.e. joining them doesn't affect "leftover" ones in any way).
 
 Configuration file also has [filter] section for an optional list of
 channel-names to ignore in monitor/leftover channels, for example::
