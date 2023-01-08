@@ -3096,6 +3096,10 @@ class RDIRCD:
 				'  set [-s|--save] [option value] - set config option value,',
 					'     saving it to the last ini file if -s/--save is specified.',
 					'    Run without args to get full list of options with their current values.',
+					'    Not all values changed this way will have an effect without restart.',
+				'',
+				'  reload - (alias: re) reload values from any changed configuration files.',
+					'    Same as with "set" command, some changes don\'t take effect at runtime.',
 				'',
 				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
 					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
@@ -3117,6 +3121,12 @@ class RDIRCD:
 				self.discord.disconnect()
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
+			elif cmd in ['reload', 're']:
+				try: conf_paths = self.conf.read_from_file()
+				except Exception as err:
+					return send(f'ERROR: failed to reload config files - {err_fmt(err)}')
+				send('Reloaded configuration from files (with overrides in that order):')
+				for p in conf_paths: send(f'  {p}')
 			else: send(f'Unknown command: {cmd}')
 		except Exception as err:
 			send(f'ERROR: BUG - "{cmd}" command failed: {err_fmt(err)}')
@@ -3461,10 +3471,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 					'' if sk == 'filters' and not v else f' = {v}' ]))
 
 	def read_from_file(self, *conf_paths):
+		if conf_paths: self._conf_path_list = conf_paths
+		else: conf_paths = self._conf_path_list
 		conf_file = configparser.ConfigParser(allow_no_value=True)
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
-		self._conf_path = conf_paths[-1]
+		self._conf_path = conf_paths[-1] # one to update via set and state stuff
 		for k, k_new in list(self._conf_sections_old.items()):
 			if k_new not in self._conf_sections: continue # special sections
 			if not self.update_from_file_section(
@@ -3487,6 +3499,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 		if conf_file.has_section('filters'):
 			self.filters.update((k, v or '') for k, v in conf_file['filters'].items())
+		return conf_paths
 
 	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
 		if v is str or isinstance(v, str):
