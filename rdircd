@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.1' # git-version: py-str
+	version = '23.01.2' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -175,6 +175,7 @@ class RDIRCDConfigBase:
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'auth', 'irc', 'discord', 'debug'
 	_conf_sections_old = dict(auth_main='auth', aliases='renames') # old -> new renames
+	_conf_sections_old_found = set()
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
@@ -3098,7 +3099,7 @@ class RDIRCD:
 					'    Run without args to get full list of options with their current values.',
 					'    Not all values changed this way will have an effect without restart.',
 				'',
-				'  reload - (alias: re) reload values from any changed configuration files.',
+				'  reload - (alias: re) re-read configuration from same ini files as on start.',
 					'    Same as with "set" command, some changes don\'t take effect at runtime.',
 				'',
 				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
@@ -3477,12 +3478,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
 		self._conf_path = conf_paths[-1] # one to update via set and state stuff
+		self._conf_sections_old_found.clear()
 		for k, k_new in list(self._conf_sections_old.items()):
 			if k_new not in self._conf_sections: continue # special sections
-			if not self.update_from_file_section(
+			if self.update_from_file_section(
 					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
 				# Warnings will be issued for existing keys after logging is configured later
-				del self._conf_sections_old[k]
+				self._conf_sections_old_found.add(k)
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 		self.read(conf_file.getboolean, 'state', 'tracked')
@@ -3492,9 +3494,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if k == 'tracked': continue
 				self.state[k] = parse_iso8601(v)
 		for new, sk in enumerate(['aliases', 'renames']):
-			if not conf_file.has_section(sk):
-				if not new: del self._conf_sections_old[sk]
-				continue
+			if not conf_file.has_section(sk): continue
+			if not new: self._conf_sections_old_found.add(sk)
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 		if conf_file.has_section('filters'):
@@ -3814,7 +3815,7 @@ def main(args=None, conf=None):
 		if n == len(conf_user_paths) - 1: mode |= os.W_OK
 		if not os.access(p, mode):
 			parser.error(f'Specified config file missing or inaccessible: {p}')
-	conf.read_from_file(*conf_user_paths)
+	conf_user_paths = conf.read_from_file(*conf_user_paths)
 
 	if opts.conf_dump:
 		return conf.pprint('Current configuration options')
@@ -3873,9 +3874,9 @@ def main(args=None, conf=None):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
 	sys.excepthook = handle_exception
 
-	for p in conf_user_paths:
-		log.debug('Loaded configuration file: {}', p)
+	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
 	for k_old, k_new in conf._conf_sections_old.items():
+		if k_old not in conf._conf_sections_old_found: continue
 		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
 		log.warning( 'Old and deprecated section'
 			' in config file(s) - {!r} - replace it with {!r}', k_old, k_new )
