@@ -366,10 +366,10 @@ including e.g. ``/join #rdircd.leftover.game-x`` hiding that "game-x" discord
 msgs from global catch-all #rdircd.leftover, but not counting #rdircd.monitor
 channels (i.e. joining them doesn't affect "leftover" ones in any way).
 
-Configuration file also has [filter] section for an optional list of
+Configuration file also has [filters] section for an optional list of
 channel-names to ignore in monitor/leftover channels, for example::
 
-  [filter]
+  [filters]
   game-x.spam
   game-x.bot-commands
   game-x.forum+threads

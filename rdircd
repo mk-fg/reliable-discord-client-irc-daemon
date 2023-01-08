@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '22.12.37' # git-version: py-str
+	version = '23.01.1' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3099,7 +3099,7 @@ class RDIRCD:
 				'',
 				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
 					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
-					'    Adds line to a [filter] ini config section, to skip any msgs',
+					'    Adds line to a [filters] ini config section, to skip any msgs',
 					'     from specified discord channel, in monitor/leftover channels.',
 					'    Channel name should be same as prefix printed there. Leading # is optional.',
 					'    Chan-name can have "+threads" suffix to ignore all threads in there, if any.',
@@ -3324,7 +3324,9 @@ class RDIRCD:
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
-		'Sends annotated Discord message to all corresponding/monitor IRC channels'
+		'''Sends annotated Discord message to all proxy/monitor IRC channels.
+			conn= limits sending to proxy-chan of one irc conn, e.g. for history-replay.
+			name_irc= is used to set destination irc proxy-channel to use instead of cc.'''
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
@@ -3379,7 +3381,8 @@ class RDIRCD:
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined )
 
 	def cmd_msg_rename_func(self, cc):
-		'Returns cmd_msg_discord func to send rename-notice to old channel'
+		'''Returns cmd_msg_discord func to send rename-notice to old channel.
+			Runs before discord-id cache updates to new channel name to use old name_irc.'''
 		return ft.partial( self.cmd_msg_discord,
 			name_irc=self.cache.did_chan.get(cc.did) )
 
