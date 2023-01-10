@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.2' # git-version: py-str
+	version = '23.01.3' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -93,6 +93,7 @@ class RDIRCDConfigBase:
 		f' (reliable-discord-irc-client) aiohttp/{aiohttp.__version__}' )
 	discord_ws_timeout = 20.0
 	discord_ws_heartbeat = 15.0
+	discord_ws_auth_timeout = 60.0 # reconnect websocket if auth process lags too badly
 	discord_ws_reconnect_min = '65.0'
 	discord_ws_reconnect_max = '700.0'
 	discord_ws_reconnect_factor = 1.6
@@ -1888,6 +1889,7 @@ class DiscordSession:
 		self.ws_add_handler(self.c.hello, self.op_hello)
 		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session_retry)
 		self.ws_tasks.add(self.ws_poller())
+		self.ws_tasks.add(self.ws_auth_timeout())
 
 	_ws_handler = cs.namedtuple('ws_handler', 'op t func')
 	def ws_add_handler(self, op=None, func=None, t=None, replace=False, remove=False):
@@ -1903,7 +1905,7 @@ class DiscordSession:
 		try: await self.ws_poller_loop()
 		except Exception as err:
 			self.log.exception('Unhandled ws handler failure, aborting: {}', err_fmt(err))
-		await self.ws_close()
+		self.ws_close_later()
 
 	async def ws_poller_loop(self):
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
@@ -1944,6 +1946,13 @@ class DiscordSession:
 				self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
+
+	async def ws_auth_timeout(self):
+		await asyncio.sleep(timeout := self.conf.discord_ws_auth_timeout)
+		if self.st.state == 'ready': return
+		self.log.error( 'Discord gateway auth failed'
+			' to complete within {:.1f}s, closing connection', timeout )
+		self.ws_close_later()
 
 	async def ws_send_task(self, msg_data):
 		try: await self.ws.send_str(msg_data)
@@ -3870,9 +3879,9 @@ def main(args=None, conf=None):
 	log_handler.addFilter(log_proto_debug_filter)
 	log_proto_root.addHandler(log_handler)
 
-	def handle_exception(err_t, err, err_tb):
+	def _handle_exception(err_t, err, err_tb):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
-	sys.excepthook = handle_exception
+	sys.excepthook = _handle_exception
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
 	for k_old, k_new in conf._conf_sections_old.items():
@@ -3936,7 +3945,7 @@ def main(args=None, conf=None):
 		conf.irc_tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 		conf.irc_tls.load_cert_chain(p_pem, p_pem)
 
-	async def run_rdircd():
+	async def _run_rdircd():
 		loop, rdircd = asyncio.get_running_loop(), RDIRCD(conf)
 
 		log_handler = conf._debug_chan = LogFuncHandler(rdircd.cmd_log)
@@ -3953,7 +3962,7 @@ def main(args=None, conf=None):
 		with cl.suppress(asyncio.CancelledError): return await rdircd_task
 
 	log.debug('Starting eventloop...')
-	return asyncio.run(run_rdircd(), debug=conf.debug_asyncio_logs)
+	return asyncio.run(_run_rdircd(), debug=conf.debug_asyncio_logs)
 	log.debug('Finished')
 
 if __name__ == '__main__': sys.exit(main())
