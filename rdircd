@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.3' # git-version: py-str
+	version = '23.01.4' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -98,6 +98,7 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_max = '700.0'
 	discord_ws_reconnect_factor = 1.6
 	discord_ws_reconnect_warn = '1800:6' # to filter-out expected reconnects
+	discord_ws_reconnect_warn_max_delay = True # log warnings when reconnects reached max delay
 	discord_ws_reconnect_warn_always = False # log warning with session info on every reconnect
 	discord_ws_reconnect_on_auth_fail = False # useful for discord service disruptions
 	discord_http_delay_padding = 10.0 # added to retry_after
@@ -1806,6 +1807,10 @@ class DiscordSession:
 					self.conf.discord_ws_reconnect_warn )
 				# Reset tbf to avoid re-issuing warning on every subsequent reconnect
 				reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
+			elif self.conf.discord_ws_reconnect_warn_max_delay and interval == opts.max:
+				self.log.warning( 'Detected persistent discord server connection failures'
+					' at max delay between attempts - there is likely some persistent problem,'
+					' see info/debug/protocol logs for details' )
 			try: await self.ws_connect()
 			except DiscordSessionError as err:
 				self.log.info('Connection failure, retrying in {:.1f}s: {}', interval, err)
