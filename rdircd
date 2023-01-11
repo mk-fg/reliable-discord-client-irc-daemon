@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.5' # git-version: py-str
+	version = '23.01.6' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2265,7 +2265,7 @@ class DiscordSession:
 			rename_list.append(self.discord.cmd_chan_rename_func(cc, name_old))
 
 		for cc in chans_updated.values():
-			if cc.id in gg.chans or cc.tid: continue# threads logged separately below
+			if cc.id in gg.chans or cc.tid: continue # threads are logged separately below
 			self.log.debug( 'New channel [id={} gid={}]:'
 				' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
 
@@ -2357,7 +2357,7 @@ class DiscordSession:
 
 	def op_ev_chans_rename_list(self, cs_new, cs_old):
 		'''Detect discord channels within same guild that need renames to not clash on IRC.
-			Yields (cc, name_old) tuples to report via IRC notices.'''
+			Yields (cc, name_old) tuples to report via IRC notices, updates cc.name after that.'''
 		## Renames that happened on the discord side, between cs_old -> cs_new
 		# cs_old should contain exactly same cc objects as cs_new for same ids
 		# threads are skipped here - should be unique already, renamed with parent chans
@@ -2379,7 +2379,7 @@ class DiscordSession:
 			chan_names_unique.add(name)
 
 		## Resolve found ambiguities by appending id-hash to names
-		chan_names_hashed = irc_name_dict() # to add/remove name_hashed attr as well
+		chan_names_hashed = irc_name_dict()
 		name_fmt, name_hlen = (getattr(
 			self.conf, f'discord_chan_dedup_{k}' ) for k in ['fmt', 'hash_len'])
 		for name, ccs in chan_names.items():
@@ -2394,7 +2394,7 @@ class DiscordSession:
 				names[cc.id] = name_hashed
 				chan_names_hashed.add(name_hashed)
 
-		## Detect name changes from cc.names.old, yield as renames, update cc.name/.old
+		## Detect name changes from cc.names.old, yield as renames, update cc.name/s.old
 		for cc in sorted(chans.values(), key=lambda cc: bool(cc.tid)):
 			src, dst = cc.name, names[cc.id]
 			if dst is None: continue # thread already processed on chan rename
@@ -2412,7 +2412,7 @@ class DiscordSession:
 				for c_tid, cct in cc.threads.items():
 					dst_thread = self.op_ev_chans_thread_name(c_tid, cct.names.raw, dst)
 					if not irc_name_eq(cct.name, dst_thread): cct.name = cct.names.old = dst_thread
-					names[cct.id] = None # skip dup rename msgs if it's also in the update
+					names[cct.id] = None # skips dup rename msg if cct is also in chans
 				cc.name = cc.names.old = dst
 
 	def op_ev_chans_thread_name(self, c_tid, name, name_chan):

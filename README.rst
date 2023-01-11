@@ -441,7 +441,7 @@ This should:
   discord server instead of renaming all #general channels everywhere.
 
   This is especially useful when two channels have same exact name within same
-  discord, and normally will be assigned .1, .2 and such non-descriptive suffixes.
+  discord, and normally will be assigned ``.<id-hash>`` non-descriptive suffixes.
 
 Currently only listed types of renaming are implemented, for discord prefixes
 and channels, but there are also options under [irc] section to set names for
@@ -626,17 +626,19 @@ Channel name disambiguation
 ```````````````````````````
 
 Discord name translation is "mostly" deterministic due to one exception -
-channels with exactly same name within same server/guild, which discord allows.
+channels with same (casemapped) IRC name within same server/guild,
+which discord allows for.
 
-Only when there is a conflict, these are suffixed by .1, .2, etc in alpha-sort
-order of their (constant) IDs, so same combination of channels will retain same
-suffixes, regardless of any ordering quirks.
+When there is a conflict, chan names are suffixed by ``.<id-hash>``
+(see chan-dedup-\* config options), to allow using both channels through IRC.
+Renaming conflicting channels on Discord will rename IRC chans to remove
+no-longer-necessary suffixes as well. Such renames affect thread-channels too.
 
-Renaming conflicting channels will rename IRC chans to unsuffixed ones as well.
-
-Note that when channels are renamed (incl. during such conflicts),
-IRC notice lines about it are always issued in both affected channels
-and any relevant monitor/leftover channels.
+Note that when channels are renamed (including name conflicts),
+IRC notice lines about it are always issued in affected channels,
+and any relevant monitor/leftover channels, topic should be changed
+to reflect that old-name channel is no longer useful, and posting msgs
+there should emit immediate warnings about it.
 
 WARNING :: Session/auth rejected unexpectedly - disabling connection
 ````````````````````````````````````````````````````````````````````
