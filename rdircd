@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.6' # git-version: py-str
+	version = '23.01.7' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -1517,15 +1517,15 @@ class Discord:
 		self.bridge.cmd_msg_discord( cc,
 			line=f'[{cc.tid}] --- Thread channel created: {self.irc_chan_name(cc)}' )
 
-	def cmd_guild_event(self, gid, msg):
+	def cmd_guild_event(self, gid, msg, ev_hash=''):
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
-		if gid == 1: guild_prefix = ''
-		else:
-			gg = self.st.guilds.get(gid)
-			guild_prefix = '[' + (gg.name if gg else f'%{m.guild_id}') + '] '
+		if gid == 1: prefix = ''
+		else: prefix = gg.name if (gg := self.st.guilds.get(gid)) else f'%{gid}'
+		if ev_hash: prefix = f'{prefix} ev#{ev_hash}'
+		if prefix := prefix.strip(): prefix = f'[{prefix}] '
 		self.bridge.cmd_msg_monitor(
 			nick=self.conf.irc_nick_sys, gid=gid, notice=True,
-			msg=f'{self.conf.irc_prefix_guild_event}{guild_prefix}{msg}' )
+			prefix=f'{self.conf.irc_prefix_guild_event}{prefix}', msg=msg )
 
 
 
@@ -2439,7 +2439,7 @@ class DiscordSession:
 	def op_ev_ban(self, m, act):
 		name = m.get('user', dict())
 		name = name.get('username') or f'@{name.get("id", "???")}'
-		self.discord.cmd_guild_event(m.guild_id, f'guild user ban: {act} {name}')
+		self.discord.cmd_guild_event(m.guild_id, f'Guild user ban: {act} {name}')
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
@@ -2447,7 +2447,7 @@ class DiscordSession:
 		except ValueError: t = f'unknown[{t}]'
 		if name: name = name.username
 		uid, name = m.get('id', '?'), '' if not name else f' name={name}'
-		self.discord.cmd_guild_event(1, f'relationship: [uid={uid}{name}] {act} {t}')
+		self.discord.cmd_guild_event(1, f'Relationship: [uid={uid}{name}] {act} {t}')
 
 	def op_ev_sched(self, m, act, _sts={2: 'started', 3: 'ended'}):
 		ev_st, ev_hash = m.get('status'), str_hash(m.id, 4)
@@ -2462,14 +2462,14 @@ class DiscordSession:
 			if ts_ext_span: ts_ext += f' [{", ".join(ts_ext_span)}]'
 			ev_info.append(ts_ext)
 		ev_info.extend([m.get('description', ''), ' '.join(
-			f'{k}=[ {v} ]' for k,v in (m.get('entity_metadata') or dict()).items() )])
+			f'{k}=[ {v} ]' for k,v in (m.get('entity_metadata') or dict()).items() if v )])
 		ev_info = ' :: '.join(filter(None, ev_info))
 		if not ev_info: # dunno how to translate it, so print a kind of debug info
 			ev_info = f'type={m.get("entity_type", "?")} status={m.get("status", "?")}'
 		if act == 'update' and ev_st in _sts: act = f' {_sts[ev_st]}'
 		else: act = f' {act}' if act != 'create' else ''
 		self.discord.cmd_guild_event( m.guild_id,
-			f'scheduled event <{ev_hash}>{act}: {ev_info}' )
+			f'Scheduled event {act}: {ev_info}', ev_hash )
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
