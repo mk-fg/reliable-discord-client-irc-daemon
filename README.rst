@@ -70,7 +70,7 @@ Features
 - Limited translation for using discord user mentions in sent messages,
   edits and deletions.
 
-- Configurable local name aliases/renames.
+- Configurable local name aliases/renames, outgoing message blocks/replacements.
 
 - Support for limited runtime reconfiguration via #rdircd.control channel.
 
@@ -90,7 +90,7 @@ Features
   maybe coming from a diff nick though, if irc name doesn't match discord-to-irc
   nick translation.
 
-- Full unicode support everywhere.
+- Full unicode support/use everywhere.
 
 - IRC protocol is implemented from IRCv3 docs, but doesn't use any non-RFC stuff,
   so should be compatible with any old clients. Optional TLS wrapping.
@@ -609,6 +609,46 @@ only tracks last one for easy quick follow-up oops-fixes, nothing more than that
 .. _sed: https://en.wikipedia.org/wiki/Sed
 .. _python re.sub(): https://docs.python.org/3/library/re.html#re.sub
 .. _PCRE-like: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
+
+Configurable replacements/blocks in outgoing messages
+`````````````````````````````````````````````````````
+
+Config can have a [replacements] section to block or regexp-replace parts of
+messages sent from IRC on per-discord basis.
+
+This can be used to add discord-specific tags, unicode shorthands, emojis,
+stickers, block/replace specific links or maybe even words/language before
+proxying msg to discord.
+
+Here's how it can look in the ini file(s)::
+
+  [replacements]
+
+  *.unicode-smiley = (^| ):\)( |$) -> \1😀\2
+  *.twitter-to-nitter = ^(https?://)((mobile|www)\.)?twitter\.com(/.*)?$ -> \1nitter.ir\4
+
+  guildx.never-mention-rust! = (?i)\brust\b -> <block!>
+  guildx.localize-color-word = \bcolor(ed|i\S+)\b -> colour\1
+
+Where each key has the form of ``discord-prefix> "." comment``, with a special
+``*`` prefix to apply rule to all discords, while values are
+``regexp " -> " <replacement_or_action`` with one special ``<block!>``
+action-value to block sending msg with error-notice on regexp match.
+"comment" part of the key can be any arbitrary unique string.
+
+So when sending e.g. ``test :)`` msg on IRC, discord will get ``test 😀``.
+
+Same as with other regex-using options, regexps have python "re" module syntax,
+applied via `re.sub()`_ function, using raw strings from config value as-is,
+without any special escapes or interpretations.
+
+Replacements are applied in the same order as specified, but with ``*`` keys
+preceding per-discord ones, and before processing to add discord tags, so anything
+like @username that can normally be typed in messages can be used there too.
+
+#rdircd.control channel has "repl" command to edit these rules on-the-fly.
+
+.. _re.sub(): https://docs.python.org/3/library/re.html#re.sub
 
 Lookup Discord IDs
 ``````````````````

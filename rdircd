@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.02.1' # git-version: py-str
+	version = '23.02.2' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -2721,6 +2721,7 @@ class RDIRCD:
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict( chan_map=None, uid=dict(),
+			irc_subs_gen=0, irc_subs=irc_name_dict(), # replacements in irc msgs
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover channel
 			gid_mon_chan=dict(), gid_nc_chan=dict(), did_chan=dict(),
@@ -2929,20 +2930,44 @@ class RDIRCD:
 			raise
 
 	def irc_msg(self, conn, chan, line):
+		'Called with a new msg, posted by IRC user in any channel'
 		name = conn.chan_name(chan)
 		if sys_type := self.irc_chans_sys.get(name):
 			return self.cmd_chan_sys(sys_type, conn, chan, line)
-		line = self.irc_msg_translate(line)
-		if not line.strip(): return
+		if not (line := self.irc_msg_translate_preq(line)).strip(): return
 		if not self.irc_msg_queue:
 			conn.cmd_msg_chan( self.conf.irc_nick_sys,
 				chan, f'ERR {{irc-msg-queue-failed}}: {line}', notice=True )
 		else: self.irc_msg_queue.put_nowait(
 			adict(conn=conn, chan=chan, name=name, line=line) )
 
-	def irc_msg_translate(self, line):
+	def irc_msg_translate_preq(self, line):
 		# "/me msg" -> "\1ACTION msg\1" - https://tools.ietf.org/id/draft-oakley-irc-ctcp-01.html
 		return re.sub(r'^\x01ACTION ?(.*)\x01$', r'_\1_', line)
+
+	def irc_msg_translate_postq(self, info, line):
+		# Apply configured [replacements], if any
+		if not (repls := self.conf.replacements): return line
+		if self.cache.irc_subs_gen != repls.ø_gen:
+			self.cache.irc_subs_gen = repls.ø_gen
+			(subs := self.cache.irc_subs).clear()
+			for k, v in repls.items():
+				try:
+					pre, comm = k.rsplit('.', 1)
+					sub_re, sub = v.split(' -> ', 1)
+					sub_re = re.compile(sub_re)
+					if sub == '<block!>': sub = None
+				except Exception as err:
+					self.log.warning( 'Failed to parse line in'
+						' [replacements] section [ {!r} = {!r} ]: {}', k, v, err_fmt(err) )
+					continue
+				if pre not in subs: subs[pre] = list()
+				subs[pre].append(adict(pre=pre, re=sub_re, sub=sub, comm=comm))
+		for s in it.chain( (subs := self.cache.irc_subs).get('*', list()),
+				subs.get(self.uid('guild', info.gg.id, kh=info.gg.get('kh')), list()) ):
+			if s.sub is not None: line = s.re.sub(s.sub, line)
+			elif s.re.search(line): raise IRCBridgeSignal(f'blocked-by-rule[{s.pre}.{s.comm}]')
+		return line
 
 	async def irc_msg_queue_proc(self):
 		'''Process msgs from IRC in strict order from irc_msg_queue.
@@ -2964,7 +2989,9 @@ class RDIRCD:
 							info.cc, edit.group('aaa'), edit.group('bbb') )
 					elif self.conf._discord_msg_del_re.search(m.line):
 						await self.discord.cmd_msg_del_last(info.cc)
-					else: await self.discord.cmd_msg_send(info.cc, m.line)
+					else:
+						line = self.irc_msg_translate_postq(info, m.line)
+						await self.discord.cmd_msg_send(info.cc, line)
 
 				except IRCBridgeSignal as err:
 					m.conn.cmd_msg_chan( self.conf.irc_nick_sys,
@@ -2994,7 +3021,7 @@ class RDIRCD:
 			if conn.st.nick: yield (conn.st.nick, conn)
 
 	def cmd_conn(self, name=None):
-		'Get irc connection for sending a direct message'
+		'Get IRC connection for sending a direct message'
 		try:
 			if not name: return next(iter(self.irc_conns.values()))
 			return self.cmd_conn_map()[name]
@@ -3141,14 +3168,20 @@ class RDIRCD:
 				'  reload - (alias: re) re-read configuration from same ini files as on start.',
 					'    Same as with "set" command, some changes don\'t take effect at runtime.',
 				'',
-				'  unmonitor [-r|--rm] [ [#]channel ... ] - (alias: um)',
+				'  unmonitor [-s|--save] [-r|--rm] [ [#]channel ... ] - (alias: um)',
 					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
 					'    Adds line to a [filters] ini config section, to skip any msgs',
-					'     from specified discord channel, in monitor/leftover channels.',
+					'     from specified discord channel, in monitor/leftover channels,',
+					'     updating last ini file if -s/--save option is specified',
 					'    Channel name should be same as prefix printed there. Leading # is optional.',
 					'    Chan-name can have "+threads" suffix to ignore all threads in there, if any.',
 					'    Removes channel from last config-file instead with -r/--rm option.',
 					'    Run without args to print a list of current filters for these channels.',
+				'',
+				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] - (alias: re)',
+					'     add/remove regexp-replacements/blocks for outgoing messages.',
+					'    Same idea as w/ "unmonitor" above - adds/removes line(s) for [replacements].',
+					'    Run without arguments to print current contents of that config section.',
 				'',
 				'Only immediate response to sent commands is logged here - no noise over time.' ]))
 		elif cmd in ['status', 'st']: return self._cmd_chan_sys_status(send)
@@ -3160,6 +3193,7 @@ class RDIRCD:
 				send('discord: disconnecting')
 				self.discord.disconnect()
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line)
+			elif cmd in ['replacements', 're']: self._cmd_chan_sys_repls(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
 			elif cmd in ['reload', 're']:
 				try: conf_paths = self.conf.read_from_file()
@@ -3236,8 +3270,9 @@ class RDIRCD:
 
 	def _cmd_chan_sys_unmonitor(self, send, line):
 		'Implementation for control-channel "unmonitor" command'
-		upd, (rm, chans) = dict(), ( (True, line[2:])
-			if len(line) > 1 and line[1] in ['-r', '--rm'] else (False, line[1:]) )
+		upd, chans, opts, rm, save = dict(), line[1:], set(line[1:3]), False, False
+		if opts.intersection(['-r', '--rm']): rm, chans = True, chans[1:]
+		if opts.intersection(['-s', '--save']): save, chans = True, chans[1:]
 		if not chans:
 			send(f'Current monitor/leftover channel filters [{len(self.conf.filters)}]:')
 			for c in self.conf.filters: send(f'  {c}')
@@ -3251,16 +3286,48 @@ class RDIRCD:
 			elif c in self.conf.filters:
 				send(f'ERROR: Filter was/is already set for channel [ {c} ]')
 			else: upd[c] = ''
-		if not upd: return send('Nothing to update in the configuration file')
+		if not upd: return send('Nothing to update, nothing changed')
 		for k, v in upd.items():
 			if v is None: del self.conf.filters[k]
 			else: self.conf.filters[k] = v
+		if not save:
+			return send( 'Updated runtime filters (not saved to ini):'
+				f' {len(upd)} change(s), {len(self.conf.filters)} total' )
 		try: p = self.conf.update_file_section('filters', upd, key_set=True)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		send(
 			f'Updated filters in config file [ {p.name} ]:'
 			f' {len(upd)} change(s), {len(self.conf.filters)} total' )
+
+	def _cmd_chan_sys_repls(self, send, line_raw):
+		'Implementation for control-channel "replacements" command'
+		repls, rm, save = self.conf.replacements, False, False
+		try:
+			line, opts = f'{line_raw} '.split(' ', 1)[1], set(line_raw.split()[1:3])
+			if opts.intersection(['-r', '--rm']): rm, line = line.split(None, 1)
+			if opts.intersection(['-s', '--save']): save, line = line.split(None, 1)
+			if not line.strip(): pre = line = None
+			elif '=' not in line: pre, line = line.strip(), '<block!>'
+			else: pre, line = line.split('=', 1); pre, line = pre.strip(), line.lstrip()
+		except Exception as err:
+			return send(f'ERROR: Failed to process re-spec [ {line_raw} ]: {err_fmt(err)}')
+		if rm:
+			try: del repls[pre]
+			except KeyError:
+				send(f'ERROR: No matching replacement [ {pre} ]')
+				pre = None
+		if not pre:
+			send(f'Current replacement/block regexps [{len(repls)}]:')
+			for pre, line in repls.items(): send(f'  {pre} = {line}')
+			return
+		if not rm: repls[pre], upd = line, {pre: line}
+		else: upd = {pre: None}
+		if not save: return send(f'Updated runtime replacement rules [ {pre} ]')
+		try: p = self.conf.update_file_section('replacements', upd)
+		except OSError as err:
+			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
+		return send(f'Updated [replacements] section in config file [ {p.name} ]')
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
