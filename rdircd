@@ -586,39 +586,27 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None):
 	if int(ts_ext := f'{ts.microsecond:06d}'[:ms]): ts_ext = f'.{ts_ext}'
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
-_short_ts_days = dict(
+_td_days = dict(
 	y=365.25, yr=365.25, year=365.25,
 	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
-_short_ts_s = dict(
-	h=3600, hr=3600, hour=3600,
-	m=60, min=60, minute=60,
-	s=1, sec=1, second=1 )
-def _short_ts_re():
-	sub_sort = lambda d: sorted(
-		d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
-	ts_re = ['^'] + [
-		r'(?P<{0}>\d*{0}s?\s*)?'.format(k)
-		for k, v in it.chain.from_iterable(
-			map(sub_sort, [_short_ts_days, _short_ts_s]) ) ] + ['$']
-	return re.compile(''.join(ts_re), re.I | re.U)
-_short_ts_re = _short_ts_re()
-_parse_int = lambda v: int(''.join(c for c in v if c.isdigit()) or 1)
+_td_s = dict( h=3600, hr=3600, hour=3600,
+	m=60, min=60, minute=60, s=1, sec=1, second=1 )
+_td_usort = lambda d: sorted(
+	d.items(), key=lambda kv: (kv[1], len(kv[0])), reverse=True )
+_td_re = re.compile('(?i)^[-+]?' + ''.join( fr'(?P<{k}>\d+{k}\s*)?'
+	for k, v in [*_td_usort(_td_days), *_td_usort(_td_s)] ) + '$')
 
 def parse_duration(ts_str, to_float=True):
 	try: delta = dt.timedelta(seconds=float(ts_str))
 	except ValueError:
-		m = _short_ts_re.search(ts_str)
-		if not m or not any(m.groups()):
+		if not ((m := _td_re.search(ts_str)) and any(m.groups())):
 			raise ValueError(ts_str) from None
 		delta = list()
-		for units in _short_ts_days, _short_ts_s:
+		for units in _td_days, _td_s:
 			val = 0
 			for k, v in units.items():
-				try:
-					if not m.group(k): continue
-					n = _parse_int(m.group(k))
-				except IndexError: continue
-				val += n * v
+				if not m.group(k): continue
+				val += v * int(''.join(filter(str.isdigit, m.group(k))) or 1)
 			delta.append(val)
 		delta = dt.timedelta(*delta)
 	return delta if not to_float else delta.total_seconds()
