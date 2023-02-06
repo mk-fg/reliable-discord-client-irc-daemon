@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.01.8' # git-version: py-str
+	version = '23.02.1' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -688,16 +688,16 @@ class adict(cs.UserDict):
 
 	def __getattr__(self, k):
 		if k not in self.__slots__:
-			return self[k] if not k.startswith('ø_') else self.attrs[k[1:]]
+			return self[k] if not k.startswith('ø_') else self.attrs[k[2:]]
 		else: return self.__getattribute__(k)
 	def __setattr__(self, k, v):
 		if k not in self.__slots__:
 			if not k.startswith('ø_'): self[k] = v
-			else: self.attrs[k[1:]] = v
+			else: self.attrs[k[2:]] = v
 		else: return super().__setattr__(k, v)
 	def __delattr__(self, k, v):
 		if not k.startswith('ø_'): del self[k]
-		else: del self.attrs[k[1:]]
+		else: del self.attrs[k[2:]]
 
 	def __setitem__(self, k, v):
 		super().__setitem__(k, v)
@@ -3444,13 +3444,16 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	ws_dump_file = 'dump.json'
 	# ws_dump_filter = adict(op=0, t='READY')
 
-	state_tracked, state, renames = True, None, None
+	state_tracked = True
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
 	_debug_chan = _debug_proto = _debug_counts = None
 
 	def __init__(self):
-		self.state, self.renames, self.filters = dict(), dict(), irc_name_dict()
+		self.state, self.renames = dict(), dict()
+		self.filters, self.replacements = irc_name_dict(), adict()
 		self.log = get_logger('rdircd.state')
+		self.replacements._track( cb=lambda _a=
+			self.replacements.attrs: _a.update(gen=_a.get('gen', 0) + 1) )
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
 			else: continue
@@ -3467,6 +3470,33 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		k_conv, v_conv = f'_{k}', getattr(self, f'_conv_{k}', None)
 		if v_conv: setattr(self, k_conv, v_conv(v))
 		setattr(self, k, v)
+
+	def val_to_opt(self, v):
+		if isinstance(v, bool): v = ['no', 'yes'][v]
+		if v and isinstance(v, str):
+			if v[0] in ' \t': v = f'\\{v}'
+			if v[-1] in ' \t': v += '\\'
+		return str(v)
+
+	def opt_to_val_func(self, v, conf_get=lambda *a,**k: a[0]):
+		if v is str or isinstance(v, str):
+			def str_get(*a):
+				v = str(conf_get(*a, raw=True))
+				if v.endswith('\\'): v = v[:-1]
+				if len(v) >= 2 and v[0] == '\\' and v[1] in ' \t': v = v[1:]
+				return v
+			return str_get
+		elif v is bool or isinstance(v, bool):
+			bool_map = {
+				'1': True, 'yes': True, 'y': True, 'true': True, 'on': True,
+				'0': False, 'no': False, 'n': False, 'false': False, 'off': False }
+			def bool_get(*a):
+				v = conf_get(*a)
+				try: return bool_map[str(v).strip().lower()]
+				except KeyError: raise ValueError(v)
+			return bool_get
+		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
+		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
@@ -3493,22 +3523,18 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if cat != (cat_chk := m.group(1).replace('_', '-')):
 				cat = cat_chk
 				print(f'\n[{cat}]')
-			if isinstance(v, bool): v = ['no', 'yes'][v]
-			if v and isinstance(v, str):
-				if v[0] in ' \t': v = f'\\{v}'
-				if v[-1] in ' \t': v += '\\'
 			k = m.group(2).replace('_', '-')
 			if comm := comms.get(k_full := f'{cat}-{k}'):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
-			print(f'{k} = {v}')
-		for sk in 'renames', 'filters':
+			print(f'{k} = {self.val_to_opt(v)}')
+		for sk in 'renames', 'replacements', 'filters':
 			if not (sec := getattr(self, sk)): continue
 			print(f'\n[{sk}]')
 			for k, v in sec.items():
 				print(''.join([
 					'.'.join(k) if isinstance(k, tuple) else k,
-					'' if sk == 'filters' and not v else f' = {v}' ]))
+					'' if sk == 'filters' and not v else f' = {self.val_to_opt(v)}' ]))
 
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
@@ -3539,27 +3565,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 		if conf_file.has_section('filters'):
 			self.filters.update((k, v or '') for k, v in conf_file['filters'].items())
+		if conf_file.has_section('replacements'):
+			val_conv = self.opt_to_val_func(str)
+			self.replacements.update( (k, val_conv(v or ''))
+				for k, v in conf_file['replacements'].items() )
 		return conf_paths
-
-	def get_val_conv_func(self, v, conf_get=lambda *a,**k: a[0]):
-		if v is str or isinstance(v, str):
-			def str_get(*a):
-				v = str(conf_get(*a, raw=True))
-				if v.endswith('\\'): v = v[:-1]
-				if len(v) >= 2 and v[0] == '\\' and v[1] in ' \t': v = v[1:]
-				return v
-			return str_get
-		elif v is bool or isinstance(v, bool):
-			bool_map = {
-				'1': True, 'yes': True, 'y': True, 'true': True, 'on': True,
-				'0': False, 'no': False, 'n': False, 'false': False, 'off': False }
-			def bool_get(*a):
-				v = conf_get(*a)
-				try: return bool_map[str(v).strip().lower()]
-				except KeyError: raise ValueError(v)
-			return bool_get
-		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
-		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
 	def update_from_file_section(self,
 			config, section='default', prefix=None, section_old=None ):
@@ -3572,7 +3582,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			elif k.startswith('_'): continue
 			else: conf_k = k
 			v = getattr(self, conf_k)
-			get_val = self.get_val_conv_func(v, config.get)
+			get_val = self.opt_to_val_func(v, config.get)
 			if not get_val: continue # other types cannot be specified in config
 			if self.read( get_val, section, k, conf_k,
 				section_old=section_old ) and section_old: section_old_warn = True
@@ -3582,9 +3592,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	def _get_section_updates(self, section, keys, key_set=False):
 		'Returns {key: (val_str, line_re)} to replace/add in specified ini section'
 		sec_k, sec_prefix = str_norm(section), section.lower().replace('-', '_') + '_'
-		if not keys: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
-		if isinstance(keys, str): keys = keys.split()
-		if isinstance(keys, dict): keys = list(keys.items())
+		if keys is None: keys = list(k for k in vars(self).keys() if k.startswith(sec_prefix))
+		elif isinstance(keys, str): keys = keys.split()
+		elif callable(getattr(keys, 'items', None)): keys = list(keys.items())
 		for n, k in enumerate(keys):
 			if isinstance(k, tuple): k, v = k
 			else: v = ...
@@ -3593,11 +3603,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if v is ...: v = self.get(k, raw=True)
 			k = k[len(sec_prefix):]
 			if v is None: pass
-			elif isinstance(v, bool): v = ['no', 'yes'][v]
-			elif v := str(v): # basic py->ini conversion for all other types
-				if v[-1] in ' \t': v += '\\'
-				if v[0] in ' \t': v = '\\' + v
-				v = f' = {v}'
+			elif v := self.val_to_opt(v): v = f' = {v}'
 			elif not key_set: v = ' ='
 			keys[n] = k, v, re.compile(r'(?i)^' + re.escape(k.replace('-', '[-_]')) + r'\s*(=|$)')
 		return dict((k, (v, rx)) for k, v, rx in keys)
