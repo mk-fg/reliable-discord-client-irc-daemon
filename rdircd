@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.02.3' # git-version: py-str
+	version = '23.02.4' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3256,7 +3256,7 @@ class RDIRCD:
 			if isinstance(v_conf, str):
 				v = ast.literal_eval(v)
 				if not isinstance(v, str): raise ValueError(v)
-			v = self.conf.get_val_conv_func(v_conf)(v)
+			v = self.conf.opt_to_val_func(v_conf)(v)
 			if vt is not type(v): raise TypeError(v)
 		except Exception as err:
 			vt = f' ({vt.__name__})' if v_conf is not None else ''
