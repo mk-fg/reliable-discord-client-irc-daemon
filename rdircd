@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.02.4' # git-version: py-str
+	version = '23.02.5' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -126,6 +126,10 @@ class RDIRCDConfigBase:
 	# Default regex matches s/A/B/ or s|A|B| or s:A:B: - sed/perl-like regexp-replace expressions.
 	discord_msg_edit_re = r'^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$'
 	discord_msg_del_re = r'^\s*//del\s*$' # deletes last-sent msg, if matched, never sent to channel
+
+	# Suppress push notifications for this message and remove regexp-matched part.
+	# Default is to match same @silent prefix as is used by the official discord client.
+	discord_msg_flag_silent_re = r'^@silent(\s|$)'
 
 	# Prefix for thread-id values, used in thread-chan names
 	#   and msg prefixes if propagation from these to parent channel is enabled.
@@ -1244,6 +1248,9 @@ class DiscordSessionError(Exception): pass
 
 class Discord:
 
+	class c_msg_flags(enum.IntEnum):
+		silent = 1 << 12
+
 	def __init__(self, rdircd):
 		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.discord')
@@ -1381,8 +1388,8 @@ class Discord:
 		if not self.session: raise IRCBridgeSignal('no-discord-conn')
 
 		if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
-				and line.split(None, 1)[0].startswith(self.conf.discord_thread_id_prefix) ):
-			c_tid, line = line.split(None, 1)
+				and (ls := line.split(None, 1))[0].startswith(self.conf.discord_thread_id_prefix) ):
+			c_tid, line = ls
 			cc = cc.threads.get(str_norm(c_tid))
 			if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
 
@@ -1391,10 +1398,11 @@ class Discord:
 		try:
 			res = None
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
+				line, flags = self.cmd_msg_parse_flags(line)
 				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
 				res = asyncio.create_task(self.session.req(
-					f'channels/{cc.id}/messages',
-					m='post', json=dict(content=line_tagged, nonce=nonce) ))
+					f'channels/{cc.id}/messages', m='post',
+					json=dict(content=line_tagged, nonce=nonce, flags=flags) ))
 				fut = self.msg_confirms[nonce] = asyncio.Future()
 				res = asyncio.gather(fut, res)
 				flake_gw, res = await res
@@ -1431,6 +1439,12 @@ class Discord:
 				if mx else await self.cmd_msg_mentionify_translate_tag(gid, m, nick_idx) )
 			line_parts.extend([line[b:], *tag_parts, line[:a]])
 		return ''.join(reversed(line_parts))
+
+	def cmd_msg_parse_flags(self, line, flags=0):
+		if m := re.search(self.conf.discord_msg_flag_silent_re, line):
+			line = line[:m.start()] + line[m.end():]
+			flags |= self.c_msg_flags.silent
+		return line, flags
 
 	def cmd_msg_mentionify_ignore_strip(self, tag, mx):
 		'Strips all capture groups in match from tag-string'

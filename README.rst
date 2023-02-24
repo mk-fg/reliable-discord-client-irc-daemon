@@ -610,6 +610,16 @@ only tracks last one for easy quick follow-up oops-fixes, nothing more than that
 .. _python re.sub(): https://docs.python.org/3/library/re.html#re.sub
 .. _PCRE-like: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
 
+@silent messages and other such flags
+`````````````````````````````````````
+
+Somewhat similar to quick edits/deletes above, "msg-flag-silent-re" option is
+there to match/remove "@silent" prefix in messages (by default), which disables
+sending discord push notifications for it, same as with the official client.
+
+That and similar message flags on incoming messages are not represented
+in any way, as they don't seem to be relevant for an irc client anyway.
+
 Configurable replacements/blocks in outgoing messages
 `````````````````````````````````````````````````````
 
