@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.02.5' # git-version: py-str
+	version = '23.05.1' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -177,6 +177,7 @@ class RDIRCDConfigBase:
 	debug_chan_proto_cut = 230 # limit for printing protocol msgs via debug-channel command
 	debug_chan_proto_tail = 50
 	debug_asyncio_logs = False # debug= value in asyncio.run()
+	debug_dev_cmds = False # enables developer-aid state-save/load cmds in control-channel
 	# Randomly segfault-crash every 1<n<2*mmts
 	#   minutes, for backwards-compatibility with various legacy C daemons :)
 	debug_mean_minutes_to_segfault = 0.0
@@ -294,6 +295,39 @@ def pprint(data):
 		log_bak.critical('--- !!! Debug-pprint was left in the code somewhere !!! ---')
 		import pprint as pp; pprint.module = pp
 	return pp.pprint(data, width=140, compact=True)
+
+def pyaml_conv_keys(data, enc=True, dd=None):
+	'Encodes/decodes tuple/null keys for use in YAML recursively'
+	if not dd: dd = dict() # to copy/cache self-recursive structures
+	if (data := dd.get(dk := id(d := data), ...)) is not ...: pass
+	elif isinstance(d, (tuple, list, set)):
+		data = dd[id(d)] = list()
+		data.extend(pyaml_conv_keys(d, dd=dd, enc=enc) for d in d)
+	elif isinstance(d, cs.abc.Mapping):
+		data = dd[id(d)] = dict()
+		for k, v in d.items():
+			if enc:
+				if k is None: k = '\ue173.N'
+				elif isinstance(k, tuple): k = '\ue172.' + json.dumps(k)
+			else:
+				if not isinstance(k, str): pass
+				elif k == '\ue173.N': k = None
+				elif k.startswith('\ue172.'): k = tuple(json.loads(k[2:]))
+			data[k] = pyaml_conv_keys(v, dd=dd, enc=enc)
+	else: data = dd[id(d)] = d
+	return data
+
+def pyaml_dump(data):
+	if not (pyml := getattr(pyaml_dump, 'module', None)):
+		log_bak.critical('--- !!! Debug-pyaml was left in the code somewhere !!! ---')
+		import pyaml as pyml; pyaml_dump.module = pyml
+	return pyml.dump(pyaml_conv_keys(data), force_embed=False)
+
+def pyaml_load(src):
+	if not (yaml := getattr(pyaml_load, 'module', None)):
+		log_bak.critical('--- !!! Debug-pyaml was left in the code somewhere !!! ---')
+		import yaml; pyaml_load.module = yaml
+	return pyaml_conv_keys(yaml.safe_load(src), False)
 
 get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
@@ -663,6 +697,22 @@ class adict(cs.UserDict):
 	'dict with simplier access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
 
+	@classmethod
+	def rec_make(cls, data, kv_filter=lambda k,v: v, dd=None):
+		'Make adict tree from a potentially self-recursive data dump'
+		# Optional, as it's only intended for loading debug data-dumps
+		if not dd: dd = dict() # to copy/cache self-recursive structures
+		d, rec = data, ft.partial(cls.rec_make, kv_filter=kv_filter, dd=dd)
+		if (data := dd.get(dk := id(d), ...)) is not ...: pass
+		elif isinstance(d, list):
+			data = dd[id(d)] = list(); data.extend(map(rec, d))
+		elif type(d) is dict: # stops at any special dicts
+			data = dd[id(d)] = cls()
+			data.update( (k, rec(fv))
+				for k,v in d.items() if (fv := kv_filter(k, v)) is not ... )
+		else: data = dd[id(d)] = d
+		return data
+
 	def __init__(self, *args, **kws):
 		self.attrs = dict()
 		self._track_keys = self._track_cb = None
@@ -684,11 +734,11 @@ class adict(cs.UserDict):
 				if type(d := self.get(k)) is adict: d._track(cb=cb)
 		self._track_cb = cb
 	def _track_check(self, k):
-		if not self._track_cb: return
+		if not (cb := self._track_cb): return
 		if self._track_keys:
 			if k not in self._track_keys: return
 			elif type(d := self.get(k)) is adict: d._track(cb=cb)
-		self._track_cb()
+		cb()
 
 	def __getattr__(self, k):
 		if k not in self.__slots__:
@@ -1043,9 +1093,6 @@ class IRCProtocol:
 		self.transport.close()
 
 	def req_chan_info(self, chan, cm=None, check=True):
-		info = self._req_chan_info(chan, cm, check)
-		return info
-	def _req_chan_info(self, chan, cm=None, check=True):
 		if not self.chan_spec_check(chan):
 			return self.send(403, chan, ':No such channel')
 		if not cm: cm = self.bridge.cmd_chan_map()
@@ -1184,7 +1231,7 @@ class IRCProtocol:
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' there is no corresponding discord channel, msgs here are discarded' )
 			if not c: return
-			if from_self and c.t not in [c.t.proxy, c.t.sys]:
+			if from_self and c.bt not in [c.bt.proxy, c.bt.sys]:
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' this is read-only channel, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
@@ -2027,7 +2074,7 @@ class DiscordSession:
 		for gid, gg in self.st.guilds.items():
 			if gid == 1: continue # "me" pseudo-guild
 			chan_req = list( (cc.id, [[0, 99]])
-				for cc in gg.chans.values() if cc.t == self.c_chan_type.text )
+				for cc in gg.chans.values() if cc.ct == cc.ct.text )
 			if not chan_req: continue
 			# It doesn't seem to matter what channels= are sent in request_sync_chan -
 			#   all threads are returned regardless, along with GUILD_MEMBER_LIST_UPDATE and such
@@ -2353,7 +2400,7 @@ class DiscordSession:
 
 			cc.update(
 				id=c.id, gg=gg, did=f'#{gg.id}-{c.id}', name=name, topic=topic,
-				t=cc_type, private=cc_private, pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
+				ct=cc_type, private=cc_private, pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
 				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
 			chans_updated[c.id] = cc
 		return chans_updated, new_threads
@@ -2716,7 +2763,7 @@ class RDIRCD:
 		chan_leftover_topic_guild_tpl = (
 			'rdircd: read-only msgs for non-joined channels of discord [ {} ]' )
 
-	c_chan_type = enum.Enum('c_chan_type', 'sys mon nc proxy')
+	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc proxy')
 
 	def __init__(self, conf):
 		self.conf, self.log = conf, get_logger('rdircd.bridge')
@@ -2898,7 +2945,7 @@ class RDIRCD:
 				notice_cmd(f'  name/alias without irc encoding: {info.cc.name}')
 				notice_cmd(f'  name/alias encoded for irc: {self.irc_name(info.cc.name)}')
 				notice_cmd(f'  topic: {info.cc.topic or ""}')
-				notice_cmd(f'  type: {info.cc.t.name} [{info.cc.t.value}]')
+				notice_cmd(f'  type: {info.cc.ct.name} [{info.cc.ct.value}]')
 				notice_cmd(f'--- end of info')
 			elif cmd[0] == 'log':
 				state = ('1' if len(cmd) == 1 else cmd[1]) if len(cmd) <= 2 else None
@@ -3111,7 +3158,7 @@ class RDIRCD:
 		for sys_type in self.c.chan_sys_types:
 			name = self.conf.irc_chan_sys.format(type=sys_type)
 			self.irc_chans_sys.update({name: sys_type, f'ø_{sys_type}': name})
-			yield (name, adict( t=self.c_chan_type.sys,
+			yield (name, adict( bt=self.c_bc_type.sys,
 				name=name, ts_created=self.server_ts.timestamp(),
 				topic=getattr(self.c, f'chan_sys_{sys_type}_topic') ))
 
@@ -3125,7 +3172,7 @@ class RDIRCD:
 			topic = ( getattr(self.c, f'chan_{kc}_topic') if not gi else
 				getattr(self.c, f'chan_{kc}_topic_guild_tpl').format(gi.gg.name) )
 			yield (name, adict( name=name, topic=topic,
-				t=getattr(self.c_chan_type, k), ts_created=sys_chan_ts ))
+				bt=getattr(self.c_bc_type, k), ts_created=sys_chan_ts ))
 		yield from _agg_chan('mon')
 		yield from _agg_chan('nc')
 		for gi in gg_info:
@@ -3141,14 +3188,14 @@ class RDIRCD:
 				tags, name = '', gi.name_fmt.format(
 					prefix=gi.prefix, name=self.irc_name(cc.name) )
 				if cc.nsfw: tags += '[nsfw] '
-				if cc.t is cc.t.voice: tags += '[voice] '
-				elif cc.t is cc.t.forum: tags += '[forum] '
+				if cc.ct is cc.ct.voice: tags += '[voice] '
+				elif cc.ct is cc.ct.forum: tags += '[forum] '
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = f'{gi.gg.name.strip()}: {tags}{topic}'.strip()
 				self.cache.did_chan[cc.did] = name
 				yield (name, adict(
-					t=self.c_chan_type.proxy, cc=cc, did=cc.did,
+					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
 					name=name, topic=topic, ts_created=gi.gg.ts_joined ))
 
 	def cmd_chan_sys(self, sys_type, conn, chan, line):
@@ -3197,6 +3244,22 @@ class RDIRCD:
 					'    Same idea as w/ "unmonitor" above - adds/removes line(s) for [replacements].',
 					'    Run without arguments to print current contents of that config section.',
 				'',
+				*([] if not self.conf.debug_dev_cmds else [
+				'Developer-commands for breaking and testing stuff:',
+				'',
+				'  ccx file channel - dump all internal state for a working discord channel to file.',
+					'    Resulting YAML file can then be used with "cc" command to load the state and',
+					'     test-generate/send messages to that channel without connecting to discord.',
+					'    This is intended for testing various rdircd msg-handling stuff, such as filters.',
+					'    YAML can also be inspected or tweaked to understand/test internal state issues.',
+					'    Requires "pyaml" module, which is used for serialization.',
+				'',
+				'  cc file [nick [msg...]] - load YAML-dump of discord-chan state, send msg to it.',
+					'    Same channel as specified with "ccx" command that produced the YAML is used.',
+					'    If nick/msg is not specified, some unique placeholder ones are auto-generated.',
+					'    Intended use is to rapidly test various internal message-handling code',
+					'     without needing an actual discord connection, like msg filtering or processing.',
+				'' ]),
 				'Only immediate response to sent commands is logged here - no noise over time.' ]))
 		elif cmd in ['status', 'st']: return self._cmd_chan_sys_status(send)
 		try:
@@ -3215,7 +3278,18 @@ class RDIRCD:
 					return send(f'ERROR: failed to reload config files - {err_fmt(err)}')
 				send('Reloaded configuration from files (with overrides in that order):')
 				for p in conf_paths: send(f'  {p}')
-			else: send(f'Unknown command: {cmd}')
+			else:
+				if not self.conf.debug_dev_cmds: pass
+				elif cmd == 'ccx':
+					dst_file, chan = line[1:]
+					chan = IRCProtocol.chan_name(chan)
+					return self._cmd_chan_sys_ccx(send, dst_file, chan)
+				elif cmd == 'cc':
+					nick = msg = None
+					if len(line) > 2: nick = line[2]
+					if len(line) > 3: msg = line_raw.split(None, 2)[-1]
+					return self._cmd_chan_sys_cc(send, line[1], nick, msg)
+				send(f'Unknown command: {cmd}')
 		except Exception as err:
 			send(f'ERROR: BUG - "{cmd}" command failed: {err_fmt(err)}')
 			raise
@@ -3344,6 +3418,37 @@ class RDIRCD:
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		return send(f'Updated [replacements] section in config file [ {p.name} ]')
+
+	def _cmd_chan_sys_ccx(self, send, dst_file, chan):
+		cm = self.cmd_chan_map() # should be in caches too
+		cc = ci = cm.get(chan)
+		if ci: cc = ci.get('cc', None)
+		dump = pyaml_dump(dict(chan_info=ci, chan=cc, caches=self.cache))
+		(p := pl.Path(dst_file)).write_text(dump)
+		chan_info = cc.name if cc else f'-no-channel-({chan!r})'
+		send( f'Stored channel-sim data: file=[ {p} ]'
+			f' cc=[ {chan_info} ] data-size=[ {len(dump):,d} B ]' )
+
+	def _cmd_chan_sys_cc(self, send, src_file, nick=None, msg=None):
+		dump = pyaml_load((p := pl.Path(src_file)).read_text())
+		str_uid = lambda c=4: str_hash(os.urandom(c).hex(), c)
+		def enum_rec(k,v):
+			if isinstance(v, int):
+				if k == 'ct': v = DiscordSession.c_chan_type(v)
+				elif k == 'bt': v = self.c_bc_type(v)
+			return v
+		for k, upd in dump['caches'].items():
+			if not isinstance(cache := self.cache.get(k), cs.abc.Mapping): continue
+			if all(type(v) is adict for v in cache.values()):
+				upd.update((k, adict.rec_make(v, enum_rec)) for k,v in upd.items())
+			cache.clear(); cache.update(upd)
+		ci, cc = ( (d := dump[k]) and
+			adict.rec_make(d, enum_rec) for k in ['chan_info', 'chan'] )
+		if not cc: return send(f'Loaded sim-data: file=[ {p} ] (no channel info)')
+		if not nick: nick = f'user-{str_uid(4)}'
+		if not msg: msg = f'⚛️ Message Test ⚛️ [{str_uid(8)}]'
+		self.cmd_msg_discord(cc, nick, msg)
+		return send(f'Chan-msg sim [ {p} ]: #{cc.name} :: <{nick}> {msg}')
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
