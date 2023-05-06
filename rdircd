@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.1' # git-version: py-str
+	version = '23.05.2' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -185,7 +185,7 @@ class RDIRCDConfigBase:
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'auth', 'irc', 'discord', 'debug'
 	_conf_sections_old = dict( # old -> new section renames
-		auth_main='auth', aliases='renames', filters='monitor-filters' )
+		auth_main='auth', aliases='renames', filters='unmonitor' )
 	_conf_sections_old_found = set()
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
@@ -3233,7 +3233,7 @@ class RDIRCD:
 				'  unmonitor [-s|--save] {-r|--rm} comment/key...',
 				'  unmonitor [-s|--save] [ comment/key... = ] [#]channel/pattern - (alias: um)',
 					'     (un-)skip discord channel name/pattern in all monitor/leftover channels.',
-					'    Changes [monitor-filters] ini config-file section on-the-fly,',
+					'    Changes [unmonitor] ini config-file section filters on-the-fly,',
 					'     to drop msgs from discord-chan(s) from monitor/leftover channels,',
 					'     saving updates to last ini file if -s/--save option is specified.',
 					'    Channel-pattern can be an exact channel name (leading # is optional),',
@@ -3369,7 +3369,8 @@ class RDIRCD:
 			elif opt in ['-s', '--save']: save = True
 			else: break
 		else:
-			send(f'Current monitor/leftover channel filters [{len(self.conf.filters)}]:')
+			send( 'Current monitor/leftover'
+				f' channel filters ({len(self.conf.filters)} in total):' )
 			for k, mx in self.conf.filters.items(): send(f'  {k} = {mx.pat}')
 			return
 		line = line.split(None, n)[-1]
@@ -3390,11 +3391,11 @@ class RDIRCD:
 		else: self.conf.filters[key] = self.conf.filter_pattern(pat)
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save:
-			return send(f'Updated runtime filter (not saved to ini): {upd}')
-		try: p = self.conf.update_file_section('monitor-filters', {key: None if rm else pat})
+			return send(f'Updated runtime filters (not saved to ini): {upd}')
+		try: p = self.conf.update_file_section('unmonitor', {key: None if rm else pat})
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		send(f'Updated monitor-filters in config file [ {p.name} ]: {upd}')
+		send(f'Updated [unmonitor] in config file [ {p.name} ]: {upd}')
 
 	def _cmd_chan_sys_repl(self, send, line_raw):
 		'Implementation for control-channel "repl" command'
@@ -3740,7 +3741,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if isinstance(k, tuple): k = '.'.join(k)
 				print(f'{k} = {self.val_to_opt(v)}')
 		if self.filters:
-			print(f'\n[monitor-filters]')
+			print(f'\n[unmonitor]')
 			for k, mx in self.filters.items(): print(f'{k} = {mx.pat}')
 
 	def read_from_file(self, *conf_paths):
@@ -3792,8 +3793,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 					v_new = v.replace('*', '[*]').replace('?', '[?]')
 					if v.endswith('+threads'): v_new = 'glob:' + v_new[:-8] + '.=*'
 				filters_old[f'deprecated.{str_hash(v_new, 6)}'] = v_new
-		if conf_file.has_section('monitor-filters'):
-			for k, pat in [*filters_old.items(), *conf_file['monitor-filters'].items()]:
+		if conf_file.has_section('unmonitor'):
+			for k, pat in [*filters_old.items(), *conf_file['unmonitor'].items()]:
 				if pat: self.filters[k] = self.filter_pattern(pat)
 
 		return conf_paths
