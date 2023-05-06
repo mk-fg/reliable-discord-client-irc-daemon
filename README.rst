@@ -366,23 +366,27 @@ including e.g. ``/join #rdircd.leftover.game-x`` hiding that "game-x" discord
 msgs from global catch-all #rdircd.leftover, but not counting #rdircd.monitor
 channels (i.e. joining them doesn't affect "leftover" ones in any way).
 
-Configuration file also has [filters] section for an optional list of
-channel-names to ignore in monitor/leftover channels, for example::
+Configuration file also has [monitor-filters] section for an optional list
+of channel-names to ignore in monitor/leftover channels, for example::
 
-  [filters]
-  game-x.spam
-  game-x.bot-commands
-  game-x.forum+threads
+  [monitor-filters]
+  # All filters are applied to channel names and are case-insensitive
+  Ignore this particular "bot-commands" channel = game-X.bot-commands
+  skip forum threads in "game-X" guild = glob:game-X.forum.=*
+  "wordle" threads in any guild (and chans ending in .wordle) = glob:*.wordle
+  Don't show threads in any forum-like channels = re:^[^.]+\.(forum|discuss)\.=.*
 
-All keys there, with any value (or no value at all, like in example above)
-will make lines like ``#game-x.spam :: ...`` for corresponding chan-names
-set there (rfc1459 case-insensitive) be omitted from monitor channels -
-e.g. to define a list of spammy ones that you don't care about or don't want
-to see even there.
-Special "+threads" suffix also ignores all threads of that channel.
+Keys in such config section are ignored, and can be anything, e.g. comments
+explaining the patterns (like in example above), while values are either exact
+channel names (with guild-prefix, and optional #-prefix), or a ``glob:...`` /
+``re:...`` pattern (`shell-like globs`_ or `python regexps`_).
 
-"unmonitor" (or "um") command in #rdircd.control can be used to add/remove
-such filters on-the-fly anytime.
+Channel names matched by those filters will be dropped from monitor-channels,
+so this can be used to define a list of spammy things that you don't care about
+and don't want to see even there.
+
+"unmonitor" (or "um") command in #rdircd.control can add/remove such filters
+on-the-fly anytime.
 
 Messages in monitor-channels are limited to specific length/lines,
 to avoid excessive flooding by long and/or multi-line msgs.
@@ -390,6 +394,9 @@ to avoid excessive flooding by long and/or multi-line msgs.
 section can be used to control these limits,
 see ``./rdircd --conf-dump-defaults`` output for their default values.
 There are also options to change name format of monitor channels.
+
+.. _shell-like globs: https://docs.python.org/3/library/fnmatch.html
+.. _python regexps: https://docs.python.org/3/library/re.html
 
 Local Name Aliases
 ``````````````````

@@ -4,7 +4,7 @@ import itertools as it, operator as op, functools as ft
 import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
 import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
-import asyncio, socket, signal, inspect, configparser, tempfile
+import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
 import hashlib, base64, random, unicodedata, string, ast, urllib.parse
 import logging, logging.handlers
 
@@ -184,7 +184,8 @@ class RDIRCDConfigBase:
 
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'auth', 'irc', 'discord', 'debug'
-	_conf_sections_old = dict(auth_main='auth', aliases='renames') # old -> new renames
+	_conf_sections_old = dict( # old -> new section renames
+		auth_main='auth', aliases='renames', filters='monitor-filters' )
 	_conf_sections_old_found = set()
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
@@ -3229,20 +3230,24 @@ class RDIRCD:
 				'  reload - (alias: re) re-read configuration from same ini files as on start.',
 					'    Same as with "set" command, some changes don\'t take effect at runtime.',
 				'',
-				'  unmonitor [-s|--save] [-r|--rm] [ [#]channel ... ] - (alias: um)',
-					'     skip specified channel name(s)/prefix(es) in all monitor/leftover channels.',
-					'    Adds line to a [filters] ini config section, to skip any msgs',
-					'     from specified discord channel, in monitor/leftover channels,',
-					'     updating last ini file if -s/--save option is specified',
-					'    Channel name should be same as prefix printed there. Leading # is optional.',
-					'    Chan-name can have "+threads" suffix to ignore all threads in there, if any.',
-					'    Removes channel from last config-file instead with -r/--rm option.',
+				'  unmonitor [-s|--save] {-r|--rm} comment/key...',
+				'  unmonitor [-s|--save] [ comment/key... = ] [#]channel/pattern - (alias: um)',
+					'     (un-)skip discord channel name/pattern in all monitor/leftover channels.',
+					'    Changes [monitor-filters] ini config-file section on-the-fly,',
+					'     to drop msgs from discord-chan(s) from monitor/leftover channels,',
+					'     saving updates to last ini file if -s/--save option is specified.',
+					'    Channel-pattern can be an exact channel name (leading # is optional),',
+					'     "glob:..." filename-wildcard-like pattern, or "re:..." regexp-pattern.',
+					'    Comment/key value before pattern (if any), will be used as a key in ini file,',
+					'     and for removal with -r/--rm option, or auto-generated otherwise.',
 					'    Run without args to print a list of current filters for these channels.',
+					'    Usage example: um -s ignore all #forum threads = glob:*.forum.=*',
 				'',
 				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] - (alias: re)',
 					'     add/remove regexp-replacements/blocks for outgoing messages.',
 					'    Same idea as w/ "unmonitor" above - adds/removes line(s) for [replacements].',
 					'    Run without arguments to print current contents of that config section.',
+					'    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ',
 				'',
 				*([] if not self.conf.debug_dev_cmds else [
 				'Developer-commands for breaking and testing stuff:',
@@ -3269,7 +3274,7 @@ class RDIRCD:
 			elif cmd in ['disconnect', 'off']:
 				send('discord: disconnecting')
 				self.discord.disconnect()
-			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line)
+			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
 			elif cmd in ['repl', 're']: self._cmd_chan_sys_repl(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
 			elif cmd in ['reload', 're']:
@@ -3358,35 +3363,38 @@ class RDIRCD:
 
 	def _cmd_chan_sys_unmonitor(self, send, line):
 		'Implementation for control-channel "unmonitor" command'
-		upd, chans, opts, rm, save = dict(), line[1:], set(line[1:3]), False, False
-		if opts.intersection(['-r', '--rm']): rm, chans = True, chans[1:]
-		if opts.intersection(['-s', '--save']): save, chans = True, chans[1:]
-		if not chans:
+		rm, save = False, False
+		for n, opt in enumerate(line.split()[1:], 1):
+			if opt in ['-r', '--rm']: rm = True
+			elif opt in ['-s', '--save']: save = True
+			else: break
+		else:
 			send(f'Current monitor/leftover channel filters [{len(self.conf.filters)}]:')
-			for c in self.conf.filters: send(f'  {c}')
+			for k, mx in self.conf.filters.items(): send(f'  {k} = {mx.pat}')
 			return
-		for c in chans:
-			c = c.lstrip('#')
-			if rm:
-				if c not in self.conf.filters:
-					send(f'ERROR: There was no filter for channel [ {c} ]')
-				else: upd[c] = None
-			elif c in self.conf.filters:
-				send(f'ERROR: Filter was/is already set for channel [ {c} ]')
-			else: upd[c] = ''
-		if not upd: return send('Nothing to update, nothing changed')
-		for k, v in upd.items():
-			if v is None: del self.conf.filters[k]
-			else: self.conf.filters[k] = v
+		line = line.split(None, n)[-1]
+		if rm: key = line
+		else:
+			pat = (key := line.rsplit(None, 1)).pop()
+			if key:
+				if (key := key[0].rsplit(None, 1)).pop() != '=':
+					return send(f'ERROR: Invalid "[comment... =] pattern" spec: {line!r}')
+				if key: key = key[0].strip()
+			if not key: key = f'pattern.{str_hash(pat, 6)}'
+		if rm:
+			if key not in self.conf.filters:
+				return send(f'ERROR: No such filter [ {key} ]')
+			del self.conf.filters[key]
+		elif (mx := self.conf.filters.get(key)) and mx.pat == pat:
+			return send(f'ERROR: Same filter-pattern already set for [ {key} ]')
+		else: self.conf.filters[key] = self.conf.filter_pattern(pat)
+		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save:
-			return send( 'Updated runtime filters (not saved to ini):'
-				f' {len(upd)} change(s), {len(self.conf.filters)} total' )
-		try: p = self.conf.update_file_section('filters', upd, key_set=True)
+			return send(f'Updated runtime filter (not saved to ini): {upd}')
+		try: p = self.conf.update_file_section('monitor-filters', {key: None if rm else pat})
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		send(
-			f'Updated filters in config file [ {p.name} ]:'
-			f' {len(upd)} change(s), {len(self.conf.filters)} total' )
+		send(f'Updated monitor-filters in config file [ {p.name} ]: {upd}')
 
 	def _cmd_chan_sys_repl(self, send, line_raw):
 		'Implementation for control-channel "repl" command'
@@ -3448,7 +3456,9 @@ class RDIRCD:
 		if not nick: nick = f'user-{str_uid(4)}'
 		if not msg: msg = f'⚛️ Message Test ⚛️ [{str_uid(8)}]'
 		self.cmd_msg_discord(cc, nick, msg)
-		return send(f'Chan-msg sim [ {p} ]: #{cc.name} :: <{nick}> {msg}')
+		chan_name = self.cache.did_chan.get(
+			cc.did, f'<ERR {cc.gg.name!r} {cc.name!r}>' )
+		return send(f'Chan-msg sim [ {p} ]: #{chan_name} :: <{nick}> {msg}')
 
 	def cmd_chan_sys_debug(self, conn, chan, line):
 		line_src, line = line, line.strip().lower().split()
@@ -3605,11 +3615,9 @@ class RDIRCD:
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
-		if name in self.conf.filters or f'{name}+threads' in self.conf.filters: return
+		for mx in self.conf.filters.values():
+			if mx.rx.search(name): return
 		if cc.tid:
-			if any( # thread-name format hardcoded in op_ev_chans
-				re.search('^' + re.escape(f'{k[:-8]}.{cc.tid}') + r'(\.|$)', name)
-				for k in self.conf.filters if k.endswith('+threads') ): return
 			if ( self.conf.discord_thread_msgs_in_parent_chan
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
@@ -3638,7 +3646,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
-		self.filters, self.replacements = irc_name_dict(), adict()
+		self.filters, self.replacements = dict(), adict()
 		self.log = get_logger('rdircd.state')
 		self.replacements._track( cb=lambda _a=
 			self.replacements.attrs: _a.update(gen=_a.get('gen', 0) + 1) )
@@ -3686,6 +3694,15 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
+	filter_pattern_t = cs.namedtuple('filter_pattern', 'rx pat')
+	def filter_pattern(self, pat):
+		if (rx := pat).startswith('re:'): rx = re.compile(rx[3:], re.I)
+		elif rx.startswith('glob:'): rx = re.compile('^'+fnmatch.translate(rx[5:]), re.I)
+		else:
+			if rx.startswith('#'): rx = rx[1:]
+			rx = re.compile(f'^{re.escape(rx)}$', re.I)
+		return self.filter_pattern_t(rx, pat)
+
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
 		for k in set([k, k.replace('-', '_'), k.replace('_', '-')]):
@@ -3716,13 +3733,15 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
 			print(f'{k} = {self.val_to_opt(v)}')
-		for sk in 'renames', 'replacements', 'filters':
+		for sk in 'renames', 'replacements':
 			if not (sec := getattr(self, sk)): continue
 			print(f'\n[{sk}]')
 			for k, v in sec.items():
-				print(''.join([
-					'.'.join(k) if isinstance(k, tuple) else k,
-					'' if sk == 'filters' and not v else f' = {self.val_to_opt(v)}' ]))
+				if isinstance(k, tuple): k = '.'.join(k)
+				print(f'{k} = {self.val_to_opt(v)}')
+		if self.filters:
+			print(f'\n[monitor-filters]')
+			for k, mx in self.filters.items(): print(f'{k} = {mx.pat}')
 
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
@@ -3730,6 +3749,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		conf_file = configparser.ConfigParser(allow_no_value=True)
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
+
 		self._conf_path = conf_paths[-1] # one to update via set and state stuff
 		self._conf_sections_old_found.clear()
 		for k, k_new in list(self._conf_sections_old.items()):
@@ -3746,17 +3766,36 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			for k, v in conf_file['state'].items():
 				if k == 'tracked': continue
 				self.state[k] = parse_iso8601(v)
+
+		self.renames.clear()
 		for new, sk in enumerate(['aliases', 'renames']):
 			if not conf_file.has_section(sk): continue
 			if not new: self._conf_sections_old_found.add(sk)
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
-		if conf_file.has_section('filters'):
-			self.filters.update((k, v or '') for k, v in conf_file['filters'].items())
+
+		self.replacements.clear()
 		if conf_file.has_section('replacements'):
 			val_conv = self.opt_to_val_func(str)
 			self.replacements.update( (k, val_conv(v or ''))
 				for k, v in conf_file['replacements'].items() )
+
+		self.filters.clear(); filters_old = dict()
+		if conf_file.has_section('filters'): # deprecated section
+			self._conf_sections_old_found.add('filters')
+			for v in conf_file['filters'].keys():
+				if '[' in v:
+					v_new = f're:^{re.escape(v)}'
+					if v.endswith('+threads'): v_new = v_new[:-9] + r'\.='
+					else: v_new += '$'
+				else:
+					v_new = v.replace('*', '[*]').replace('?', '[?]')
+					if v.endswith('+threads'): v_new = 'glob:' + v_new[:-8] + '.=*'
+				filters_old[f'deprecated.{str_hash(v_new, 6)}'] = v_new
+		if conf_file.has_section('monitor-filters'):
+			for k, pat in [*filters_old.items(), *conf_file['monitor-filters'].items()]:
+				if pat: self.filters[k] = self.filter_pattern(pat)
+
 		return conf_paths
 
 	def update_from_file_section(self,
