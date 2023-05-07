@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.2' # git-version: py-str
+	version = '23.05.3' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3243,7 +3243,7 @@ class RDIRCD:
 					'    Run without args to print a list of current filters for these channels.',
 					'    Usage example: um -s ignore all #forum threads = glob:*.forum.=*',
 				'',
-				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] - (alias: re)',
+				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] -',
 					'     add/remove regexp-replacements/blocks for outgoing messages.',
 					'    Same idea as w/ "unmonitor" above - adds/removes line(s) for [replacements].',
 					'    Run without arguments to print current contents of that config section.',
@@ -3275,7 +3275,7 @@ class RDIRCD:
 				send('discord: disconnecting')
 				self.discord.disconnect()
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
-			elif cmd in ['repl', 're']: self._cmd_chan_sys_repl(send, line_raw)
+			elif cmd == 'repl': self._cmd_chan_sys_repl(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
 			elif cmd in ['reload', 're']:
 				try: conf_paths = self.conf.read_from_file()
@@ -3363,7 +3363,7 @@ class RDIRCD:
 
 	def _cmd_chan_sys_unmonitor(self, send, line):
 		'Implementation for control-channel "unmonitor" command'
-		rm, save = False, False
+		rm = save = False
 		for n, opt in enumerate(line.split()[1:], 1):
 			if opt in ['-r', '--rm']: rm = True
 			elif opt in ['-s', '--save']: save = True
