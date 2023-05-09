@@ -378,9 +378,10 @@ of channel-names to ignore in monitor/leftover channels, for example::
 
 Keys (as in part before "=") in such config section are ignored, and can be
 anything, e.g. comments explaining the patterns (like in example above), while
-values are either exact channel names (with guild-prefix, and optional #-prefix),
-or a glob/re pattern (`shell-like globs`_ or `python regexps`_) - like
-``my wildcard key = glob:...`` or ``some regexp key = re:...``, as in example above.
+values are either exact channel names (with discord prefix, optional #-prefix),
+or a "glob:"/"re:"-prefixed glob / regexp pattern (`shell-like globs`_ or
+`python regexps`_), written as ``<some-key/comment> = glob:<wildcard-pattern>``
+or ``<some-key/comment> = re:<regexp-pattern>`` lines - see examples just above.
 
 Channel names matched by those filters will be dropped from monitor-channels,
 so this can be used to define a list of spammy things that you don't care about
