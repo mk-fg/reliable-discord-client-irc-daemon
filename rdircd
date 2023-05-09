@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	version = '23.05.5' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
-	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
+	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
 	irc_auth_tbf = '30:8' # token-bucket filter, rate=1/30s burst=8

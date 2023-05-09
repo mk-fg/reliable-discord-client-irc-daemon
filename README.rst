@@ -316,6 +316,12 @@ Daemon control/config commands are available in #rdircd.control channel,
 #rdircd.debug chan can be used to tweak various logging and inspect daemon state
 and protocols more closely, send "help" there to list available commands.
 
+For broad outline of various supported configuration settings,
+see `rdircd.defaults.ini`_ file (output of ``./rdircd --conf-dump-defaults``),
+and more on particular uses of those below.
+
+.. _rdircd.defaults.ini: rdircd.defaults.ini
+
 
 Misc Feature Info
 -----------------
@@ -394,11 +400,12 @@ Messages in monitor-channels are limited to specific length/lines,
 to avoid excessive flooding by long and/or multi-line msgs.
 "len-monitor" and "len-monitor-lines" parameters under "[irc]" config
 section can be used to control these limits,
-see ``./rdircd --conf-dump-defaults`` output for their default values.
+see `"./rdircd --conf-dump-defaults" output`_ for their default values.
 There are also options to change name format of monitor channels.
 
 .. _shell-like globs: https://docs.python.org/3/library/fnmatch.html
 .. _python regexps: https://docs.python.org/3/library/re.html
+.. _"./rdircd --conf-dump-defaults" output: rdircd.defaults.ini
 
 Local Name Aliases
 ``````````````````
@@ -455,7 +462,7 @@ This should:
 Currently only listed types of renaming are implemented, for discord prefixes
 and channels, but there are also options under [irc] section to set names for
 system/monitor/leftover and private-chat channels - "chan-sys", "chan-private",
-"chan-monitor" and such (see ``./rdircd --conf-dump-defaults`` output).
+"chan-monitor" and such (see `"./rdircd --conf-dump-defaults" output`_).
 
 Set ``chan-monitor-guild = {prefix}`` there for example, to have #game-x channel be
 catch-all for all messages in that discord, without default long #rdircd.monitor.\* prefix.
@@ -490,13 +497,15 @@ chan name with thread id tag ("=vot5" in this example) and a possibly-truncated
 thread name (see thread-chan-name-len config option).
 
 There are several options to see and interact with threads from the parent channel
-(under [discord] section, see --conf-dump-defaults output), but even with all
+(under [discord] section, `see --conf-dump-defaults output`_), but even with all
 these disabled, a simple notice get sent to the channel when threads are started.
 
 There's no support for creating new threads from IRC, unarchiving old ones or
 otherwise managing these, and joining thread channel in IRC doesn't "join thread"
 in Discord UI (pins it under channel name), but posting anything there should do
 that automatically.
+
+.. _see --conf-dump-defaults output: rdircd.defaults.ini
 
 Auto-joining channels
 `````````````````````
@@ -584,7 +593,7 @@ Similar to `Discord user mentions`_ above, there's a special regexp-option that
 matches commands to be interpreted as edit or removal of last message sent to
 this channel.
 
-Default regexps look something like this (check ``--conf-dump-defaults`` jic)::
+Default regexps look something like this (check `--conf-dump-defaults`_ jic)::
 
   [discord]
   msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$
@@ -615,6 +624,7 @@ with "[edit]" or such prefix (configurable under "[irc]" section).
 Any older-than-last messages can be edited through Discord WebUI - this client
 only tracks last one for easy quick follow-up oops-fixes, nothing more than that.
 
+.. _--conf-dump-defaults: rdircd.defaults.ini
 .. _sed: https://en.wikipedia.org/wiki/Sed
 .. _python re.sub(): https://docs.python.org/3/library/re.html#re.sub
 .. _PCRE-like: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
@@ -750,7 +760,7 @@ Never encountered this problem myself so far.
 Almost every message I see are reacts by people :(
 ``````````````````````````````````````````````````
 
-Run ``rdircd --conf-dump-defaults``, and you should see an option for this in there::
+There is `an ini file option`_ for this::
 
   [irc]
   ...
@@ -761,6 +771,8 @@ Flip that to "yes" in config to disable all those, or alternatively they can be
 blocked in a more fine-grained way in the IRC client.
 
 There's a bunch of other similar tweaks that can be useful in there too.
+
+.. _an ini file option: rdircd.defaults.ini
 
 Debugging anything strange, unknown or unexpected
 `````````````````````````````````````````````````
@@ -827,7 +839,7 @@ following things can be monitored and/or enabled:
   Log file size and rotation count can be set via ``log-file-size``,
   ``log-file-count``, ``proto-log-file-size``, ``proto-log-file-count``
   options - run ``rdircd --conf-dump-defaults`` to see all those and their
-  default values.
+  default values (`rdircd.defaults.ini`_ has some recent-ish copy too).
 
   Note that these files will contain all sorts of sensitive information - from
   auth data to all chats and contacts - so should probably not be posted or
