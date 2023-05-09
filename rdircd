@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.3' # git-version: py-str
+	version = '23.05.5' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can set in -i/--irc-bind, see also tls opts
@@ -3697,6 +3697,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	filter_pattern_t = cs.namedtuple('filter_pattern', 'rx pat')
 	def filter_pattern(self, pat):
+		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
 		if (rx := pat).startswith('re:'): rx = re.compile(rx[3:], re.I)
 		elif rx.startswith('glob:'): rx = re.compile('^'+fnmatch.translate(rx[5:]), re.I)
 		else:
@@ -3795,6 +3796,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				filters_old[f'deprecated.{str_hash(v_new, 6)}'] = v_new
 		if conf_file.has_section('unmonitor'):
 			for k, pat in [*filters_old.items(), *conf_file['unmonitor'].items()]:
+				if re.search(r'^\s*(glob|re)(:|$)', k, re.I):
+					kv = f'{k} = {pat}' if ':' in k else f'{k}:{pat}'
+					raise ValueError( '[unmonitor] config line seem to have pattern'
+						f' used as a key, not as value in "<some-key> = <pattern>" format: {kv}' )
 				if pat: self.filters[k] = self.filter_pattern(pat)
 
 		return conf_paths

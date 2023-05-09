@@ -376,10 +376,11 @@ of channel-names to ignore in monitor/leftover channels, for example::
   "wordle" threads in any guild (and chans ending in .wordle) = glob:*.wordle
   Don't show threads in any forum-like channels = re:^[^.]+\.(forum|discuss)\.=.*
 
-Keys in such config section are ignored, and can be anything, e.g. comments
-explaining the patterns (like in example above), while values are either exact
-channel names (with guild-prefix, and optional #-prefix), or a ``glob:...`` /
-``re:...`` pattern (`shell-like globs`_ or `python regexps`_).
+Keys (as in part before "=") in such config section are ignored, and can be
+anything, e.g. comments explaining the patterns (like in example above), while
+values are either exact channel names (with guild-prefix, and optional #-prefix),
+or a glob/re pattern (`shell-like globs`_ or `python regexps`_) - like
+``my wildcard key = glob:...`` or ``some regexp key = re:...``, as in example above.
 
 Channel names matched by those filters will be dropped from monitor-channels,
 so this can be used to define a list of spammy things that you don't care about
