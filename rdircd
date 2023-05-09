@@ -21,14 +21,14 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.5' # git-version: py-str
+	version = '23.05.6' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
-	irc_auth_tbf = '30:8' # token-bucket filter, rate=1/30s burst=8
-	irc_host_af = 0 # auto-picked by getaddrinfo(), 2=IPv4 10=IPv6
+	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
+	irc_host_af = 0 # address family - 0=any (auto-picked by getaddrinfo) 2=IPv4 10=IPv6
 	irc_uid_len = 4 # can be increased to fix conflicts
 	irc_uid_seed = ''
 	irc_prefix_edit = '[edit] '
@@ -74,7 +74,7 @@ class RDIRCDConfigBase:
 	# Name format (python str.format) for private chat channels.
 	# {names} or {id} can be used instead of {names_or_id} to force e.g. #me.chat.<id> format.
 	irc_chan_private = 'chat.{names_or_id}'
-	# Name of catch-all "monitor" channel for all msgs. Set to empty - won't be created.
+	# Name of catch-all "monitor" channel for all msgs. Empty value - won't be created.
 	irc_chan_monitor = 'rdircd.monitor'
 	# Name format of per-discord
 	#  "monitor" channels for all msgs in there. Empty - disabled.
@@ -3742,7 +3742,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if isinstance(k, tuple): k = '.'.join(k)
 				print(f'{k} = {self.val_to_opt(v)}')
 		if self.filters:
-			print(f'\n[unmonitor]')
+			print('\n[unmonitor]')
 			for k, mx in self.filters.items(): print(f'{k} = {mx.pat}')
 
 	def read_from_file(self, *conf_paths):

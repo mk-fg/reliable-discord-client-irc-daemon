@@ -484,26 +484,42 @@ discord webui and is not implemented in this client in any special way.
 See also `Auto-joining channels`_ section below for an easy way to pop-up
 new private chats in the IRC client via invites.
 
-Discord channel threads
-```````````````````````
+Discord channel threads / forums
+````````````````````````````````
 
-"Threads" is a relatively recent Discord feature, allowing transient ad-hoc
-sub-channels to be created by any user anytime, which are auto-removed ("archived")
-after a relatively-short inactivity timeout (like a day).
+"Threads" is a Discord feature, allowing non-admin users to create transient
+ad-hoc sub-channels anytime for specific topic, which are auto-removed
+("archived") after a relatively-short inactivity timeout (like a day).
 
-All non-archived threads should be shown in the channel list as a regular IRC
+Discord "forum" channels are basically channels, where people can only create
+and talk in theads, with listing of those replacing default channel chatter.
+
+All non-archived threads should be shown in rdircd channel list as a regular IRC
 channels, with names like #gg.general.=vot5.lets·discuss·stuff, extending parent
 chan name with thread id tag ("=vot5" in this example) and a possibly-truncated
-thread name (see thread-chan-name-len config option).
+thread name (see "thread-chan-name-len" config option).
 
-There are several options to see and interact with threads from the parent channel
-(under [discord] section, `see --conf-dump-defaults output`_), but even with all
-these disabled, a simple notice get sent to the channel when threads are started.
+There are several options for how to see and interact with threads from the
+parent channel (mostly in [discord] section, `see --conf-dump-defaults output`_)::
+
+  [irc]
+  thread-chan-name-len = 30
+
+  [discord]
+  thread-id-prefix = =
+  thread-msgs-in-parent-chan = yes
+  thread-msgs-in-parent-chan-monitor = no
+  thread-msgs-in-parent-chan-full-prefix = no
+  thread-redirect-prefixed-responses-from-parent-chan = yes
+  ...
+
+But even with all these disabled, a simple notice should be sent to the channel
+when threads are started, so that one won't miss them entirely.
 
 There's no support for creating new threads from IRC, unarchiving old ones or
-otherwise managing these, and joining thread channel in IRC doesn't "join thread"
-in Discord UI (pins it under channel name), but posting anything there should do
-that automatically.
+otherwise managing these, and joining thread channel in IRC doesn't actually
+"join thread" in Discord UI (pining it under channel name), but posting anything
+there should do that automatically.
 
 .. _see --conf-dump-defaults output: rdircd.defaults.ini
 
