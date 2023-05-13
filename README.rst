@@ -169,7 +169,7 @@ Usage
 Requirements
 ````````````
 
-* `Python <http://python.org/>`_ (relatively modern 3.8+ one)
+* `Python 3.8+ <http://python.org/>`_
 * `aiohttp <https://aiohttp.readthedocs.io/en/stable/>`_
 
 Installation
@@ -201,24 +201,25 @@ but ignore this if you've already installed it via OS package manager or such::
   root # useradd -m rdircd
   root # su - rdircd
 
-  ## Option 1: install pip and use it directly
-
-  rdircd % python3 -m ensurepip --user
-  rdircd % python3 -m pip install --user aiohttp
-
-  ## OR Option 2: use more common venv to install same thing
+  ## Option 1: use venv to install dependencies into "_venv" dir
 
   rdircd % python3 -m venv _venv
   rdircd % ./_venv/bin/pip install aiohttp
 
+  ## Option 2: install pip (if missing) and use it directly
+
+  rdircd % python3 -m ensurepip --user
+  rdircd % python3 -m pip install --user aiohttp
+
 After requirements above are installed, script itself can be fetched
-from this repo and run like this::
+from this repository and run like this::
 
   ## Ignore "useradd" if you've already created a user when running "pip" above
   root # useradd -m rdircd
   root # su - rdircd
 
   ## If using "venv" install example above - load its env vars
+  # Or alternatively run script via "./_venv/bin/python rdircd ..." command line
   rdircd % source ./_venv/bin/activate
 
   rdircd % curl https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd > rdircd
@@ -236,8 +237,9 @@ from this repo and run like this::
    ...drop --debug and use init system for a regular daemon...
 
 Setting up daemon/script to run on OS boot is out of scope of this README -
-look into doing that via systemd service, init script or something like that.
-But make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
+look into doing that via systemd service, init script or something like that,
+or in "screen" as a last resort ad-hoc option.
+Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
 Setup and actual usage
 ``````````````````````
