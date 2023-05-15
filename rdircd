@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.7' # git-version: py-str
+	version = '23.05.8' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3356,8 +3356,8 @@ class RDIRCD:
 			else: break
 		else:
 			send( 'Current monitor/leftover'
-				f' channel filters ({len(self.conf.filters)} in total):' )
-			for k, mx in self.conf.filters.items(): send(f'  {k} = {mx.pat}')
+				f' channel filters ({len(self.conf.unmon_filters)} in total):' )
+			for k, mx in self.conf.unmon_filters.items(): send(f'  {k} = {mx.pat}')
 			return
 		line = line.split(None, n)[-1]
 		if rm: key = line
@@ -3369,12 +3369,12 @@ class RDIRCD:
 				if key: key = key[0].strip()
 			if not key: key = f'pattern.{str_hash(pat, 6)}'
 		if rm:
-			if key not in self.conf.filters:
+			if key not in self.conf.unmon_filters:
 				return send(f'ERROR: No such filter [ {key} ]')
-			del self.conf.filters[key]
-		elif (mx := self.conf.filters.get(key)) and mx.pat == pat:
+			del self.conf.unmon_filters[key]
+		elif (mx := self.conf.unmon_filters.get(key)) and mx.pat == pat:
 			return send(f'ERROR: Same filter-pattern already set for [ {key} ]')
-		else: self.conf.filters[key] = self.conf.filter_pattern(pat)
+		else: self.conf.unmon_filters[key] = self.conf.make_unmon_pattern(pat)
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save:
 			return send(f'Updated runtime filters (not saved to ini): {upd}')
@@ -3602,7 +3602,7 @@ class RDIRCD:
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
-		for mx in self.conf.filters.values():
+		for mx in self.conf.unmon_filters.values():
 			if mx.rx.search(name): return
 		if cc.tid:
 			if ( self.conf.discord_thread_msgs_in_parent_chan
@@ -3633,7 +3633,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
-		self.filters, self.send_repls = dict(), cs.defaultdict(list)
+		self.unmon_filters, self.send_repls = dict(), cs.defaultdict(list)
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -3679,15 +3679,15 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
-	filter_pattern_t = cs.namedtuple('filter_pattern', 'rx pat')
-	def filter_pattern(self, pat): # XXX
+	unmon_pattern_t = cs.namedtuple('unmon', 'rx pat')
+	def make_unmon_pattern(self, pat):
 		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
 		if (rx := pat).startswith('re:'): rx = re.compile(rx[3:], re.I)
 		elif rx.startswith('glob:'): rx = re.compile('^'+fnmatch.translate(rx[5:]), re.I)
 		else:
 			if rx.startswith('#'): rx = rx[1:]
 			rx = re.compile(f'^{re.escape(rx)}$', re.I)
-		return self.filter_pattern_t(rx, pat)
+		return self.unmon_pattern_t(rx, pat)
 
 	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm')
 	def make_send_repl(self, key, val):
@@ -3739,9 +3739,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			print('\n[send-replacements]')
 			for repl in it.chain.from_iterable(sec.values()):
 				print(f'{repl.key} = {self.val_to_opt(repl.val)}')
-		if self.filters: # XXX
+		if self.unmon_filters:
 			print('\n[unmonitor]')
-			for k, mx in self.filters.items(): print(f'{k} = {mx.pat}')
+			for k, mx in self.unmon_filters.items(): print(f'{k} = {mx.pat}')
 
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
@@ -3783,7 +3783,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				repl = self.make_send_repl(k, val_conv(v or ''))
 				self.send_repls[repl.pre].append(repl)
 
-		self.filters.clear(); filters_old = dict()
+		self.unmon_filters.clear(); filters_old = dict()
 		if conf_file.has_section('filters'): # deprecated section
 			self._conf_sections_old_found.add('filters')
 			for v in conf_file['filters'].keys():
@@ -3801,7 +3801,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 					kv = f'{k} = {pat}' if ':' in k else f'{k}:{pat}'
 					raise ValueError( '[unmonitor] config line seem to have pattern'
 						f' used as a key, not as value in "<some-key> = <pattern>" format: {kv}' )
-				if pat: self.filters[k] = self.filter_pattern(pat)
+				if pat: self.unmon_filters[k] = self.make_unmon_pattern(pat)
 
 		return conf_paths
 
