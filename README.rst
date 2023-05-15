@@ -660,8 +660,8 @@ in any way, as they don't seem to be relevant for an irc client anyway.
 Configurable replacements/blocks in outgoing messages
 `````````````````````````````````````````````````````
 
-Config can have a [replacements] section to block or regexp-replace parts of
-messages sent from IRC on per-discord basis.
+Config can have a [send-replacements] section to block or regexp-replace parts
+of messages sent from IRC on per-discord basis.
 
 This can be used to add discord-specific tags, unicode shorthands, emojis,
 stickers, block/replace specific links or maybe even words/language before
@@ -669,7 +669,7 @@ proxying msg to discord.
 
 Here's how it can look in the ini file(s)::
 
-  [replacements]
+  [send-replacements]
 
   *.unicode-smiley = (^| ):\)( |$) -> \1😀\2
   *.twitter-to-nitter = ^(https?://)((mobile|www)\.)?twitter\.com(/.*)?$ -> \1nitter.ir\4

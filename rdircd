@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.6' # git-version: py-str
+	version = '23.05.7' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -185,7 +185,8 @@ class RDIRCDConfigBase:
 	_conf_path = '~/.rdircd.ini'
 	_conf_sections = 'auth', 'irc', 'discord', 'debug'
 	_conf_sections_old = dict( # old -> new section renames
-		auth_main='auth', aliases='renames', filters='unmonitor' )
+		auth_main='auth', aliases='renames',
+		filters='unmonitor', replacements='send-replacements' )
 	_conf_sections_old_found = set()
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
@@ -2783,7 +2784,6 @@ class RDIRCD:
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict( chan_map=None, uid=dict(),
-			irc_subs_gen=0, irc_subs=irc_name_dict(), # replacements in irc msgs
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover channel
 			gid_mon_chan=dict(), gid_nc_chan=dict(), did_chan=dict(),
@@ -3004,31 +3004,17 @@ class RDIRCD:
 			adict(conn=conn, chan=chan, name=name, line=line) )
 
 	def irc_msg_translate_preq(self, line):
+		'IRC message processing right after receiving it and before anything else'
 		# "/me msg" -> "\1ACTION msg\1" - https://tools.ietf.org/id/draft-oakley-irc-ctcp-01.html
 		return re.sub(r'^\x01ACTION ?(.*)\x01$', r'_\1_', line)
 
 	def irc_msg_translate_postq(self, info, line):
-		# Apply configured [replacements], if any
-		if not (repls := self.conf.replacements): return line
-		if self.cache.irc_subs_gen != repls.ø_gen:
-			self.cache.irc_subs_gen = repls.ø_gen
-			(subs := self.cache.irc_subs).clear()
-			for k, v in repls.items():
-				try:
-					pre, comm = k.rsplit('.', 1)
-					sub_re, sub = v.split(' -> ', 1)
-					sub_re = re.compile(sub_re)
-					if sub == '<block!>': sub = None
-				except Exception as err:
-					self.log.warning( 'Failed to parse line in'
-						' [replacements] section [ {!r} = {!r} ]: {}', k, v, err_fmt(err) )
-					continue
-				if pre not in subs: subs[pre] = list()
-				subs[pre].append(adict(pre=pre, re=sub_re, sub=sub, comm=comm))
-		for s in it.chain( (subs := self.cache.irc_subs).get('*', list()),
-				subs.get(self.uid('guild', info.gg.id, kh=info.gg.get('kh')), list()) ):
-			if s.sub is not None: line = s.re.sub(s.sub, line)
-			elif s.re.search(line): raise IRCBridgeSignal(f'blocked-by-rule[{s.pre}.{s.comm}]')
+		'IRC message processing after send-queue, right before sending to discord'
+		if repls := self.conf.send_repls: # apply [send-replacements]
+			for s in it.chain( repls.get('*', list()),
+					repls.get(self.uid('guild', info.gg.id, kh=info.gg.get('kh')), list()) ):
+				if s.sub is not None: line = s.re.sub(s.sub, line)
+				elif s.re.search(line): raise IRCBridgeSignal(f'blocked-by-rule[{s.pre}.{s.comm}]')
 		return line
 
 	async def irc_msg_queue_proc(self):
@@ -3245,7 +3231,7 @@ class RDIRCD:
 				'',
 				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] -',
 					'     add/remove regexp-replacements/blocks for outgoing messages.',
-					'    Same idea as w/ "unmonitor" above - adds/removes line(s) for [replacements].',
+					'    Similar to "unmonitor" above - adds/removes line(s) for [send-replacements].',
 					'    Run without arguments to print current contents of that config section.',
 					'    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ',
 				'',
@@ -3399,7 +3385,7 @@ class RDIRCD:
 
 	def _cmd_chan_sys_repl(self, send, line_raw):
 		'Implementation for control-channel "repl" command'
-		repls, rm, save = self.conf.replacements, False, False
+		repls, rm, save = self.conf.send_repls, False, False
 		try:
 			line = line_raw.split(None, 1)
 			if len(line) == 1: line, opts = '', set()
@@ -3423,10 +3409,10 @@ class RDIRCD:
 		if not rm: repls[pre], upd = line, {pre: line}
 		else: upd = {pre: None}
 		if not save: return send(f'Updated runtime replacement rules [ {pre} ]')
-		try: p = self.conf.update_file_section('replacements', upd)
+		try: p = self.conf.update_file_section('send-replacements', upd)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		return send(f'Updated [replacements] section in config file [ {p.name} ]')
+		return send(f'Updated [send-replacements] section in config file [ {p.name} ]')
 
 	def _cmd_chan_sys_ccx(self, send, dst_file, chan):
 		cm = self.cmd_chan_map() # should be in caches too
@@ -3647,10 +3633,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
-		self.filters, self.replacements = dict(), adict()
+		self.filters, self.send_repls = dict(), cs.defaultdict(list)
 		self.log = get_logger('rdircd.state')
-		self.replacements._track( cb=lambda _a=
-			self.replacements.attrs: _a.update(gen=_a.get('gen', 0) + 1) )
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
 			else: continue
@@ -3696,7 +3680,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
 	filter_pattern_t = cs.namedtuple('filter_pattern', 'rx pat')
-	def filter_pattern(self, pat):
+	def filter_pattern(self, pat): # XXX
 		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
 		if (rx := pat).startswith('re:'): rx = re.compile(rx[3:], re.I)
 		elif rx.startswith('glob:'): rx = re.compile('^'+fnmatch.translate(rx[5:]), re.I)
@@ -3704,6 +3688,19 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if rx.startswith('#'): rx = rx[1:]
 			rx = re.compile(f'^{re.escape(rx)}$', re.I)
 		return self.filter_pattern_t(rx, pat)
+
+	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm')
+	def make_send_repl(self, key, val):
+		try:
+			pre, comm = key.rsplit('.', 1)
+			sub_re, sub = val.split(' -> ', 1)
+			sub_re = re.compile(sub_re)
+			if sub == '<block!>': sub = None
+		except Exception as err:
+			raise ValueError(
+				'[send-replacements] pattern parsing error'
+				f' [ {key!r} = {val!r} ]: {err_fmt(err)}' )
+		return self.send_repl_t(key, val, pre, sub_re, sub, comm)
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
@@ -3735,13 +3732,14 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				if comm.startswith(f'; {k_full}'): comm = f'; {k}' + comm[len(k_full) + 2:]
 				print(comm)
 			print(f'{k} = {self.val_to_opt(v)}')
-		for sk in 'renames', 'replacements':
-			if not (sec := getattr(self, sk)): continue
-			print(f'\n[{sk}]')
-			for k, v in sec.items():
-				if isinstance(k, tuple): k = '.'.join(k)
-				print(f'{k} = {self.val_to_opt(v)}')
-		if self.filters:
+		if sec := self.renames:
+			print('\n[renames]')
+			for k, v in sec.items(): print(f'{".".join(k)} = {self.val_to_opt(v)}')
+		if sec := self.send_repls:
+			print('\n[send-replacements]')
+			for repl in it.chain.from_iterable(sec.values()):
+				print(f'{repl.key} = {self.val_to_opt(repl.val)}')
+		if self.filters: # XXX
 			print('\n[unmonitor]')
 			for k, mx in self.filters.items(): print(f'{k} = {mx.pat}')
 
@@ -3776,11 +3774,14 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 
-		self.replacements.clear()
-		if conf_file.has_section('replacements'):
+		self.send_repls.clear()
+		for new, sk in enumerate(['replacements', 'send-replacements']):
+			if not conf_file.has_section(sk): continue
+			if not new: self._conf_sections_old_found.add(sk)
 			val_conv = self.opt_to_val_func(str)
-			self.replacements.update( (k, val_conv(v or ''))
-				for k, v in conf_file['replacements'].items() )
+			for k, v in conf_file[sk].items():
+				repl = self.make_send_repl(k, val_conv(v or ''))
+				self.send_repls[repl.pre].append(repl)
 
 		self.filters.clear(); filters_old = dict()
 		if conf_file.has_section('filters'): # deprecated section
