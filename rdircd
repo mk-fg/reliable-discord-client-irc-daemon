@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.10' # git-version: py-str
+	version = '23.05.11' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3380,13 +3380,15 @@ class RDIRCD:
 		line = line.split(None, n)[-1]
 		if rm: key = line
 		else:
-			try:
-				n = (ls := line.split()).index('=')
-				key = line.rsplit(None, len(ls)-n)[0].strip()
-				pat = line.split(None, n+1)[n+1].rstrip()
-				if not pat: raise ValueError
-			except (ValueError, IndexError):
-				return send(f'ERROR: Invalid "[comment... =] pattern" spec: {line!r}')
+			if '=' in (ls := line.split()):
+				try:
+					n = ls.index('=')
+					key = line.rsplit(None, len(ls)-n)[0].strip()
+					pat = line.split(None, n+1)[n+1].rstrip()
+					if not pat: raise ValueError
+				except (ValueError, IndexError):
+					return send(f'ERROR: Invalid "[comment... =] pattern" spec: {line!r}')
+			else: key, pat = '', line.strip()
 			if not key or key == '=': key = f'pattern.{str_hash(pat, 6)}'
 		if rm:
 			if key not in conf: return send(f'ERROR: No such filter [ {key} ]')
@@ -3395,8 +3397,7 @@ class RDIRCD:
 			return send(f'ERROR: Same filter-pattern already set for [ {key} ]')
 		else: conf[key] = conf_make(pat)
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
-		if not save:
-			return send(f'Updated runtime filters (not saved to ini): {upd}')
+		if not save: return send(f'Updated runtime filters (not saved to ini): {upd}')
 		try: p = self.conf.update_file_section(sec, {key: None if rm else pat})
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')

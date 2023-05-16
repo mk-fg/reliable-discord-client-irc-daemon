@@ -729,7 +729,7 @@ and <regexp> value is a regular expression to match against the message in
 presented above, and same as can be seen in monitor-channels.
 
 Any message received from discord will be matched against all regexps in order,
-stopping and discarding the message on any first match.
+stopping and discarding the message everywhere on first (any) match.
 So it might be a good idea to write as precise patterns as possible, to avoid
 them matching anything else and dropping unrelated messages accidentally.
 
