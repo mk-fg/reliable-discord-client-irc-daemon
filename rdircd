@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.9' # git-version: py-str
+	version = '23.05.10' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3229,6 +3229,13 @@ class RDIRCD:
 					'    Run without args to print a list of current filters for these channels.',
 					'    Usage example: um -s ignore all #forum threads = glob:*.forum.=*',
 				'',
+				'  rx [-s|--save] {-r|--rm} comment/key...',
+				'  rx [-s|--save] [ comment/key... = ] regexp -',
+					'     add/remove recv-regexp-filters for all messages received from discord.',
+					'    Works in the same way as "unmonitor" command above.',
+					'    Run without arguments to print current contents of that config section.',
+					'    Usage example: rx temp-mute-this-bot = ^<spam-bot>',
+				'',
 				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] -',
 					'     add/remove regexp-replacements/blocks for outgoing messages.',
 					'    Similar to "unmonitor" above - adds/removes line(s) for [send-replacements].',
@@ -3261,6 +3268,7 @@ class RDIRCD:
 				send('discord: disconnecting')
 				self.discord.disconnect()
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
+			elif cmd == 'rx': self._cmd_chan_sys_recv_filters(send, line_raw)
 			elif cmd == 'repl': self._cmd_chan_sys_repl(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
 			elif cmd == 'reload':
@@ -3349,39 +3357,50 @@ class RDIRCD:
 
 	def _cmd_chan_sys_unmonitor(self, send, line):
 		'Implementation for control-channel "unmonitor" command'
+		self._cmd_chan_sys_filters( send, line, 'unmonitor',
+			self.conf.unmon_filters, self.conf.make_unmon_pattern )
+
+	def _cmd_chan_sys_recv_filters(self, send, line):
+		'Implementation for control-channel "rx" command'
+		self._cmd_chan_sys_filters(
+			send, line, 'recv-regexp-filter',
+			self.conf.recv_filters, self.conf.make_recv_filter )
+
+	def _cmd_chan_sys_filters(self, send, line, sec, conf, conf_make):
+		'Generic implementation for cmd to add/remove regexp filters'
 		rm = save = False
 		for n, opt in enumerate(line.split()[1:], 1):
 			if opt in ['-r', '--rm']: rm = True
 			elif opt in ['-s', '--save']: save = True
 			else: break
 		else:
-			send( 'Current monitor/leftover'
-				f' channel filters ({len(self.conf.unmon_filters)} in total):' )
-			for k, mx in self.conf.unmon_filters.items(): send(f'  {k} = {mx.pat}')
+			send(f'Current [{sec}] filters ({len(conf)} in total):')
+			for k, mx in conf.items(): send(f'  {k} = {mx.pat}')
 			return
 		line = line.split(None, n)[-1]
 		if rm: key = line
 		else:
-			pat = (key := line.rsplit(None, 1)).pop()
-			if key:
-				if (key := key[0].rsplit(None, 1)).pop() != '=':
-					return send(f'ERROR: Invalid "[comment... =] pattern" spec: {line!r}')
-				if key: key = key[0].strip()
-			if not key: key = f'pattern.{str_hash(pat, 6)}'
+			try:
+				n = (ls := line.split()).index('=')
+				key = line.rsplit(None, len(ls)-n)[0].strip()
+				pat = line.split(None, n+1)[n+1].rstrip()
+				if not pat: raise ValueError
+			except (ValueError, IndexError):
+				return send(f'ERROR: Invalid "[comment... =] pattern" spec: {line!r}')
+			if not key or key == '=': key = f'pattern.{str_hash(pat, 6)}'
 		if rm:
-			if key not in self.conf.unmon_filters:
-				return send(f'ERROR: No such filter [ {key} ]')
-			del self.conf.unmon_filters[key]
-		elif (mx := self.conf.unmon_filters.get(key)) and mx.pat == pat:
+			if key not in conf: return send(f'ERROR: No such filter [ {key} ]')
+			del conf[key]
+		elif (mx := conf.get(key)) and mx.pat == pat:
 			return send(f'ERROR: Same filter-pattern already set for [ {key} ]')
-		else: self.conf.unmon_filters[key] = self.conf.make_unmon_pattern(pat)
+		else: conf[key] = conf_make(pat)
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save:
 			return send(f'Updated runtime filters (not saved to ini): {upd}')
-		try: p = self.conf.update_file_section('unmonitor', {key: None if rm else pat})
+		try: p = self.conf.update_file_section(sec, {key: None if rm else pat})
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		send(f'Updated [unmonitor] in config file [ {p.name} ]: {upd}')
+		send(f'Updated [{sec}] in config file [ {p.name} ]: {upd}')
 
 	def _cmd_chan_sys_repl(self, send, line_raw):
 		'Implementation for control-channel "repl" command'
@@ -3599,8 +3618,8 @@ class RDIRCD:
 
 		if recv_rxs := self.conf.recv_filters:
 			recv_msg = f'<{nick}> {prefix_mon}{line}' # can be multiline
-			for k, rx in recv_rxs.items():
-				if not rx.search(recv_msg): continue
+			for k, mx in recv_rxs.items():
+				if not mx.rx.search(recv_msg): continue
 				return self.log.debug(
 					'recv-regexp-filter msg-drop [ {} ]: {}',
 					k, str_cut(recv_msg, self.conf.debug_msg_cut) )
@@ -3689,7 +3708,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
-	unmon_pattern_t = cs.namedtuple('unmon', 'rx pat')
+	rx_pattern_t = cs.namedtuple('regexp', 'rx pat')
+	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm')
+
 	def make_unmon_pattern(self, pat):
 		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
 		if (rx := pat).startswith('re:'): rx = re.compile(rx[3:], re.I)
@@ -3697,9 +3718,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		else:
 			if rx.startswith('#'): rx = rx[1:]
 			rx = re.compile(f'^{re.escape(rx)}$', re.I)
-		return self.unmon_pattern_t(rx, pat)
+		return self.rx_pattern_t(rx, pat)
 
-	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm')
+	def make_recv_filter(self, pat):
+		return self.rx_pattern_t(re.compile(pat, re.DOTALL), pat)
+
 	def make_send_repl(self, key, val):
 		try:
 			pre, comm = key.rsplit('.', 1)
@@ -3749,9 +3772,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			print('\n[send-replacements]')
 			for repl in it.chain.from_iterable(sec.values()):
 				print(f'{repl.key} = {self.val_to_opt(repl.val)}')
-		if self.unmon_filters:
+		if sec := self.unmon_filters:
 			print('\n[unmonitor]')
-			for k, mx in self.unmon_filters.items(): print(f'{k} = {mx.pat}')
+			for k, mx in sec.items(): print(f'{k} = {mx.pat}')
+		if sec := self.recv_filters:
+			print('\n[recv-regexp-filters]')
+			for k, mx in sec.items(): print(f'{k} = {mx.pat}')
 
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
@@ -3816,7 +3842,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		self.recv_filters.clear()
 		if conf_file.has_section('recv-regexp-filters'):
 			for k, pat in conf_file['recv-regexp-filters'].items():
-				if pat: self.recv_filters[k] = re.compile(pat, re.DOTALL)
+				if pat: self.recv_filters[k] = self.make_recv_filter(pat)
 
 		return conf_paths
 

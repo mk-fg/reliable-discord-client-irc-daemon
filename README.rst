@@ -705,8 +705,9 @@ If you join #rdircd.monitor channel, see - for example - a message like this::
 
   <helper-bot> #pub.welcomes :: Welcome!
 
-...and think "don't want to see messages like that again!" -
-config files' "[recv-regexp-filters]" section can help.
+...and think "don't want to see messages like that again!" - config files'
+"[recv-regexp-filters]" section or corresponding "rx" command in #rdircd.control
+channel can help.
 
 Depending on what "messages like that" means, here are some ways to filter those out::
 
