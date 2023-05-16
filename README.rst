@@ -70,7 +70,8 @@ Features
 - Limited translation for using discord user mentions in sent messages,
   edits and deletions.
 
-- Configurable local name aliases/renames, outgoing message blocks/replacements.
+- Configurable local name aliases/renames, outgoing message blocks/replacements,
+  regexp-filtering for received messages.
 
 - Support for limited runtime reconfiguration via #rdircd.control channel.
 
@@ -657,11 +658,11 @@ sending discord push notifications for it, same as with the official client.
 That and similar message flags on incoming messages are not represented
 in any way, as they don't seem to be relevant for an irc client anyway.
 
-Configurable replacements/blocks in outgoing messages
-`````````````````````````````````````````````````````
+Custom replacements/blocks in outgoing messages
+```````````````````````````````````````````````
 
-Config can have a [send-replacements] section to block or regexp-replace parts
-of messages sent from IRC on per-discord basis.
+Config can have a [send-replacements] section to block or regexp-replace
+parts of messages sent (by you) from IRC on per-discord basis.
 
 This can be used to add discord-specific tags, unicode shorthands, emojis,
 stickers, block/replace specific links or maybe even words/language before
@@ -696,6 +697,63 @@ like @username that can normally be typed in messages can be used there too.
 #rdircd.control channel has "repl" command to edit these rules on-the-fly.
 
 .. _re.sub(): https://docs.python.org/3/library/re.html#re.sub
+
+Custom filtering for all received messages
+``````````````````````````````````````````
+
+If you join #rdircd.monitor channel, see - for example - a message like this::
+
+  <helper-bot> #pub.welcomes :: Welcome!
+
+...and think "don't want to see messages like that again!" -
+config files' "[recv-regexp-filters]" section can help.
+
+Depending on what "messages like that" means, here are some ways to filter those out::
+
+  [recv-regexp-filters]
+  discard msgs from this bot = ^<helper-bot>
+  ignore all msgs in that channel of that discord = ^\S+ #pub\.welcomes ::
+  drop all msgs from "pub" discord = ^\S+ #pub\.
+  no messages from #welcomes channels of any discord pls = ^\S+ #\w+\.welcomes ::
+  never see "Welcome!" message-text again!!! = ^\S+ #\S+ :: Welcome!$
+  some combination of the above = (?i)^<helper-bot> #\w+\.welcomes ::
+  ...
+
+(tweak e.g. `last example on regex101.com`_ for more hands-on understanding)
+
+Lines in that section have the usual ``<key> = <regexp>`` form, where <key>
+part can be anything (e.g. comment to explain regexp, like in examples above),
+and <regexp> value is a regular expression to match against the message in
+``<user> #discord.channel-name :: message`` format like that helper-bot msg
+presented above, and same as can be seen in monitor-channels.
+
+Any message received from discord will be matched against all regexps in order,
+stopping and discarding the message on any first match.
+So it might be a good idea to write as precise patterns as possible, to avoid
+them matching anything else and dropping unrelated messages accidentally.
+
+Same as with some other conf options, basic knowledge of regular expressions
+might be needed to use such filters - `here's a link to nice tutorial on those`_
+(though there are 100s of such tutorials on the web).
+
+Particular regexps here use PCRE-like `python re syntax`_, with re.DOTALL flag set
+(``.`` matches newlines in multiline messages).
+I'd also recommend commonly adding ``(?i)`` case-insensitive-match flag,
+as IRC nicks and channel names ignore character case and can be displayed
+in misleading/inprecise ways in the client.
+
+More random examples of recv-regexp-filters::
+
+  [recv-regexp-filters]
+  skip one specific message = ^<help-bot> #work\.ci :: Please wait$
+  disregard wordle thread there = ^\S+ #pub\.general\.=wwmk\.wordle ::
+  ignore #bot-commands channel msgs = ^\S+ #\w+\.bot-commands[. ]
+  drop anything from "mee6" bots = (?i)^<MEE6>
+  activity-level bots are annoying! = (?i) advanced to level \d+[ !]
+
+.. _last example on regex101.com: https://regex101.com/r/VMvyfS/2
+.. _python re syntax: https://docs.python.org/3/howto/regex.html
+.. _here's a link to nice tutorial on those: https://github.com/ziishaned/learn-regex
 
 Lookup Discord IDs
 ``````````````````

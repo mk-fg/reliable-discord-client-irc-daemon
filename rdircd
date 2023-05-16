@@ -21,7 +21,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.8' # git-version: py-str
+	version = '23.05.9' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3213,7 +3213,7 @@ class RDIRCD:
 					'    Run without args to get full list of options with their current values.',
 					'    Not all values changed this way will have an effect without restart.',
 				'',
-				'  reload - (alias: re) re-read configuration from same ini files as on start.',
+				'  reload - re-read configuration from same ini files as on start.',
 					'    Same as with "set" command, some changes don\'t take effect at runtime.',
 				'',
 				'  unmonitor [-s|--save] {-r|--rm} comment/key...',
@@ -3263,7 +3263,7 @@ class RDIRCD:
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
 			elif cmd == 'repl': self._cmd_chan_sys_repl(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
-			elif cmd in ['reload', 're']:
+			elif cmd == 'reload':
 				try: conf_paths = self.conf.read_from_file()
 				except Exception as err:
 					return send(f'ERROR: failed to reload config files - {err_fmt(err)}')
@@ -3278,7 +3278,7 @@ class RDIRCD:
 				elif cmd == 'cc':
 					nick = msg = None
 					if len(line) > 2: nick = line[2]
-					if len(line) > 3: msg = line_raw.split(None, 2)[-1]
+					if len(line) > 3: msg = line_raw.split(None, 3)[-1]
 					return self._cmd_chan_sys_cc(send, line[1], nick, msg)
 				send(f'Unknown command: {cmd}')
 		except Exception as err:
@@ -3591,14 +3591,24 @@ class RDIRCD:
 				prefix = f'{self.conf.irc_prefix_all_private}{prefix}'
 			if self.conf.irc_prefix_all: prefix = f'{self.conf.irc_prefix_all}{prefix}'
 
-		if name:
-			# Relay message to direct-proxy IRC channel
-			for conn, line in it.product(conns_joined, line.splitlines()):
-				conn.cmd_msg_chan(nick, name, f'{prefix}{line}', notice=notice)
-		else: # fallback pseudo-channel name to use with monitors
+		if skip_chan := not name: # fallback pseudo-channel name to use with monitors
 			self.log.warning( 'Failed to resolve channel did'
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
 			name = f'ERR [ {cc.gg.name} ] {cc.name}'
+		prefix_mon = f'{IRCProtocol.chan_spec(name)} :: {prefix}'
+
+		if recv_rxs := self.conf.recv_filters:
+			recv_msg = f'<{nick}> {prefix_mon}{line}' # can be multiline
+			for k, rx in recv_rxs.items():
+				if not rx.search(recv_msg): continue
+				return self.log.debug(
+					'recv-regexp-filter msg-drop [ {} ]: {}',
+					k, str_cut(recv_msg, self.conf.debug_msg_cut) )
+
+		# Relay message to direct-proxy IRC channel
+		if not skip_chan:
+			for conn, line in it.product(conns_joined, line.splitlines()):
+				conn.cmd_msg_chan(nick, name, f'{prefix}{line}', notice=notice)
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
@@ -3609,8 +3619,7 @@ class RDIRCD:
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
 				conns_joined += self.cmd_chan_conns(cc.parent)
-		self.cmd_msg_monitor( nick, line,
-			prefix=f'{IRCProtocol.chan_spec(name)} :: {prefix}',
+		self.cmd_msg_monitor( nick, line, prefix=prefix_mon,
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined )
 
 	def cmd_msg_rename_func(self, cc):
@@ -3633,7 +3642,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
-		self.unmon_filters, self.send_repls = dict(), cs.defaultdict(list)
+		self.unmon_filters, self.recv_filters = dict(), dict()
+		self.send_repls = cs.defaultdict(list)
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -3802,6 +3812,11 @@ class RDIRCDConfig(RDIRCDConfigBase):
 					raise ValueError( '[unmonitor] config line seem to have pattern'
 						f' used as a key, not as value in "<some-key> = <pattern>" format: {kv}' )
 				if pat: self.unmon_filters[k] = self.make_unmon_pattern(pat)
+
+		self.recv_filters.clear()
+		if conf_file.has_section('recv-regexp-filters'):
+			for k, pat in conf_file['recv-regexp-filters'].items():
+				if pat: self.recv_filters[k] = re.compile(pat, re.DOTALL)
 
 		return conf_paths
 
