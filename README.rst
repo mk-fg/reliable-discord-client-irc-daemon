@@ -725,8 +725,8 @@ Depending on what "messages like that" means, here are some ways to filter those
 Lines in that section have the usual ``<key> = <regexp>`` form, where <key>
 part can be anything (e.g. comment to explain regexp, like in examples above),
 and <regexp> value is a regular expression to match against the message in
-``<user> #discord.channel-name :: message`` format like that helper-bot msg
-presented above, and same as can be seen in monitor-channels.
+``<user> #discord.channel-name :: message text`` format like that helper-bot
+msg presented above, and same as can be seen in monitor-channels.
 
 Any message received from discord will be matched against all regexps in order,
 stopping and discarding the message everywhere on first (any) match.

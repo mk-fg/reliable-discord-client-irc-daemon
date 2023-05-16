@@ -11,7 +11,6 @@ import logging, logging.handlers
 import aiohttp
 
 
-
 class RDIRCDConfigBase:
 	# This is a regular ini file with key=value lines under couple sections.
 	# String time intervals can be either simple floats or stuff like
@@ -21,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.11' # git-version: py-str
+	version = '23.05.12' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -207,6 +206,113 @@ class RDIRCDConfigBase:
 				f' "aaa" and "bbb" groups to capture pattern/replacement: {v!r}' )
 		return rx
 
+
+doc_control_chan_cmds = '''
+Commands:
+  status - [alias: st] show whether discord is connected and working.
+  connect - [alias: on] connect/login to discord.
+  disconnect - [alias: off] disconnect from discord.
+
+  set [-s|--save] [option value] - set config option value,
+     saving it to the last ini file if -s/--save is specified.
+    Run without args to get full list of options with their current values.
+    Not all values changed this way will have an effect without restart.
+
+  reload - re-read configuration from same ini files as on start.
+    Same as with "set" command, some changes don't take effect at runtime.
+
+  rx [-s|--save] [ comment/key... = ] regexp pattern
+  rx [-s|--save] {{-r|--rm}} comment/key...
+    Add/remove regexp filters to drop messages received from discord.
+    Changes [recv-regexp-filters] ini-file section filters on-the-fly,
+     to drop received msgs from any channels they'd otherwise appear in,
+     saving updates to last ini file if -s/--save option is specified.
+    Pattern must be a python regular expression to match against
+     a string like "<usernick> #discord.channel-name :: message text",
+     like it'd also normally appear in the monitor/leftover channels.
+    "comment/key" before pattern (if any) will be used as key in ini file,
+     and for removal with -r/--rm option, auto-generated if missing.
+    Run as just "rx" to print full list of current recv-regexp-filters.
+    Usage example: rx temp-mute this bot = ^<spam-bot>
+
+  unmonitor [-s|--save] [ comment/key... = ] [#]channel/pattern
+  unmonitor [-s|--save] {{-r|--rm}} comment/key...
+    [alias: um] (un-)skip messages from discord channel
+     (matched by name/pattern) in all monitor/leftover channels.
+    Command works in a similar way to "rx" above.
+    Channel-pattern can be an exact channel name (leading # is optional),
+     "glob:..." filename-wildcard-like pattern, or "re:..." regexp-pattern.
+    Run without args to print a list of current filters for these channels.
+    Usage example: um -s ignore all #forum threads = glob:*.forum.=*
+
+  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ]
+    Add/remove regexp-replacements/blocks for outgoing messages.
+    Works similar to "rx" and "unmonitor" commands above,
+     but adds/removes stuff for [send-replacements] config file section.
+    "prefix.comment" should have a discord prefix - same as IRC channels
+     have - or a special * value to use that replacement in all discords,
+     and "comment" part after that is just any arbitrary/unique key.
+    "re"/"sub" patterns work same as in python's re.sub() function.
+    Run without arguments to print current contents of that config section.
+    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ'''
+
+doc_control_chan_dev_cmds = '''
+Developer-commands for breaking and testing stuff:
+
+  ccx file channel - dump all internal state for a working discord channel to file.
+    Resulting YAML file can then be used with "cc" command to load the state and
+     test-generate/send messages to that channel without connecting to discord.
+    This is intended for testing various rdircd msg-handling stuff, such as filters.
+    YAML can also be inspected or tweaked to understand/test internal state issues.
+    Requires "pyaml" module, which is used for serialization.
+
+  cc file [nick [msg...]] - load YAML-dump of discord-chan state, send msg to it.
+    Same channel as specified with "ccx" command that produced the YAML is used.
+    If nick/msg is not specified, some unique placeholder ones are auto-generated.
+    Intended use is to rapidly test various internal message-handling code
+     without needing an actual discord connection, like msg filtering or processing.'''
+
+doc_debug_chan_cmds = '''
+This channel is for logging output, with level=warning by default,
+  unless --debug is specified on command line, or [debug] verbose=yes in ini.
+
+Status:
+  log level: {level}
+  log msg counts: {log_msg_counts}
+  protocol log: {proto_log_info}
+  protocol log shared: {proto_log_shared}
+
+Recognized commands here:
+  level warning - (alias: w) only dump warnings and errors here.
+  level info - (alias: i) set level=info (default) logging in this channel.
+    That mostly adds connection stuff - disconnects, reconnects, auth, etc.
+  level debug - (alias: d) enable level=debug logging in this channel.
+    Includes protocol info (if shared), events, messages and everything else.
+  level error, level critical - more quiet than other levels above.
+  proto <file> - enable irc/discord protocol logging to specified file.
+  proto off - (alias: px) disable irc/discord protocol logging.
+  proto share/unshare - (alias: ps/pu)
+    whether to dump protocol logging (level=debug) to regular logs.
+  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines
+    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).'''
+
+doc_topic_cmds = '''
+--- Topic-commands:
+  set {topic...} - set topic, as usual irc /topic command would do.
+  info - show some internal guild/channel information, like IDs and such for renames.
+  log [state] - replay history since "state" point (default: last rdircd stop).
+    "state" value can be either a number, state-id, relative or iso8601 timestamp.
+    Where number indicates last Nth state recorded in the config (0 - current).
+    E.g. "log 1" (same as just "log") will replay messages in the channel,
+     starting from last ev before last rdircd shutdown (saved under [state] in ini).
+    Timestamp examples: 2019-01-05T2:00, 2019-01-08 12:30:00, 2h, 1d 5h 30m, 1mo5d.
+    Relative timespan units: y/yr/year, mo/month,
+      w/week, d/day, h/hr/hour, m/min/minute, s/sec/second.
+  log list - list recorded state ids/timestamps, most recent one last.
+---'''
+
+doc_fmt_lines = lambda s,**kws: '\n'.join(
+	f'-- {line}'.strip() for line in s.format(**kws).strip().splitlines() )
 
 
 err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
@@ -2914,18 +3020,7 @@ class RDIRCD:
 			conn.cmd_msg_chan, self.conf.irc_nick_sys, chan, notice=True )
 		cmd = line.split(None, 1)
 		if not line.strip() or cmd[0] in ['h', 'help']:
-			return notice_cmd('\n'.join([ '--- Topic-commands:',
-				'  set {topic...} - set topic, as usual irc /topic command would do.',
-				'  info - show some internal guild/channel information, like IDs and such for renames.',
-				'  log [state] - replay history since "state" point (default: last rdircd stop).',
-				'    "state" value can be either a number, state-id, relative or iso8601 timestamp.',
-				'    Where number indicates last Nth state recorded in the config (0 - current).',
-				'    E.g. "log 1" (same as just "log") will replay messages in the channel,',
-				'     starting from last ev before last rdircd shutdown (saved under [state] in ini).',
-				'    Timestamp examples: 2019-01-05T2:00, 2019-01-08 12:30:00, 2h, 1d 5h 30m, 1mo5d.',
-				'    Relative timespan units: y/yr/year, mo/month,',
-				'      w/week, d/day, h/hr/hour, m/min/minute, s/sec/second.',
-				'  log list - list recorded state ids/timestamps, most recent one last.', '---' ]) )
+			return notice_cmd(doc_topic_cmds.strip())
 		try:
 			if cmd[0] == 'set':
 				raise IRCBridgeSignal('Changing topic is not implemented')
@@ -3200,66 +3295,14 @@ class RDIRCD:
 		if not (line := line_raw.strip().lower().split()): return
 		cmd, send = line[0], ft.partial(conn.cmd_msg_chan, self.conf.irc_nick_sys, chan)
 		if cmd in ['h', 'help']:
-			self._cmd_chan_sys_status(send)
-			return send('\n'.join([
-				'',
-				'Commands:',
-				'  status - (alias: st) show whether discord is connected and working',
-				'  connect - (alias: on) connect/login to discord',
-				'  disconnect - (alias: off) disconnect from discord',
-				'',
-				'  set [-s|--save] [option value] - set config option value,',
-					'     saving it to the last ini file if -s/--save is specified.',
-					'    Run without args to get full list of options with their current values.',
-					'    Not all values changed this way will have an effect without restart.',
-				'',
-				'  reload - re-read configuration from same ini files as on start.',
-					'    Same as with "set" command, some changes don\'t take effect at runtime.',
-				'',
-				'  unmonitor [-s|--save] {-r|--rm} comment/key...',
-				'  unmonitor [-s|--save] [ comment/key... = ] [#]channel/pattern - (alias: um)',
-					'     (un-)skip discord channel name/pattern in all monitor/leftover channels.',
-					'    Changes [unmonitor] ini config-file section filters on-the-fly,',
-					'     to drop msgs from discord-chan(s) from monitor/leftover channels,',
-					'     saving updates to last ini file if -s/--save option is specified.',
-					'    Channel-pattern can be an exact channel name (leading # is optional),',
-					'     "glob:..." filename-wildcard-like pattern, or "re:..." regexp-pattern.',
-					'    Comment/key value before pattern (if any), will be used as a key in ini file,',
-					'     and for removal with -r/--rm option, or auto-generated otherwise.',
-					'    Run without args to print a list of current filters for these channels.',
-					'    Usage example: um -s ignore all #forum threads = glob:*.forum.=*',
-				'',
-				'  rx [-s|--save] {-r|--rm} comment/key...',
-				'  rx [-s|--save] [ comment/key... = ] regexp -',
-					'     add/remove recv-regexp-filters for all messages received from discord.',
-					'    Works in the same way as "unmonitor" command above.',
-					'    Run without arguments to print current contents of that config section.',
-					'    Usage example: rx temp-mute-this-bot = ^<spam-bot>',
-				'',
-				'  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ] -',
-					'     add/remove regexp-replacements/blocks for outgoing messages.',
-					'    Similar to "unmonitor" above - adds/removes line(s) for [send-replacements].',
-					'    Run without arguments to print current contents of that config section.',
-					'    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ',
-				'',
-				*([] if not self.conf.debug_dev_cmds else [
-				'Developer-commands for breaking and testing stuff:',
-				'',
-				'  ccx file channel - dump all internal state for a working discord channel to file.',
-					'    Resulting YAML file can then be used with "cc" command to load the state and',
-					'     test-generate/send messages to that channel without connecting to discord.',
-					'    This is intended for testing various rdircd msg-handling stuff, such as filters.',
-					'    YAML can also be inspected or tweaked to understand/test internal state issues.',
-					'    Requires "pyaml" module, which is used for serialization.',
-				'',
-				'  cc file [nick [msg...]] - load YAML-dump of discord-chan state, send msg to it.',
-					'    Same channel as specified with "ccx" command that produced the YAML is used.',
-					'    If nick/msg is not specified, some unique placeholder ones are auto-generated.',
-					'    Intended use is to rapidly test various internal message-handling code',
-					'     without needing an actual discord connection, like msg filtering or processing.',
-				'' ]),
-				'Only immediate response to sent commands is logged here - no noise over time.' ]))
-		elif cmd in ['status', 'st']: return self._cmd_chan_sys_status(send)
+			return send(doc_fmt_lines(
+				self._cmd_chan_sys_status() + '\n'
+				+ doc_control_chan_cmds
+				+ ( '' if not self.conf.debug_dev_cmds
+					else ('\n' + doc_control_chan_dev_cmds + '\n\n') )
+				+ 'Only immediate response to sent'
+					' commands is logged here - no noise over time.' ))
+		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status())
 		try:
 			if cmd in ['connect', 'on']:
 				send('discord: connection started')
@@ -3293,7 +3336,7 @@ class RDIRCD:
 			send(f'ERROR: BUG - "{cmd}" command failed: {err_fmt(err)}')
 			raise
 
-	def _cmd_chan_sys_status(self, send):
+	def _cmd_chan_sys_status(self):
 		'Implementation for status display in control-channel'
 		st, ts = self.discord.st, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
@@ -3301,13 +3344,13 @@ class RDIRCD:
 			(v and repr_duration(ts, v, ext=None))
 			for v in (st.get(k, '') for k in ('session_ts', 'connect_ts')) )
 		if sess_st != 'ready': conn_time = ''
-		send('\n'.join([ 'Status:',
+		return '\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
 			f'  session-id: {sess_id}',
 			f'  session-time: {sess_time}',
 			f'  connection-time: {conn_time}',
 			f'  connection-gateway: {self.conf.discord_gateway}',
-			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ]))
+			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ])
 
 	def _cmd_chan_sys_set(self, send, line, line_raw):
 		'Implementation for control-channel "set" command'
@@ -3481,27 +3524,10 @@ class RDIRCD:
 				proto_log_info = logging.getLevelName(self.conf._debug_proto.level).lower()
 				proto_log_info = ( 'disabled' if proto_log_info == 'warning'
 					else f'enabled, file={self.conf._debug_proto.get_file()}' )
-			return send('\n'.join(f'-- {line}' for line in [
-				'This channel is for logging output, with level=warning by default,',
-				'  unless --debug is specified on command line, or [debug] verbose=yes in ini.',
-				f'Status:',
-				f'  log level: {level}',
-				f'  log msg counts: {self.cmd_chan_sys_log_counts()}',
-				f'  protocol log: {proto_log_info}',
-				f'  protocol log shared: {proto_log_shared}',
-				'Recognized commands here:',
-				'  level warning - (alias: w) only dump warnings and errors here',
-				'  level info - (alias: i) set level=info (default) logging in this channel',
-				'    That mostly adds connection stuff - disconnects, reconnects, auth, etc.',
-				'  level debug - (alias: d) enable level=debug logging in this channel',
-				'    Includes protocol info (if shared), events, messages and everything else.',
-				'  level error, level critical - more quiet than other levels above',
-				'  proto {file} - enable irc/discord protocol logging to specified file',
-				'  proto off - (alias: px) disable irc/discord protocol logging',
-				'  proto share/unshare - (alias: ps/pu)',
-				'    whether to dump protocol logging (level=debug) to regular logs',
-				f'  proto tail [n] [cut] - (alias: pt) dump "n" (default={pt_n}) tail lines',
-				f'    of protocol log file (if enabled), limited to "cut" length (default={pt_cut}).' ]))
+			return send(doc_fmt_lines( doc_debug_chan_cmds,
+				level=level, pt_n=pt_n, pt_cut=pt_cut,
+				log_msg_counts=self.cmd_chan_sys_log_counts(),
+				proto_log_info=proto_log_info, proto_log_shared=proto_log_shared ))
 		with cl.suppress(KeyError):
 			line = dict(
 				i='level info', d='level debug', w='level warning',
