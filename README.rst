@@ -737,20 +737,32 @@ Same as with some other conf options, basic knowledge of regular expressions
 might be needed to use such filters - `here's a link to nice tutorial on those`_
 (though there are 100s of such tutorials on the web).
 
-Particular regexps here use PCRE-like `python re syntax`_, with re.DOTALL flag set
-(``.`` matches newlines in multiline messages).
+Particular regexps here use PCRE-like `python re syntax`_, with re.DOTALL
+flag set (``.`` matches newlines in multiline messages).
 I'd also recommend commonly adding ``(?i)`` case-insensitive-match flag,
 as IRC nicks and channel names ignore character case and can be displayed
 in misleading/inprecise ways in the client.
 
-More random examples of recv-regexp-filters::
+More random examples of recv-regexp-filters, incl. more advanced CNF weirdness::
 
   [recv-regexp-filters]
-  skip one specific message = ^<help-bot> #work\.ci :: Please wait$
-  disregard wordle thread there = ^\S+ #pub\.general\.=wwmk\.wordle ::
-  ignore #bot-commands channel msgs = ^\S+ #\w+\.bot-commands[. ]
-  drop anything from "mee6" bots = (?i)^<MEE6>
-  activity-level bots are annoying! = (?i) advanced to level \d+[ !]
+  disregard wordle thread there = ^\S+ #pub\.general\.=w8mk\.wordle ::
+  ignore "wordle" threads everywhere = ^\S+ #\S+\.=\w{4}\.wordle ::
+  activity-level bots are annoying = (?i) advanced to level \d+[ !]
+
+  ;; Advanced stuff: connect multiple regexps via CNF logic (Conjunctive Normal Form)
+  ;; If key starts with "∧ " (conjunction symbol), it's AND'ed with previous regexp
+  ;; ¬ (negation) in that prefix inverts the logic, so e.g. "∧¬ ..." is "and not ..."
+  ;; Disjunction (∨) is the default behavior and doesn't need the (implied) prefix
+  ;; Any complex logical expression can be converted to such CNF form -
+  ;;  - use calculators like https://www.dcode.fr/boolean-expressions-calculator
+  Drop welcome msgs in welcome-chans = (?i)^\S+ #\w+\.\S*welcome\S* :: .*\bwelcome\b.*
+  ∧ but only if they have exclaimation mark in them = :: .*!
+  ∧¬ and not from this specific "lut" discord-prefix = ^\S+ #lut\.
+
+Pretty much anything can be matched with clever regexps, so CNF-logic stuff
+like in that last example is seldom useful, but might still be simplier than
+expressing arbitrary ordering or negation in regexps.
 
 .. _last example on regex101.com: https://regex101.com/r/VMvyfS/2
 .. _python re syntax: https://docs.python.org/3/howto/regex.html

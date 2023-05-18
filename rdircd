@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.12' # git-version: py-str
+	version = '23.05.13' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3644,12 +3644,17 @@ class RDIRCD:
 		prefix_mon = f'{IRCProtocol.chan_spec(name)} :: {prefix}'
 
 		if recv_rxs := self.conf.recv_filters:
-			recv_msg = f'<{nick}> {prefix_mon}{line}' # can be multiline
-			for k, mx in recv_rxs.items():
-				if not mx.rx.search(recv_msg): continue
+			m, recv_msg = False, f'<{nick}> {prefix_mon}{line}' # can be multiline
+			for n, (k, mx) in enumerate(recv_rxs.items()):
+				if op_and := re.search(r'^\s*∧+¬*(\s|$)', k[1:]):
+					if n and not m: continue # skip &&-tails after mismatch
+				elif m: break # standalone match found earlier
+				op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k[1:]))
+				if m := bool(mx.rx.search(recv_msg)) ^ op_not: m = k, recv_msg
+			if m:
 				return self.log.debug(
-					'recv-regexp-filter msg-drop [ {} ]: {}',
-					k, str_cut(recv_msg, self.conf.debug_msg_cut) )
+					'recv-regexp-filter msg-drop at [ {} ]: {}',
+					m[0], str_cut(m[1], self.conf.debug_msg_cut) )
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
