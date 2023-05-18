@@ -756,12 +756,17 @@ More random examples of recv-regexp-filters, incl. more advanced CNF weirdness::
   ;; Disjunction (∨) is the default behavior and doesn't need the (implied) prefix
   ;; Any complex logical expression can be converted to such CNF form -
   ;;  - use calculators like https://www.dcode.fr/boolean-expressions-calculator
+
   Drop welcome msgs in welcome-chans = (?i)^\S+ #\w+\.\S*welcome\S* :: .*\bwelcome\b.*
-  ∧ but only if they have exclaimation mark in them = :: .*!
+  ∧ but only if they have an exclaimation mark in them somewhere = :: .*!
   ∧¬ and not from this specific "lut" discord-prefix = ^\S+ #lut\.
 
+  Most channels here are not relevant = ^\S+ #myc\.
+  ∧¬ except these ones = ^\S+ #myc\.(announcements|changelog|forum)[. ]
+  ∨ but skip github CI logs there = ^<github> #myc\.
+
 Pretty much anything can be matched with clever regexps, so CNF-logic stuff
-like in that last example is seldom useful, but might still be simplier than
+like in last examples is seldom useful, but might still be simplier than
 expressing arbitrary ordering or negation in regexps.
 
 .. _last example on regex101.com: https://regex101.com/r/VMvyfS/2
