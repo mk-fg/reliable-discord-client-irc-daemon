@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.13' # git-version: py-str
+	version = '23.05.14' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -231,7 +231,8 @@ Commands:
      a string like "<usernick> #discord.channel-name :: message text",
      like it'd also normally appear in the monitor/leftover channels.
     "comment/key" before pattern (if any) will be used as key in ini file,
-     and for removal with -r/--rm option, auto-generated if missing.
+     for removal with -r/--rm option, and auto-generated if missing,
+     can have "∧ " "∧¬ " "¬ " prefixes to and/not the line (CNF logic).
     Run as just "rx" to print full list of current recv-regexp-filters.
     Usage example: rx temp-mute this bot = ^<spam-bot>
 
