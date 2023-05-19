@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.14' # git-version: py-str
+	version = '23.05.15' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3300,8 +3300,8 @@ class RDIRCD:
 				self._cmd_chan_sys_status() + '\n'
 				+ doc_control_chan_cmds
 				+ ( '' if not self.conf.debug_dev_cmds
-					else ('\n' + doc_control_chan_dev_cmds + '\n\n') )
-				+ 'Only immediate response to sent'
+					else ('\n' + doc_control_chan_dev_cmds) )
+				+ '\n\nOnly immediate response to sent'
 					' commands is logged here - no noise over time.' ))
 		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status())
 		try:
@@ -3815,7 +3815,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
 		else: conf_paths = self._conf_path_list
-		conf_file = configparser.ConfigParser(allow_no_value=True)
+		conf_file = configparser.ConfigParser(
+			delimiters='=', allow_no_value=True, empty_lines_in_values=False )
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
 
