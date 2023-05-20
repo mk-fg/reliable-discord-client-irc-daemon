@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.16' # git-version: py-str
+	version = '23.05.17' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -246,14 +246,15 @@ Commands:
     Run without args to print a list of current filters for these channels.
     Usage example: um -s ignore all #forum threads = glob:*.forum.=*
 
-  repl [-s|--save] [-r|--rm] [ prefix.comment [ = re -> sub ] ]
+  repl [-s|--save] [-r|--rm] [ prefix.comment = re [ -> subst ] ]
     Add/remove regexp-replacements/blocks for outgoing messages.
     Works similar to "rx" and "unmonitor" commands above,
      but adds/removes stuff for [send-replacements] config file section.
     "prefix.comment" should have a discord prefix - same as IRC channels
      have - or a special * value to use that replacement in all discords,
      and "comment" part after that is just any arbitrary/unique key.
-    "re"/"sub" patterns work same as in python's re.sub() function.
+    "re"/"subst" patterns work same as in python's re.sub() function.
+    If last "-> subst" part is omitted, "<block!>" value will be used.
     Run without arguments to print current contents of that config section.
     Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ'''
 
@@ -3454,24 +3455,28 @@ class RDIRCD:
 			else: line, opts = line[1], set(line[1].split()[:2])
 			if opts.intersection(['-r', '--rm']): rm, line = line.split(None, 1)
 			if opts.intersection(['-s', '--save']): save, line = line.split(None, 1)
-			if not line.strip(): pre = line = None
-			elif '=' not in line: pre, line = line.strip(), '<block!>'
-			else: pre, line = line.split('=', 1); pre, line = pre.strip(), line.lstrip()
+			if not line.strip(): key = line = None
+			elif rm: key = line.strip()
+			else:
+				key, line = line.split('=', 1); key, line = key.strip(), line.lstrip()
+				if ' -> ' not in line: line += ' -> <block!>'
 		except Exception as err:
-			return send(f'ERROR: Failed to process re-spec [ {line_raw} ]: {err_fmt(err)}')
-		if rm:
-			try: del repls[pre]
-			except KeyError:
-				send(f'ERROR: No matching replacement [ {pre} ]')
-				pre = None
-		if not pre:
-			send(f'Current replacement/block regexps [{len(repls)}]:')
-			for pre, line in repls.items(): send(f'  {pre} = {line}')
+			return send(f'ERROR: Failed to process repl-line [ {line_raw} ]: {err_fmt(err)}')
+		if not key:
+			send('Current replacement/block regexps:')
+			for pre_repls in repls.values():
+				for repl in pre_repls: send(f'  {repl.key} = {repl.val}')
 			return
-		if not rm: repls[pre], upd = line, {pre: line}
-		else: upd = {pre: None}
-		if not save: return send(f'Updated runtime replacement rules [ {pre} ]')
-		try: p = self.conf.update_file_section('send-replacements', upd)
+		if not rm: repl = self.conf.make_send_repl(key, line)
+		for pre_repls in repls.values():
+			for repl_chk in list(pre_repls):
+				if repl_chk.key == key: pre_repls.remove(repl := repl_chk)
+		if not rm: repls[repl.pre].append(repl)
+		elif not repl: return send(f'ERROR: No matching replacement [ {key} ]')
+		if not save: return send(f'Updated runtime replacement rules [ {repl.key} ]')
+		try:
+			upd = {repl.key: repl.val if not rm else None}
+			p = self.conf.update_file_section('send-replacements', upd)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		return send(f'Updated [send-replacements] section in config file [ {p.name} ]')
@@ -3912,7 +3917,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if v is None: pass
 			elif v := self.val_to_opt(v): v = f' = {v}'
 			elif not key_set: v = ' ='
-			keys[n] = k, v, re.compile(r'(?i)^' + re.escape(k.replace('-', '[-_]')) + r'\s*(=|$)')
+			keys[n] = k, v, re.compile(r'(?i)^' + re.escape(k).replace('\\-', '[-_]') + r'\s*(=|$)')
 		return dict((k, (v, rx)) for k, v, rx in keys)
 
 	def update_file_section(self, section, keys=None, path=None, key_set=False):
