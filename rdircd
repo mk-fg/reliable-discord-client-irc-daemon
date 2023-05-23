@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.19' # git-version: py-str
+	version = '23.05.20' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2662,8 +2662,9 @@ class DiscordSession:
 		if not author:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
+			author = self.st.embed_info.get(m.id)
 			media_info = ( msg_is_update and
-				self.conf.discord_embed_info and self.op_msg_media_info(m) )
+				self.conf.discord_embed_info and self.op_msg_media_info(m, author) )
 			if media_info: # will be processed into msg below
 				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
 			elif msg_is_update and not set(m.keys()).difference([
@@ -2691,12 +2692,14 @@ class DiscordSession:
 					while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
 						del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
 					self.st.embed_info[m.id] = author
-				if not media_info: media_info = self.op_msg_media_info(m)
+				if not media_info:
+					if not author: author = self.st.embed_info.get(m.id)
+					media_info = self.op_msg_media_info(m, author)
 			if media_info:
-				(author, em_lines), n = media_info, self.conf.discord_embed_info_len
 				tags['_prefix'] = ( tags.get('_prefix', '') +
 					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
-				line = '\n'.join([line, *(str_cut(line, n) for line in em_lines)]).strip()
+				line = '\n'.join([line, *(str_cut( line,
+					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
 			if not (author and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
@@ -2706,12 +2709,12 @@ class DiscordSession:
 			cc, author.username, line.strip(), tags, flake=flake,
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
-	def op_msg_media_info(self, m):
-		lines, author, embeds = list(), self.st.embed_info.get(m.id), m.get('embeds')
+	def op_msg_media_info(self, m, author, force_meta=False):
+		lines, embeds = list(), m.get('embeds')
 		if not (author and embeds): return
 		for n, em in enumerate(embeds):
 			emt, title, desc = (em.get(k, '') for k in ['type', 'title', 'description'])
-			em_src = em.get('author', dict()).get('name')
+			add_meta, em_src = dict(), em.get('author', dict()).get('name')
 			if emt == 'rich': # there are many types of these
 				if em.get('footer', dict()).get('text') == 'Twitter':
 					media = dict()
@@ -2727,6 +2730,8 @@ class DiscordSession:
 						else: lines.append(f'Twitter msg :: {em_src} :: {desc}')
 					elif title: lines.append(f'Twitter acc :: {title} [ {desc} ]')
 					for mt, url in media.items(): lines.append(f' {mt} :: {url}')
+				elif (url := em.get('image')) and (url := url.get('url') or url.get('proxy_url')):
+					lines.append(f'Image :: {url}'); add_meta['title'] = 'title'
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 			if emt == 'video':
 				host = em.get('provider', dict()).get('name')
@@ -2735,17 +2740,29 @@ class DiscordSession:
 				if info:
 					host = '' if not host else f' ({host})'
 					lines.append(f'Video{host} :: {info}')
+			if add_meta or force_meta:
+				if not add_meta: # some unrecognized embed-type, added on force_meta
+					info = ' '.join(k for k in ['image', 'thumbnail', 'video', 'provider'] if em.get(k))
+					if info: lines.append(f'Media :: [{info}]')
+				if info := em.get(add_meta.get('title')): lines.append(f'Title :: {info}')
+				if info := em.get(add_meta.get('author')):
+					info = ' '.join(info.get(k, '') for k in ['name', 'url']).strip()
+					if info: lines.append(f'Author :: {info}')
+				if info := em.get(add_meta.get('description')):
+					info = filter(None, (dl.strip() for dl in info.splitlines()))
+					for line in info: lines.append(f'Desc :: {line}')
 		if not lines: return
-		return author, list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
+		return list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
 
 	def op_msg_parse(self, m, gg, is_update=None):
 		# Must produce non-empty message for any relevant msg type
 		# Most message types are protocol notifications that have their "content" discarded
 		# Also used for parsing history query responses, not just events
-		tags, mt, mt_nx, line = dict(), m.get('type', ''), False, (m.get('content') or '').strip()
+		tags, mt_nx, mt = dict(), False, m.get('type', '')
+		line, author = (m.get('content') or '').strip(), m.get('author', dict())
 		line, mtc = line.replace('\u200b', ''), self.c_msg_type # unicode zero-width-space junk
 		try:
-			if not mt and m.get('author', dict()).get('bot'):
+			if not mt and author.get('bot'):
 				if m.get('embeds'): mt = mtc.bot_embeds
 				elif is_update and not line: mt = mtc.bot_empty # updates from bots clearing embeds?
 			else:
@@ -2758,15 +2775,11 @@ class DiscordSession:
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
 
 		if mt == mtc.bot_embeds:
-			for n, em in enumerate(m.embeds):
-				pre = self.conf.irc_prefix_embed.format(tuple_hash((m.id, n), 3))
-				if em.get('author'):
-					info = ' '.join(em.author.get(k, '') for k in ['name', 'url']).strip()
-					if info: line += f'\n{pre}[author] {info}'
-				if em.get('title'): line += f'\n{pre}-- {em.title.strip()} --'
-				if em.get('description'):
-					info = (dl.strip() for dl in em.description.splitlines())
-					for info in filter(None, info): line += f'\n{pre}{info}'
+			if media_info := self.op_msg_media_info(m, author, force_meta=True):
+				tags['_prefix'] = ( tags.get('_prefix', '') +
+					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
+				line = '\n'.join([line, *(str_cut( line,
+					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
 
 		for att in m.get('attachments') or list():
 			url = att.get('url')
