@@ -997,14 +997,17 @@ them to something shorter/nicer and more convenient for yourself.
 Links
 -----
 
-Other third-party Discord clients that I'm aware of atm (2022-08-16),
+Other third-party Discord clients that I'm aware of atm (2023-05-23),
 in no particular order.
+
+Other lists of clients, maybe better-maintained than this one:
+
+- `Discord-Client-Encyclopedia-Management/Discord3rdparties`_
 
 IRC-translation clients (like this one):
 
 - bitlbee_ + bitlbee-discord_ - similar IRC interface
-- bitlbee_ + libpurple (from Pidgin_) - diff discord implementation from above
-- ircdiscord_ - Go client proxy, based on same lib as gtkcord_ and 6cord_
+- bitlbee_ + libpurple (from Pidgin_) + purple-discord_ - diff implementation from above
 
 Graphical UI (GUI) clients:
 
@@ -1015,46 +1018,40 @@ Graphical UI (GUI) clients:
 Terminal UI (TUI, ncurses) clients:
 
 - discordo_ - relatively new but popular client written in Go.
-- Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 - 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
-- Terminal-Discord_ - minimal JS/node terminal client
-- `Discord Terminal`_ - customizable JS/node client with IRC layout and Windows OS support
-- Discurses_ - python urwid/curses client
-- Discline_ - another python client with typical IRC looks, seem to be broken atm
+- Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 
 Web UI (in-browser) clients:
 
-- BetterDiscord_ - alternative in-browser web interface/client (see also BandagedBD_ fork)
+- BetterDiscord_ and its BandagedBD_ fork - alternative in-browser web interface/client
 - Powercord_ - privacy and client extension oriented mod/framework
-- Glasscord_ - discord client tweak for transparency and nicer looks
-- EnhancedDiscord_ (`joe27g/EnhancedDiscord`_) - JS plugin framework for extra client functionality
 - ... many-many more of these around, though note that browser client mods are explicitly against ToS, not just guidelines.
 
 Command-line clients:
 
 - Harmony_ - tool for discord account manipulation - e.g. create, change settings, accept invites, etc
 
-Not an exhaustive list by any means.
+Not an exhaustive list by any means, they seem to be popping-up and closing down
+pretty fast, and I don't really keep track of those in any meaningful way.
 
+If you know of other maintained clients (or better yet a list of those), maybe
+drop a link into irc channel, repo issues or wherever - would be nice to add it
+here, for anyone looking for alternatives.
+
+.. _Discord-Client-Encyclopedia-Management/Discord3rdparties:
+  https://github.com/Discord-Client-Encyclopedia-Management/Discord3rdparties
 .. _bitlbee: https://www.bitlbee.org/
 .. _Pidgin: https://pidgin.im/
-.. _ircdiscord: https://github.com/tadeokondrak/ircdiscord/
-.. _gtkcord: https://github.com/diamondburned/gtkcord3/
+.. _purple-discord: https://github.com/EionRobb/purple-discord
+.. _gtkcord: https://github.com/diamondburned/gtkcord4
 .. _PinePhone: https://www.pine64.org/pinephone/
 .. _Ripcord: https://cancel.fm/ripcord/
 .. _BandagedBD: https://github.com/rauenzi/BetterDiscordApp
-.. _BetterDiscord: https://betterdiscord.net/
+.. _BetterDiscord: https://github.com/BetterDiscord/BetterDiscord
 .. _Powercord: https://powercord.dev/
-.. _Glasscord: https://github.com/AryToNeX/Glasscord
-.. _EnhancedDiscord: https://enhanceddiscord.com/
-.. _joe27g/EnhancedDiscord: https://github.com/joe27g/EnhancedDiscord
-.. _6cord: https://gitlab.com/diamondburned/6cord/
 .. _discordo: https://github.com/ayntgl/discordo
+.. _6cord: https://gitlab.com/diamondburned/6cord/
 .. _Cordless: https://github.com/Bios-Marcel/cordless
-.. _Terminal-Discord: https://github.com/xynxynxyn/terminal-discord
-.. _Discord Terminal: https://github.com/cloudrex/discord-term
-.. _Discurses: https://github.com/topisani/Discurses
-.. _Discline: https://github.com/MitchWeaver/Discline
 .. _Harmony: https://github.com/nickolas360/harmony
 
 
@@ -1178,11 +1175,11 @@ API and Implementation Notes
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2021-07-27
+Last updated: 2023-05-23
 
 - Discord API docs don't seem to cover "full-featured client" use-case,
   because such use of its API is explicitly not supported, against their
-  Terms of Service, and presumably has repercussions if discovered.
+  rules/guidelines, and presumably has repercussions if discovered.
 
   See WARNING section above for more details.
 
@@ -1204,6 +1201,10 @@ Last updated: 2021-07-27
 
   Being apparently undocumented and available since the beginning,
   guess it might be heavily deprecated by now and go away at any point in the future.
+
+- There are some unofficial docs for officially-undocumented APIs and quirks:
+
+  - https://arandomnewaccount.gitlab.io/discord-unofficial-docs/
 
 - Sent message delivery confirmation is done by matching unique "nonce" value in
   MESSAGE_CREATE event from gateway websocket with one sent out to REST API.

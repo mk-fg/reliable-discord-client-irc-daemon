@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.17' # git-version: py-str
+	version = '23.05.18' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3900,6 +3900,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				section_old=section_old ) and section_old: section_old_warn = True
 		return section_old_warn
 
+	# Saving - intended to replace lines/sections in config w/o removing
+	#  comments, or magling stuff otherwise via straight-up serialization.
 
 	def _get_section_updates(self, section, keys, key_set=False):
 		'Returns {key: (val_str, line_re)} to replace/add in specified ini section'
@@ -3917,7 +3919,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if v is None: pass
 			elif v := self.val_to_opt(v): v = f' = {v}'
 			elif not key_set: v = ' ='
-			keys[n] = k, v, re.compile(r'(?i)^' + re.escape(k).replace('\\-', '[-_]') + r'\s*(=|$)')
+			keys[n] = ( k, v, re.compile(r'(?i)^' +
+				re.escape(k).replace('\\-', '[-_]') + r'\s*(=|$)') )
 		return dict((k, (v, rx)) for k, v, rx in keys)
 
 	def update_file_section(self, section, keys=None, path=None, key_set=False):
