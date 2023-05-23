@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.18' # git-version: py-str
+	version = '23.05.19' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -166,6 +166,7 @@ class RDIRCDConfigBase:
 	debug_msg_cut = 50 # message part length in debug logs
 	debug_proto_log_shared = True # send protocol logs to normal debug logging and log-file too
 	debug_proto_cut = 90 # cut-length for irc/discord protocol msgs in debug logs, if shared
+	debug_proto_log_filter_ws = '' # space-separated received ws ev-names to skip logging
 	debug_proto_log_file = '' # log file(s) for all irc/discord protocol messages
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
@@ -205,6 +206,7 @@ class RDIRCDConfigBase:
 			raise ValueError( 'discord-edit regexp must contain named'
 				f' "aaa" and "bbb" groups to capture pattern/replacement: {v!r}' )
 		return rx
+	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
 doc_control_chan_cmds = '''
@@ -2085,22 +2087,26 @@ class DiscordSession:
 		# {op=...[, d={...}]}
 		inflator, buff, buff_end = zlib.decompressobj(), bytearray(), b'\x00\x00\xff\xff'
 		async for msg in self.ws:
-			msg_type, msg_data = msg.type, getattr(msg, 'data', '')
+			msg_type, msg_bs = msg.type, getattr(msg, 'data', '')
 			if msg_type == aiohttp.WSMsgType.binary:
-				buff.extend(msg_data or b'')
-				if msg_data[-4:] != buff_end: continue # partial data
-				msg_data = inflator.decompress(buff).decode()
+				buff.extend(msg_bs or b'')
+				if msg_bs[-4:] != buff_end: continue # partial data
+				msg_bs = inflator.decompress(buff).decode()
 				msg_type = aiohttp.WSMsgType.text
 				buff.clear()
 			if msg_type == aiohttp.WSMsgType.text:
-				self.log_ws.debug( '<<  {} {}', msg_type.name.lower(),
-					self._repr(msg_data), extra=('<< ', f'{msg_type} {msg_data}') )
-				msg_data, hs_discard, handled = adict(json.loads(msg_data)), set(), False
-				if self.conf.ws_dump_filter and self.conf.ws_dump_file:
-					chk = self.conf.ws_dump_filter
-					if ( chk.get('op') == msg_data.get('op')
-							and chk.get('t') == msg_data.get('t') ):
-						with open(self.conf.ws_dump_file, 'w') as dst: dst.write(msg_data)
+				hs_discard, handled = set(), False
+				msg_data = msg_ev = msg_op = None
+				try:
+					msg_data = adict(json.loads(msg_bs))
+					msg_ev, msg_op = msg_data.get('t'), msg_data.get('op')
+				finally: # logging should work regardless of parser issues
+					if msg_ev not in self.conf._debug_proto_log_filter_ws:
+						self.log_ws.debug( '<<  {} {}', msg_type.name.lower(),
+							self._repr(msg_bs), extra=('<< ', f'{msg_type} {msg_bs}') )
+					if self.conf.ws_dump_file and (chk := self.conf.ws_dump_filter):
+						if chk.get('op') == msg_op and chk.get('t') == msg_ev:
+							with open(self.conf.ws_dump_file, 'wb') as dst: dst.write(msg_bs)
 				for k, h in list(self.ws_handlers.items()):
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
@@ -3375,9 +3381,10 @@ class RDIRCD:
 			return send( 'Note: not all option changes take effect'
 				' without reconnect or full restart, save them to config for latter' )
 		conf_save = line[1] in ['-s', '--save']
-		line = line_raw.lstrip().split(None, 2 + int(conf_save))[1 + int(conf_save):]
+		line = line_raw.lstrip().split(None, 2 + conf_save)[1 + conf_save:]
 		if not 1 <= len(line) <= 2:
 			return send('ERROR: "set" command needs "option [value]" arguments')
+		if line[-1].startswith('='): line[-1] = line[-1].lstrip('= ') # allows "set key = val"
 		v_conf = None
 		try:
 			k_ini, v_raw = line if len(line) != 1 else (line[0], '""')

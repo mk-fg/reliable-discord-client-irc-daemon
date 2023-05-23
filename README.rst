@@ -935,6 +935,10 @@ following things can be monitored and/or enabled:
   options - run ``rdircd --conf-dump-defaults`` to see all those and their
   default values (`rdircd.defaults.ini`_ has some recent-ish copy too).
 
+  When running with protocol logs repeatedly or over long time,
+  ``proto-log-filter-ws`` option can be handy to filter-out spammy
+  uninteresting events there, like GUILD_MEMBER_LIST_UPDATE.
+
   Note that these files will contain all sorts of sensitive information - from
   auth data to all chats and contacts - so should probably not be posted or
   shared freely on the internet in-full or as-is, but can definitely help to
