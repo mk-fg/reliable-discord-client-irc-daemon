@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.21' # git-version: py-str
+	version = '23.05.22' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2664,7 +2664,7 @@ class DiscordSession:
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
 			author = self.st.embed_info.get(m.id)
 			media_info = ( msg_is_update and
-				self.conf.discord_embed_info and self.op_msg_media_info(m, author) )
+				self.conf.discord_embed_info and self.op_msg_media_info(m) )
 			if media_info: # will be processed into msg below
 				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
 			elif msg_is_update and not set(m.keys()).difference([
@@ -2692,14 +2692,13 @@ class DiscordSession:
 					while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
 						del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
 					self.st.embed_info[m.id] = author
-				if not media_info:
-					if not author: author = self.st.embed_info.get(m.id)
-					media_info = self.op_msg_media_info(m, author)
+				if not media_info: media_info = self.op_msg_media_info(m)
 			if media_info:
 				tags['_prefix'] = ( tags.get('_prefix', '') +
 					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
 				line = '\n'.join([line, *(str_cut( line,
 					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
+			if not author: author = self.st.embed_info.get(m.id)
 			if not (author and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
@@ -2709,9 +2708,10 @@ class DiscordSession:
 			cc, author.username, line.strip(), tags, flake=flake,
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
-	def op_msg_media_info(self, m, author, force_meta=False):
+	def op_msg_media_info(self, m, force_meta=False):
+		'Parse and return "embeds" objects as text lines to prefix and append to msg'
 		lines, embeds = list(), m.get('embeds')
-		if not (author and embeds): return
+		if not embeds: return
 		for n, em in enumerate(embeds):
 			emt, title, desc = (em.get(k, '') for k in ['type', 'title', 'description'])
 			add_meta, em_src = dict(), em.get('author', dict()).get('name')
@@ -2775,7 +2775,7 @@ class DiscordSession:
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
 
 		if mt == mtc.bot_embeds:
-			if media_info := self.op_msg_media_info(m, author, force_meta=True):
+			if media_info := self.op_msg_media_info(m, force_meta=True):
 				tags['_prefix'] = ( tags.get('_prefix', '') +
 					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
 				line = '\n'.join([line, *(str_cut( line,
