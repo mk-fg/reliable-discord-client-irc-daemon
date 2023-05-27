@@ -1015,7 +1015,7 @@ IRC-translation clients (like this one):
 
 Graphical UI (GUI) clients:
 
-- Pidgin_ - popular cross-platform client, its libpurple can be used from bitlbee_ as well
+- Pidgin_ + purple-discord_ - popular cross-platform IM client
 - gtkcord_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
 - Ripcord_ - cross-platform proprietary shareware client, also supports slack
 
@@ -1025,10 +1025,13 @@ Terminal UI (TUI, ncurses) clients:
 - 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
 - Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 
-Web UI (in-browser) clients:
+Web UI (in-browser) clients/mods (often further extended by plugins):
 
 - BetterDiscord_ and its BandagedBD_ fork - alternative in-browser web interface/client
 - Powercord_ - privacy and client extension oriented mod/framework
+- Replugged_ - "big and slow"
+- Vencord_ - "cutest Discord client mod"
+- Shelter_ - stability and maintainability focus
 - ... many-many more of these around, though note that browser client mods are explicitly against ToS, not just guidelines.
 
 Command-line clients:
@@ -1053,6 +1056,9 @@ here, for anyone looking for alternatives.
 .. _BandagedBD: https://github.com/rauenzi/BetterDiscordApp
 .. _BetterDiscord: https://github.com/BetterDiscord/BetterDiscord
 .. _Powercord: https://powercord.dev/
+.. _Replugged: https://replugged.dev/
+.. _Vencord: https://vencord.dev/
+.. _Shelter: https://github.com/uwu/shelter
 .. _discordo: https://github.com/ayntgl/discordo
 .. _6cord: https://gitlab.com/diamondburned/6cord/
 .. _Cordless: https://github.com/Bios-Marcel/cordless
