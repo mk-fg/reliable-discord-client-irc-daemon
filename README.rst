@@ -351,6 +351,11 @@ Frequent state timestamp updates are done in-place (small fixed-length values),
 but checking ctime before writes, so should be safe to edit any of these files
 manually anytime anyway.
 
+Sending SIGHUP to the script or "reload" command in control-channel should
+load and apply values from all config files in the same order.
+Note that such operation won't reset any values missing in files to their
+defaults, only apply stuff explicitly set there on top of the current config.
+
 Channel Commands
 ````````````````
 

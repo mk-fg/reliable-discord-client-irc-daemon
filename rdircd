@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.05.23' # git-version: py-str
+	version = '23.06.0' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -221,7 +221,9 @@ Commands:
     Not all values changed this way will have an effect without restart.
 
   reload - re-read configuration from same ini files as on start.
+    Updates existing state, so removing values from files won't reset them.
     Same as with "set" command, some changes don't take effect at runtime.
+    Sending HUP signal to the script does the same thing.
 
   rx [-s|--save] [ comment/key... = ] regexp pattern
   rx [-s|--save] {{-r|--rm}} comment/key...
@@ -445,6 +447,21 @@ def pyaml_load(src):
 		log_bak.critical('--- !!! Debug-pyaml was left in the code somewhere !!! ---')
 		import yaml; pyaml_load.module = yaml
 	return pyaml_conv_keys(yaml.safe_load(src), False)
+
+def path_names(*paths):
+	'Return short and distinct names from last path components, in the same order.'
+	names, paths = cs.Counter(p.name for p in paths), list(map(str, paths))
+	while True:
+		name, n = names.most_common(1)[0]
+		if n == 1: break
+		del names[name]
+		upd = sorted((
+				'/'.join(filter(None, p.rsplit('/', name.count('/')+2)[1:]))
+				for p in paths if p.endswith(f'/{name}') ),
+			key=lambda name: name.count('/') )
+		if len(upd) <= 1: raise AssertionError(name, upd)
+		names.update(upd)
+	return list(next(n for n in names if p == n or p.endswith(f'/{n}')) for p in paths)
 
 
 def setup_aiohttp_trace_logging(log):
@@ -2967,10 +2984,8 @@ class RDIRCD:
 		return self.cache.uid[ck]
 
 	async def run(self):
-		loop = asyncio.get_running_loop()
-		ircd = await loop.create_server(
-			IRCProtocol.factory_for_bridge(self),
-			self.conf.irc_host, self.conf.irc_port,
+		ircd = await (loop := asyncio.get_running_loop()).create_server(
+			IRCProtocol.factory_for_bridge(self), self.conf.irc_host, self.conf.irc_port,
 			family=self.conf.irc_host_af, start_serving=False, ssl=self.conf.irc_tls )
 
 		if self.conf.debug_mean_minutes_to_segfault > 0:
@@ -4325,6 +4340,13 @@ def main(args=None, conf=None):
 		conf.irc_tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 		conf.irc_tls.load_cert_chain(p_pem, p_pem)
 
+	def _conf_sighup_reload():
+		try: conf_paths = conf.read_from_file()
+		except Exception as err:
+			return log.error('Failed to reload config(s) on SIGHUP: {}', err_fmt(err))
+		conf_paths = ' '.join(path_names(*map(pl.Path, conf_paths)))
+		log.debug('Reloaded config file(s) on SIGHUP [ {} ]', conf_paths)
+
 	async def _run_rdircd():
 		loop, rdircd = asyncio.get_running_loop(), RDIRCD(conf)
 
@@ -4339,6 +4361,7 @@ def main(args=None, conf=None):
 		rdircd_task = asyncio.create_task(rdircd.run_async())
 		for sig in signal.SIGINT, signal.SIGTERM:
 			loop.add_signal_handler(sig, rdircd_task.cancel)
+		loop.add_signal_handler(signal.SIGHUP, _conf_sighup_reload)
 		with cl.suppress(asyncio.CancelledError): return await rdircd_task
 
 	log.debug('Starting eventloop...')
