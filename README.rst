@@ -1219,7 +1219,7 @@ Last updated: 2023-05-23
 
 - There are some unofficial docs for officially-undocumented APIs and quirks:
 
-  - https://arandomnewaccount.gitlab.io/discord-unofficial-docs/
+  - https://luna.gitlab.io/discord-unofficial-docs/
 
 - Sent message delivery confirmation is done by matching unique "nonce" value in
   MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
