@@ -1,0 +1,9 @@
+[Service]
+User=rdircd
+ExecStart=/srv/rdircd -c /var/lib/rdircd/config.ini -c /var/lib/rdircd/state.ini
+
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

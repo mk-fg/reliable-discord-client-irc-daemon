@@ -183,7 +183,11 @@ Currently known distro packages (as of 2020-05-17):
 
 - Arch Linux (AUR): https://aur.archlinux.org/packages/rdircd-git/
 
-It should be easy to install this one script and its few dependencies manually though.
+There's also a Dockerfile_ and docker-compose.yml_ for running this
+in a docker/podman or some other OCI-compatible containerized environment.
+
+Should be easy to install one script and its few dependencies manually as well,
+as described in the rest of this section below.
 
 On debian/ubuntu, installing dependencies can be done with this one command::
 
@@ -237,10 +241,14 @@ from this repository and run like this::
   rdircd % ./rdircd --debug -c rdircd.ini
    ...drop --debug and use init system for a regular daemon...
 
-Setting up daemon/script to run on OS boot is out of scope of this README -
-look into doing that via systemd service, init script or something like that,
-or in "screen" as a last resort ad-hoc option.
+For setting up daemon/script to run on OS boot, rdircd.service_ systemd unit
+file can be used in most Linux environments, or otherwise probably via init.d
+script, or maybe in "screen" session as a last resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
+
+.. _Dockerfile: Dockerfile
+.. _docker-compose.yml: docker-compose.yml
+.. _rdircd.service: rdircd.service
 
 Setup and actual usage
 ``````````````````````

@@ -3,7 +3,7 @@
 import itertools as it, operator as op, functools as ft
 import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
-import os, sys, io, stat, re, time, secrets, enum, json, zlib, math
+import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
 import hashlib, base64, random, unicodedata, string, ast, urllib.parse
 import logging, logging.handlers
@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.06.3' # git-version: py-str
+	version = '23.07.0' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3835,7 +3835,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			except configparser.NoSectionError: pass
 			except configparser.NoOptionError: pass
 
-	def pprint(self, title=None, empty_vals=False, comments=None):
+	def pprint(self, title=None, empty_vals=False, comments=None, print=print):
 		cat, comms, chk = None, comments or dict(), re.compile(
 			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
 		if title: print(f';; {title}')
@@ -4165,6 +4165,10 @@ def main(args=None, conf=None):
 		Such hash should be used with "password-hash" option under [irc] section.
 		If stdin is not a terminal, only first line is read from there as a password.
 		scrypt uses random 16B salt and N=2^15 r=8 p=1 parameters (min 32M memory).'''))
+	group.add_argument('--conf-init', action='store_true', help=dd('''
+		Create initial config file(s) with default options in specified path(s) and exit.
+		This will never change overwrite any existing files.
+		If multiple -c/--conf files are used, all files after first one are created empty.'''))
 
 	group = parser.add_argument_group('Interfaces')
 	group.add_argument('-i', '--irc-bind', metavar='host(:port)', help=dd(f'''
@@ -4200,7 +4204,7 @@ def main(args=None, conf=None):
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
-	if opts.conf_dump_defaults:
+	if opts.conf_dump_defaults or opts.conf_init:
 		try: # parse config comments from this script
 			lines = list()
 			if __file__.endswith('.pyc'): raise OSError
@@ -4213,8 +4217,9 @@ def main(args=None, conf=None):
 					lines.append(ls)
 		except OSError: comms = None
 		else: comms = parse_conf_code_comments(lines)
-		return conf.pprint(
-			'Default configuration options', empty_vals=True, comments=comms )
+		if opts.conf_dump_defaults:
+			return conf.pprint(
+				'Default configuration options', empty_vals=True, comments=comms )
 
 	if opts.conf_pw_scrypt:
 		if sys.stdin.isatty():
@@ -4225,11 +4230,38 @@ def main(args=None, conf=None):
 
 	conf_user_paths = list(map(
 		os.path.expanduser, opts.conf or [conf._conf_path] ))
+
+	if opts.conf_init:
+		exit_code = 0
+		for n, p in enumerate(conf_user_paths):
+			try: fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+			except OSError as err:
+				if err.errno != errno.EEXIST:
+					print( 'Failed to create initial'
+						f' configuration file [ {p} ]: {err_fmt(err)}', file=sys.stderr )
+					exit_code = 1
+				continue
+			with os.fdopen(fd, 'r+') as dst:
+				if n: continue # all files after first one are created empty
+				conf.pprint(
+					'Example configuration file with ALL supported options and their default values',
+					empty_vals=True, comments=comms, print=ft.partial(print, file=dst) )
+		if not exit_code:
+			print('\nAll specified configuration files do exist or were created:\n')
+			for p in map(pl.Path, conf_user_paths):
+				if str(p.resolve()) == str(p): print(f' - {p}')
+				else: print(f' - {p} [ {p.resolve()} ]')
+			print('\nMake sure to at least set required auth options there, if not done already.')
+			print( 'Exiting due to --conf-init option.'
+				' Remove it to run script normally with these configs.\n' )
+		return exit_code
+
 	for n, p in enumerate(conf_user_paths):
-		mode = os.R_OK
-		if n == len(conf_user_paths) - 1: mode |= os.W_OK
+		mode, w = os.R_OK, ''
+		if n == len(conf_user_paths) - 1:
+			mode |= os.W_OK; w = ' (for write access)'
 		if not os.access(p, mode):
-			parser.error(f'Specified config file missing or inaccessible: {p}')
+			parser.error(f'Specified config file missing or inaccessible{w}: {p}')
 	conf_user_paths = conf.read_from_file(*conf_user_paths)
 
 	if opts.conf_dump:

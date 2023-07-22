@@ -1,0 +1,35 @@
+## Run this with "docker-compose up" command from the repository directory
+# docker-compose file reference: https://docs.docker.com/compose/compose-file/compose-file-v3/
+version: '3.2'
+
+volumes:
+  config: # can be used for logs as well
+
+services:
+
+  rdircd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # UID/GID for rdircd can be set here, and will be in host's namespace
+      #  (i.e. exactly this in "ps" outside container), unless docker userns
+      #  options are used/enabled in the daemon. See Dockerfile for defaults.
+      #args: [ALPINE_TAG=latest, UID=12345, GID=12345]
+    image: rdircd
+    ports: [6667:6667]
+    volumes:
+      # This will auto-create and mount volume dir from /var/lib/docker/volumes
+      # You'd need to create/edit config.ini file there, which --conf-init passed
+      #  via "command:" below will create with defaults (if it's not there already).
+      - config:/config
+      # Alternative - pass through any local dir, e.g. "conf" dir next to this file.
+      # Permissions on files can be tricky if docker userns remapping is enabled.
+      #- ./conf:/config
+
+    # This option will create config.ini file on first run and exit with info-message.
+    # For rdircd to start with existing config file(s), following line should be removed.
+    command: [--conf-init]
+
+    # "command" can be used to pass any extra options to the script.
+    # For example, to use a separate writable state.ini file on /config volume.
+    #command: [-c, state.ini]
