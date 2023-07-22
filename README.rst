@@ -241,9 +241,10 @@ from this repository and run like this::
   rdircd % ./rdircd --debug -c rdircd.ini
    ...drop --debug and use init system for a regular daemon...
 
-For setting up daemon/script to run on OS boot, rdircd.service_ systemd unit
-file can be used in most Linux environments, or otherwise probably via init.d
-script, or maybe in "screen" session as a last resort ad-hoc option.
+For setting up daemon/script to run on OS boot, rdircd.service_ systemd unit file
+can be used in most Linux environments (edit ExecStart= options and paths there),
+or otherwise probably via init.d script, or maybe in "screen" session as a
+last resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
 .. _Dockerfile: Dockerfile

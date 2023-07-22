@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.07.0' # git-version: py-str
+	version = '23.07.1' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -4237,8 +4237,8 @@ def main(args=None, conf=None):
 			try: fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
 			except OSError as err:
 				if err.errno != errno.EEXIST:
-					print( 'Failed to create initial'
-						f' configuration file [ {p} ]: {err_fmt(err)}', file=sys.stderr )
+					print( 'Failed to create initial configuration'
+						f' file [ {p} ]: {err_fmt(err)}', file=sys.stderr )
 					exit_code = 1
 				continue
 			with os.fdopen(fd, 'r+') as dst:

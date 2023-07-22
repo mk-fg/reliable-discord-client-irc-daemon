@@ -1,9 +1,41 @@
+[Unit]
+StartLimitIntervalSec=2min
+StartLimitBurst=5
+
 [Service]
+Type=exec
 User=rdircd
-ExecStart=/srv/rdircd -c /var/lib/rdircd/config.ini -c /var/lib/rdircd/state.ini
+WorkingDirectory=/var/lib/rdircd
+ReadWritePaths=/var/lib/rdircd
+ExecStart=rdircd -c config.ini -c state.ini
 
 Restart=always
-RestartSec=5s
+RestartSec=5
+
+DynamicUser=yes
+ProcSubset=pid
+ProtectProc=invisible
+ProtectHome=yes
+PrivateDevices=yes
+PrivateUsers=yes
+NoNewPrivileges=yes
+SecureBits=keep-caps-locked noroot-locked
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_ALG
+
+UMask=0077
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+ProtectClock=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectKernelModules=yes
+ProtectHostname=yes
+ProtectKernelTunables=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+CapabilityBoundingSet=
 
 [Install]
 WantedBy=multi-user.target
