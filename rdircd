@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.07.1' # git-version: py-str
+	version = '23.08.0' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -1375,8 +1375,9 @@ class IRCProtocol:
 				if not notice: self.send(401, target, ':No such nick/channel')
 			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
-	def cmd_msg_self(self, src, text, notice=True):
+	def cmd_msg_self(self, text, src=None, notice=True):
 		'Send direct message to this IRC client and nick'
+		if not src: src = self.conf.irc_nick_sys
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
 		self.send(f':{src} {msg_type} {self.st.nick} :{text}')
 
@@ -1400,8 +1401,13 @@ class IRCProtocol:
 			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
 		else: self.send(401, nick, ':No such nick/channel')
 
-	def recv_cmd_who(self, name):
-		if re.search(r'^[#@%]\d+$', name):
+	def recv_cmd_who(self, name=None):
+		if not name:
+			self.cmd_msg_self('\n'.join([ '--- /who command usage:',
+				'/who #123456 - find/describe channel with id=123456.',
+				'/who @123456 - user id lookup.',
+				'/who %123456 - guild id lookup.', '--- /who info end' ]))
+		elif re.search(r'^[#@%]\d+$', name):
 			self.bridge.cmd_delay(self.bridge.cmd_info(self, name[0], name[1:]))
 		else:
 			if conn := self.bridge.cmd_conn_map().get(name):
@@ -3635,8 +3641,7 @@ class RDIRCD:
 
 	async def cmd_info(self, conn, t, id_str):
 		t = {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
-		info_url, send = ( f'{t}/{id_str}',
-			ft.partial(conn.cmd_msg_self, self.conf.irc_nick_sys) )
+		info_url, send = f'{t}/{id_str}', conn.cmd_msg_self
 		info = await self.discord.cmd_info_dump(info_url)
 		send(f'--- [{info_url}] info follows'); send(info); send(f'--- [{info_url}] end')
 
