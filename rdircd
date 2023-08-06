@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.3' # git-version: py-str
+	version = '23.08.4' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -1501,8 +1501,9 @@ class Discord:
 			"mentions" list, if provided, can be used to lookup "member" object.'''
 		if u:
 			if u.get('channel_id'):
-				u, m = u.get('author'), u.get('member') or dict()
 				if not mentions: mentions = u.get('mentions')
+				u, m = u.get('author'), u.get('member') or dict()
+				if not u: u = m.get('user')
 			elif mu := u.get('user'): u, m = mu, u
 			else: m = dict()
 		if not u: return fallback
