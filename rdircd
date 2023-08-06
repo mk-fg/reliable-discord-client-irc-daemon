@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.2' # git-version: py-str
+	version = '23.08.3' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2739,7 +2739,7 @@ class DiscordSession:
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
-			nick = self.discord.user_name(self.st.embed_info.get(m.id))
+			nick = self.st.embed_info.get(m.id)
 			media_info = ( msg_is_update and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) )
 			if media_info: # will be processed into msg below
@@ -2771,7 +2771,7 @@ class DiscordSession:
 				# Some embeds can come in both original msg and edits, deduped via embed_info
 				while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
 					del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
-				self.st.embed_info[m.id], em_suffs = m, (el.strip() for el in line.split('\n'))
+				self.st.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
 				self.st.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
 			if media_info := media_info or self.op_msg_media_info(m):
 				if em_suffs := self.st.embed_info.get(f'lines.{m.id}'):
