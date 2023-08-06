@@ -39,21 +39,22 @@ Last one has git-notes with todo list and such at the default ref for those.
 WARNING
 -------
 
-While I wouldn't call this app a "bot" exactly - intent here is not to post any
-automated messages or scrape anything - Discord staff considers all third-party
-clients to be "bots", and requires them to use special second-class API
-(see `Bot vs User Accounts`_ section in API docs), where every account has to be
-separately approved by admins on every connected discord server/guild, making it
-effectively unusable for a random non-admin user.
+While I wouldn't call this app a "bot" or "automating standard user accounts" -
+intent here is not to post any automated messages or scrape anything - pretty sure
+Discord staff considers all third-party clients to be "bots", and requires them to
+use special second-class API (see `Bot vs User Accounts`_ section in API docs),
+where every account has to be separately approved by admins on every connected
+discord server/guild, making it effectively unusable for a random non-admin user.
 
 This app does not present itself as a "bot" and does not use bot-specific endpoints,
 so using it can result in account termination if discovered.
 
 See also `More info on third-party client blocking`_ section below.
 
-You have been warned :)
+You have been warned! :)
 
-.. _Bot vs User Accounts: https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
+.. _Bot vs User Accounts:
+  https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
 
 
 Features
@@ -1082,11 +1083,15 @@ here, for anyone looking for alternatives.
 More info on third-party client blocking
 ----------------------------------------
 
-As mentioned in the "WARNING" section above, `Bot vs User Accounts`_ section in
-API docs seem to prohibit people using third-party clients,
+As mentioned in the "WARNING" section above, `Bot vs User Accounts`_
+section in API docs seem to prohibit people using third-party clients,
 same as `Discord Community Guidelines`_.
+Also maybe against their `Discord Developer Terms of Service`_,
+but dunno if those apply if you're just using the alt-client.
 
 .. _Discord Community Guidelines: https://discord.com/guidelines
+.. _Discord Developer Terms of Service:
+  https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service
 
 I did ask discord staff for clarification on the matter,
 and got this response around Nov 2020:
@@ -1190,7 +1195,8 @@ and such treatment can likely change anytime and in any direction,
 without explicit indication.
 
 .. _issue-18: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/18
-.. _some HN comments clarifying Discord staff position in a thread here: https://news.ycombinator.com/item?id=25214777
+.. _some HN comments clarifying Discord staff position in a thread here:
+  https://news.ycombinator.com/item?id=25214777
 
 
 API and Implementation Notes
