@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.1' # git-version: py-str
+	version = '23.08.2' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -104,6 +104,19 @@ class RDIRCDConfigBase:
 	discord_http_timeout_conn = 40.0
 	discord_http_timeout_conn_sock = 30.0
 	discord_gateway = '' # fetched and stored in last config, region-specific
+
+	# Determines which name is used for discord users on IRC.
+	# Following name options are available:
+	#   login - discord "username", unique everywhere, same as entered in "login" field.
+	#   display - "display name" set by the user in discord account settings, not unique.
+	#   nick - server and friend "nicknames", set in discord server settings, not always by you.
+	# "login" is always used as a fallback, if no other names are set,
+	#  but otherwise names above can be listed in order to attempt using them.
+	# For example, "nick display" value will try discord/friend nickname,
+	#  then name that user set in account settings, and login name if there aren't any of those.
+	# Setting this to empty value or "login" allows to remove any confusion and use simple
+	#  globally-unique names for irc nicks, but won't match how official discord clients show them.
+	discord_name_preference_order = 'nick display login'
 
 	# discord_msg_mention_re should match only discord user mentions.
 	# "nick" group must be irc nick, to be replaced with
@@ -191,6 +204,7 @@ class RDIRCDConfigBase:
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	def _conv_discord_msg_mention_re(self, v):
@@ -1482,6 +1496,32 @@ class Discord:
 		return IRCProtocol.chan_spec(
 			self.bridge.cache.did_chan.get(cc.did, '???') )
 
+	def user_name(self, u, mentions=None, fallback='???'):
+		'''Pick appropriate discord name from user, member or message object(s).
+			"mentions" list, if provided, can be used to lookup "member" object.'''
+		if u:
+			if u.get('channel_id'):
+				u, m = u.get('author'), u.get('member') or dict()
+				if not mentions: mentions = u.get('mentions')
+			elif mu := u.get('user'): u, m = mu, u
+			else: m = dict()
+		if not u: return fallback
+		if not m and mentions:
+			for mn in mentions:
+				if mn.get('id') != u.get('id'): continue
+				m = mn.get('member') or dict(); break
+		for k in (vs := self.conf._discord_name_preference_order):
+			if k == 'login': break
+			elif k == 'nick':
+				if name := (m.get('nick') or u.get('nick')): return name
+			elif k == 'display':
+				if name := u.get('global_name'): return name
+			else:
+				self.log.warning( 'Ignoring unsupported name-type'
+					' in discord name-preference-order value: {!r}', k )
+				self.conf._discord_name_preference_order = list(v for v in vs if v != k)
+		return u.get('username') or f'@{u.get("id", fallback)}'
+
 	online = False
 	def cmd_online_state(self, st):
 		if st == self.online: return
@@ -1504,8 +1544,9 @@ class Discord:
 				line, tags = self.session.op_msg_parse(m, gg)
 				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
-				self.cmd_user_cache(gg.id, m.author.id, m.author.username, replace=False)
-				msg_list.append(adict( nick=m.author.username,
+				self.cmd_user_cache( gg.id, m.author.id,
+					nick := self.user_name(m.author), replace=False )
+				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 				if int(m.id) > int(flake): flake = m.id
 			if flake == flake_last or len(msg_list) < lwm: break
@@ -2425,8 +2466,9 @@ class DiscordSession:
 	def op_ev_member(self, m, gid=None, delete=False):
 		if not gid: gid = m.guild_id
 		if delete: return self.discord.cmd_user_cache(gid, m.user.id)
-		self.discord.cmd_user_cache(gid, m.user.id, m.user.username)
-		return m.user.id, m.user.username # used in queries
+		self.discord.cmd_user_cache(
+			gid, m.user.id, nick := self.discord.user_name(m.user) )
+		return m.user.id, nick # used in queries
 
 	def op_ev_delete(self, gid=None, chan=...):
 		if not (gg := self.st.guilds.get(gid)): return
@@ -2521,9 +2563,10 @@ class DiscordSession:
 				if not cc.names.old: new_threads.append(cc)
 			elif cc_private:
 				ts, users= time.time(), c.get('recipients') or list()
-				for u in users: self.discord.cmd_user_cache(gg.id, u.id, u.username)
+				for u in users: self.discord.cmd_user_cache(
+					gg.id, u.id, nick := self.discord.user_name(u) )
 				dict_update( cc.users,
-					( (u.username, adict(name=u.username, ts=ts))
+					( (nick, adict(name=nick, ts=ts))
 						for u in (c.get('recipients') or list()) ), sync=True )
 				user_names = list(u.name for u in cc.users.values())
 				name_kws = dict(id=(name_hash := str_hash(c.id, 8)))
@@ -2632,20 +2675,20 @@ class DiscordSession:
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
-		cc, u = self.st.guilds[1].chans.get(m.channel_id), m.get('user', dict())
-		if u: self.discord.cmd_user_cache(1, u.id, u.username)
-		self.discord.cmd_msg_recv(cc, u.get('username'), f'--- recipient {act.lower()}')
+		cc = self.st.guilds[1].chans.get(m.channel_id)
+		nick = (u := m.get('user')) and self.discord.user_name(u)
+		if u: self.discord.cmd_user_cache(1, u.id, nick)
+		self.discord.cmd_msg_recv(cc, nick, f'--- recipient {act.lower()}')
 
 	def op_ev_ban(self, m, act):
-		name = m.get('user', dict())
-		name = name.get('username') or f'@{name.get("id", "???")}'
+		name = self.discord.user_name(m)
 		self.discord.cmd_guild_event(m.guild_id, f'Guild user ban: {act} {name}')
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
 		try: t = self.c_rel_type(t).name
 		except ValueError: t = f'unknown[{t}]'
-		if name: name = name.username
+		if name: name = self.discord.user_name(name)
 		uid, name = m.get('id', '?'), '' if not name else f' name={name}'
 		self.discord.cmd_guild_event(1, f'Relationship: [uid={uid}{name}] {act} {t}')
 
@@ -2678,7 +2721,7 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
-		flake, author = None, m.get('author')
+		flake, nick = None, m.get('author')
 		msg_is_update = act == 'update'
 
 		if cc.tid and self.conf.discord_thread_msgs_in_parent_chan:
@@ -2693,10 +2736,10 @@ class DiscordSession:
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 
 		media_info = None
-		if not author:
+		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
-			author = self.st.embed_info.get(m.id)
+			nick = self.discord.user_name(self.st.embed_info.get(m.id))
 			media_info = ( msg_is_update and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) )
 			if media_info: # will be processed into msg below
@@ -2704,7 +2747,7 @@ class DiscordSession:
 			elif msg_is_update and not set(m.keys()).difference([
 				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
 			else: return self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
-		else: self.discord.cmd_user_cache(gg.id, author.id, author.username)
+		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
@@ -2714,8 +2757,8 @@ class DiscordSession:
 		else:
 			flake, ref = m.id, m.get('referenced_message')
 			if self.conf.irc_inline_reply_quote_len > 0 and ref:
-				ref_user = ref.get('author', dict()).get('username')
-				ref_user = f'<{ref_user}>' if ref_user else ''
+				ref_user = ( '' if not (u := ref.get('author'))
+					else f'<{self.discord.user_name(u, m.get("mentions"))}>' )
 				ref_line, ref_tags = self.op_msg_parse(ref, gg)
 				ref = str_cut(ref_line, self.conf.irc_inline_reply_quote_len)
 				if ref_user and ref:
@@ -2728,7 +2771,7 @@ class DiscordSession:
 				# Some embeds can come in both original msg and edits, deduped via embed_info
 				while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
 					del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
-				self.st.embed_info[m.id], em_suffs = author, (el.strip() for el in line.split('\n'))
+				self.st.embed_info[m.id], em_suffs = m, (el.strip() for el in line.split('\n'))
 				self.st.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
 			if media_info := media_info or self.op_msg_media_info(m):
 				if em_suffs := self.st.embed_info.get(f'lines.{m.id}'):
@@ -2738,14 +2781,13 @@ class DiscordSession:
 						if el.endswith(suff) and el in media_info: media_info.remove(el)
 				line = '\n'.join([line, *(str_cut( line,
 					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
-			if not (author and line): return
+			if not (nick and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
-		self.discord.cmd_msg_recv(
-			cc, author.username, line.strip(), tags, flake=flake,
-			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
+		self.discord.cmd_msg_recv( cc, nick, line.strip(), tags,
+			flake=flake, nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m, force_meta=False):
 		'Parse and return "embeds" objects as text lines to prefix and append to msg'
@@ -2871,7 +2913,7 @@ class DiscordSession:
 		m_chans = dict((c.id, f'#{c.name}') for c in (m.get('mention_channels') or list()))
 		if tags_raw:
 			mt, ts_fmts = self.c_msg_tags, self.c_msg_tags_ts_fmts
-			users = dict((m.id, m.username) for m in force_list(m.get('mentions')))
+			users = dict((mn.id, self.discord.user_name(mn)) for mn in force_list(m.get('mentions')))
 			for m in tags_raw:
 				k_src, t, k = m.group(0), m.group(1), m.group(2)
 				if t in ['@', '@!']: v = mt.user, users.get(k, f'[{k}]')
@@ -2904,10 +2946,8 @@ class DiscordSession:
 			else: emo = f' {emo}'
 		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
 		try: u = m.member.user
-		except: nick = None # notice from irc_nick_sys
-		else:
-			self.discord.cmd_user_cache(gg.id, u.id, u.username)
-			nick = u.username
+		except KeyError: nick = None # notice from irc_nick_sys
+		else: self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(m))
 		self.discord.cmd_msg_recv(cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
 
 	def op_gift_code(self, m):
@@ -3050,14 +3090,14 @@ class RDIRCD:
 
 	def irc_name(self, name, casefold=False, _irc_remap=dict([
 			*((n, f'°{n:02d}') for n in range(32)),
-			*((ord(a), b) for a, b in zip(' ,:@!+<>', '·„¦∂¡×◄►')) ])):
+			*((ord(a), b) for a, b in zip(' ,:@!+<>', '·„¦∂¡¨◄►')) ])):
 		'Return IRC name for a Discord name'
 		# Must be deterministic but ideally not create collisions by stripping too much
 		# General idea is to replace all irc-problematic chars by lookalike unicode
 		if name not in self.cache.d2i:
-			name_irc, sub_chars = '', '°×·„∂¦◄►'
+			name_irc, sub_chars = '', '°¨·„∂¦◄►'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
-			if name_clean != name: name = name_clean + '×' + self.uid('name', name)
+			if name_clean != name: name = name_clean + '¨' + self.uid('name', name)
 			name_irc = name.translate(_irc_remap)
 			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
 		name = self.cache.d2i[name]

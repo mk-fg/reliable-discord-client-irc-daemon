@@ -140,9 +140,6 @@ Limitations
 - Completely ignores all non-text-chat stuff in general
   (e.g. voice, user profiles, games library, store, friend lists, etc).
 
-- Does not use or expose discord-server-specific nicknames in any way,
-  only global usernames.
-
 - Discord tracks "read_state" server-side, which is not used here in any way -
   triggering history replay is only done manually (/t commands in chans),
   so can sometimes be easy to miss on quiet reconnects.
@@ -424,6 +421,44 @@ There are also options to change name format of monitor channels.
 .. _shell-like globs: https://docs.python.org/3/library/fnmatch.html
 .. _python regexps: https://docs.python.org/3/library/re.html
 .. _"./rdircd --conf-dump-defaults" output: rdircd.defaults.ini
+
+People's names on discord
+`````````````````````````
+
+On IRC, everyone has one name, but that's `not the case with Discord`_,
+where each user can have following names:
+
+- ``login`` - discord "username", uniquely identifying every user.
+- ``display`` - "display name" set by the user in discord account settings, not unique.
+- ``nick`` - server and friend "nicknames", set in discord server settings, not always by you.
+
+``login`` is closest concept to IRC nicknames, as it's globally-unique,
+consistent, short, ascii-only, and can be used by setting
+``name-preference-order = login`` option in [discord] section (not the default).
+
+Official discord clients display other names first, which is why
+``name-preference-order`` option defaults to ``nick display login`` value,
+which uses discord/friend-specific nicknames first, if any, falling back to
+free-form name that user set in account settings, and their login name otherwise.
+
+Even though multiple people can have same name in this case, IRC names will be
+automatically disambiguated upon detecting duplicates, so that e.g. two "JohnSmith"
+users will end up getting nicks like "JohnSmith¨Zgyb" and "JohnSmith¨RsNt".
+
+Other things in fancy user-set nicknames that IRC doesn't allow also get replaced
+with common unicode characters, spaces with "·" middle-dots for example, or <>
+common irc-nick brackets with ◄► unicode arrows. Long Discord nicks are truncated.
+
+There are no IRC notifications about users changing their discord-specific
+display/nick-names at the moment, which might make it hard to tell who-is-who,
+if they keep changing nicks for whatever reason.
+
+All this is configurable via ini file settings (or in #rdircd.control channel),
+so if it gets too silly and maddening, set ``name-preference-order = login`` to
+use 100% consistent IRC-friendly nicks for everyone.
+
+.. _not the case with Discord:
+  https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
 
 Local Name Aliases
 ``````````````````
