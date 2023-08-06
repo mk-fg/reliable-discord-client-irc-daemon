@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.4' # git-version: py-str
+	version = '23.08.5' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -1419,8 +1419,8 @@ class IRCProtocol:
 		if not name:
 			self.cmd_msg_self('\n'.join([ '--- /who command usage:',
 				'/who #123456 - find/describe channel with id=123456.',
-				'/who @123456 - user id lookup.',
-				'/who %123456 - guild id lookup.', '--- /who info end' ]))
+				'/who %123456 - guild id lookup.',
+				'/who @123456 - user id lookup.', '--- /who info end' ]))
 		elif re.search(r'^[#@%]\d+$', name):
 			self.bridge.cmd_delay(self.bridge.cmd_info(self, name[0], name[1:]))
 		else:
@@ -1499,6 +1499,9 @@ class Discord:
 	def user_name(self, u, mentions=None, fallback='???'):
 		'''Pick appropriate discord name from user, member or message object(s).
 			"mentions" list, if provided, can be used to lookup "member" object.'''
+		# Discord has distinct "user" and "member" objects, sent in diff places
+		# (e.g. sometimes it's "author", sometimes "user", sometimes ".member.user")
+		# "user" object has "username" and "global_name", "member" has "nick"
 		if u:
 			if u.get('channel_id'):
 				if not mentions: mentions = u.get('mentions')
@@ -1512,16 +1515,17 @@ class Discord:
 				if mn.get('id') != u.get('id'): continue
 				m = mn.get('member') or dict(); break
 		for k in (vs := self.conf._discord_name_preference_order):
-			if k == 'login': break
+			if k == 'login' and (name := u.get('username')): break
 			elif k == 'nick':
-				if name := (m.get('nick') or u.get('nick')): return name
+				if name := (m.get('nick') or u.get('nick')): break
 			elif k == 'display':
-				if name := u.get('global_name'): return name
+				if name := u.get('global_name'): break
 			else:
 				self.log.warning( 'Ignoring unsupported name-type'
 					' in discord name-preference-order value: {!r}', k )
 				self.conf._discord_name_preference_order = list(v for v in vs if v != k)
-		return u.get('username') or f'@{u.get("id", fallback)}'
+		else: name = u.get('username') or f'@{u.get("id", fallback)}'
+		return name
 
 	online = False
 	def cmd_online_state(self, st):

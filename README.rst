@@ -441,21 +441,18 @@ Official discord clients display other names first, which is why
 which uses discord/friend-specific nicknames first, if any, falling back to
 free-form name that user set in account settings, and their login name otherwise.
 
-Even though multiple people can have same name in this case, IRC names will be
-automatically disambiguated upon detecting duplicates, so that e.g. two "JohnSmith"
-users will end up getting nicks like "JohnSmith¨Zgyb" and "JohnSmith¨RsNt".
-
 Other things in fancy user-set nicknames that IRC doesn't allow also get replaced
 with common unicode characters, spaces with "·" middle-dots for example, or <>
 common irc-nick brackets with ◄► unicode arrows. Long Discord nicks are truncated.
 
 There are no IRC notifications about users changing their discord-specific
-display/nick-names at the moment, which might make it hard to tell who-is-who,
-if they keep changing nicks for whatever reason.
+display/nick-names at the moment, and they don't have to be unique,
+which might make it hard to tell who-is-who, if they keep changing nicks for
+whatever reason.
 
 All this is configurable via ini file settings (or in #rdircd.control channel),
-so if it gets too silly and maddening, set ``name-preference-order = login`` to
-use 100% consistent IRC-friendly nicks for everyone.
+so if it gets too silly and maddening, set ``name-preference-order = login``
+to use unique consistent IRC-friendly nicks for everyone instead.
 
 .. _not the case with Discord:
   https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
@@ -1269,7 +1266,9 @@ Last updated: 2023-05-23
 
 - There are some unofficial docs for officially-undocumented APIs and quirks:
 
-  - https://luna.gitlab.io/discord-unofficial-docs/
+  - https://luna.gitlab.io/discord-unofficial-docs/ (+ litecord_ api-testing server)
+
+  .. _litecord: https://gitlab.com/litecord/litecord
 
 - Sent message delivery confirmation is done by matching unique "nonce" value in
   MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
