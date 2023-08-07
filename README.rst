@@ -454,6 +454,10 @@ All this is configurable via ini file settings (or in #rdircd.control channel),
 so if it gets too silly and maddening, set ``name-preference-order = login``
 to use unique consistent IRC-friendly nicks for everyone instead.
 
+IRC ``/who`` command can help translating between these names, for example
+``/who john1234`` can be used to dump info for that name/login into server buffer,
+which should include all users with that name, and all their per-discord details.
+
 .. _not the case with Discord:
   https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
 
@@ -827,10 +831,20 @@ Mostly useful for debugging - /who command can resolve specified ID
 (e.g. channel_id from protocol logs) to a channel/user/guild info:
 
 - ``/who #123456`` - find/describe channel with id=123456.
+- ``/who %123456`` - server/guild id info.
 - ``/who @123456`` - user id lookup.
-- ``/who %123456`` - guild id info.
 
-All these ID values are unique for discord within their type.
+All above ID values are unique across Discord service within their type.
+
+- ``/who @John·Mastodon`` - user IRC nick or name/login lookup.
+
+  Queries all joined discords for that name, and can return
+  multiple results for same or similar non-unique names.
+  Can be useful to check exact nick/display/login names
+  corresponding to an IRC name, or other user info.
+
+Results of all these commands should be dumped into a server buffer
+(not into channels), regardless of where they were issued from.
 
 Channel name disambiguation
 ```````````````````````````
