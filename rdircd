@@ -94,7 +94,7 @@ class RDIRCDConfigBase:
 	discord_ws_heartbeat = 15.0
 	discord_ws_auth_timeout = 60.0 # reconnect websocket if auth process lags too badly
 	discord_ws_reconnect_min = '70s'
-	discord_ws_reconnect_max = '6min'
+	discord_ws_reconnect_max = '12min'
 	discord_ws_reconnect_factor = 1.6
 	discord_ws_reconnect_warn = '1800:6' # to filter-out expected reconnects
 	discord_ws_reconnect_warn_max_delay = True # log warnings when reconnects reached max delay
@@ -129,7 +129,7 @@ class RDIRCDConfigBase:
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
-	discord_user_mention_cache_timeout = 3 * 24 * 3600 # to remember nicks for user-mentions
+	discord_user_mention_cache_timeout = '3d' # to remember nicks for user-mentions
 	discord_user_query_timeout = 60.0
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
 
@@ -207,6 +207,7 @@ class RDIRCDConfigBase:
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
+	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	def _conv_discord_msg_mention_re(self, v):
@@ -1749,8 +1750,8 @@ class Discord:
 		if not query: name = self.bridge.irc_name(name)
 		users[name], users[uid_key] = uid, (name, ts)
 		if ( (ts - self.user_mention_cache_ts_cleanup)
-				> self.conf.discord_user_mention_cache_timeout / 2 ):
-			ts -= self.conf.discord_user_mention_cache_timeout
+				> self.conf._discord_user_mention_cache_timeout / 2 ):
+			ts -= self.conf._discord_user_mention_cache_timeout
 			for uid_key in list(users.keys()):
 				if uid_key[0] not in '\0\t' or uid_key not in users: continue
 				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
