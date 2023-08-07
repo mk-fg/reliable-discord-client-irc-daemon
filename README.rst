@@ -84,7 +84,7 @@ Features
 - Translation for discord mentions, replies, attachments, stickers and emojis
   in incoming msgs, other events, basic annotations for some embedded links.
 
-- Easily accessible backlog via /t (/topic) commands in any channel, e.g. "/t
+- Easily accessible backlog via /topic (/t) commands in any channel, e.g. "/t
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
   from that point on to the present, fetching in multiple batches if necessary.
 
@@ -103,8 +103,8 @@ Features
 - Single python3 script that only requires aiohttp module, trivial to run or
   deploy anywhere.
 
-- Runs in constant ~40M memory footprint on amd64, which is probably more than
-  e.g. bitlbee-discord_, but better than those leaky browser tabs.
+- Runs in relatively stable ~40M memory footprint on amd64, which is probably
+  more than e.g. bitlbee-discord_, but better than those leaky browser tabs.
 
 - Easy to tweak and debug without rebuilds, gdb, rust and such.
 
@@ -316,11 +316,11 @@ Notes on information here:
 ``/j #axsd.offtopic`` (/join) as you'd do with regular IRC to start shitposting there.
 Channels joins/parts in IRC side do not affect discord in any way.
 
-Run ``/t`` (/topic) command to show more info on channel-specific commands,
-e.g. ``/t log`` to fetch and replay backlog starting from last event before last
-rdircd shutdown, ``/t log list`` to list all activity timestamps that rdircd tracks,
-or ``/t log 2h`` to fetch/dump channel log for/from specific time(stamp/span)
-(iso8601 or a simple relative format).
+Run ``/topic`` (often works as ``/t``) irc-command to show more info on
+channel-specific commands, e.g. ``/t log`` to fetch and replay backlog starting
+from last event before last rdircd shutdown, ``/t log list`` to list all
+activity timestamps that rdircd tracks, or ``/t log 2h`` to fetch/dump channel
+log for/from specific time(stamp/span) (iso8601 or a simple relative format).
 
 Daemon control/config commands are available in #rdircd.control channel,
 #rdircd.debug chan can be used to tweak various logging and inspect daemon state
@@ -454,9 +454,10 @@ All this is configurable via ini file settings (or in #rdircd.control channel),
 so if it gets too silly and maddening, set ``name-preference-order = login``
 to use unique consistent IRC-friendly nicks for everyone instead.
 
-IRC ``/who`` command can help translating between these names, for example
-``/who john1234`` can be used to dump info for that name/login into server buffer,
-which should include all users with that name, and all their per-discord details.
+IRC ``/who`` command or ``/topic info`` can help translating between these names,
+for example ``/t info john1234`` can be used to print info for that name/login
+in the channel buffer, which should include all users with partial match of that
+name on that specific discord, while ``/who`` command searches all joined discords.
 
 .. _not the case with Discord:
   https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
@@ -506,8 +507,8 @@ This should:
   "chan" renames using \@channel-id spec.
 
   That long discord channel identifier (also called "snowflake") can be found by
-  typing "/t info" topic-command in corresponding irc channel, and can be used to
-  refer to that specific channel, i.e. renaming this one #general on this one
+  typing ``/t info`` topic-command in corresponding irc channel, and can be used
+  to refer to that specific channel, i.e. renaming this one #general on this one
   discord server instead of renaming all #general channels everywhere.
 
   This is especially useful when two channels have same exact name within same

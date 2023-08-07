@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.7' # git-version: py-str
+	version = '23.08.9' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -322,6 +322,7 @@ doc_topic_cmds = '''
 --- Topic-commands:
   set {topic...} - set topic, as usual irc /topic command would do.
   info - show some internal guild/channel information, like IDs and such for renames.
+  info {user-name...} - query info on user name (or part of it) in this discord.
   log [state] - replay history since "state" point (default: last rdircd stop).
     "state" value can be either a number, state-id, relative or iso8601 timestamp.
     Where number indicates last Nth state recorded in the config (0 - current).
@@ -1292,8 +1293,8 @@ class IRCProtocol:
 			return self.send(403, chan, ':No such channel')
 		if not topic:
 			self.send_topic(chan)
-			return await self.bridge.irc_topic_cmd(self, c.name)
-		try: await self.bridge.irc_topic_cmd(self, c.name, topic)
+			return await self.bridge.irc_cmd_topic(self, c.name)
+		try: await self.bridge.irc_cmd_topic(self, c.name, topic)
 		except IRCBridgeSignal as err: self.send(482, chan, f':{err}')
 
 	def send_topic(self, chan, c=...):
@@ -1436,7 +1437,7 @@ class IRCProtocol:
 				'/who %123456 - server/guild id lookup.', '/who @123456 - user id lookup.',
 				'/who @John·Smith - user lookup by IRC nick.', '--- /who info end' ]))
 		elif name[0] == '@' or re.search(r'^[#%]\d+$', name):
-			self.bridge.cmd_delay(self.bridge.cmd_info(self, name[0], name[1:]))
+			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[0], name[1:]))
 		else:
 			if conn := self.bridge.cmd_conn_map().get(name):
 				self.send( 352, '*', conn.st.user, conn.st.host,
@@ -3151,7 +3152,24 @@ class RDIRCD:
 		if not (cc := c.get('cc')): return # system and monitor channels
 		return adict(cc=cc, gg=cc.gg)
 
-	async def irc_topic_cmd(self, conn, name, line=''):
+	async def _irc_cmd_query_username(self, nick, gid):
+		# Getting user-id from user_mention_cache isn't
+		#  useful here - need to query nick on all guilds anyway
+		info = await self.discord.session.ws_req_users_query(gid, nick, 5)
+		guilds = cs.defaultdict(list)
+		for gid in list(info):
+			if not (users := info.pop(gid)): continue
+			guild = dict(id=gid)
+			if gg := self.discord.st.guilds.get(gid): guild['name'] = gg.name
+			for m in users.values():
+				m.pop('joined_at', None) # to merge otherwise-same records
+				info[dh := data_hash(m)] = m; guilds[dh].append(guild)
+				name = self.discord.user_name(m)
+				m.update( discord=guilds[dh],
+					rdircd_names=dict(discord=name, irc=self.irc_name(name)) )
+		return data_repr(info) if (info := list(info.values())) else '-- no results --'
+
+	async def irc_cmd_topic(self, conn, name, line=''):
 		chan = conn.chan_spec(name)
 		notice_cmd = ft.partial(
 			conn.cmd_msg_chan, self.conf.irc_nick_sys, chan, notice=True )
@@ -3161,6 +3179,19 @@ class RDIRCD:
 		try:
 			if cmd[0] == 'set':
 				raise IRCBridgeSignal('Changing topic is not implemented')
+			elif cmd[0] == 'info' and len(cmd) > 1:
+				if (nick := ' '.join(cmd[1:])).startswith('@'): nick = nick[1:]
+				nick_irc = self.irc_name_revert(nick)
+				if not (info := self.irc_discord_info(name)):
+					raise IRCBridgeSignal(f'Not a discord channel: {chan}')
+				notice_cmd( '--- List of user(s) matching:'
+					f' {nick_irc or nick!r} in [ {info.gg.name} ]' )
+				info = await self._irc_cmd_query_username(nick_irc or nick, info.gg.id)
+				if not nick_irc:
+					notice_cmd( f'-- NOTE: searching {nick!r} as-is,'
+						' because it\'s not cached as an IRC nick here --' )
+				notice_cmd(info)
+				notice_cmd(f'--- end of list')
 			elif cmd[0] == 'info':
 				if not (info := self.irc_discord_info(name)):
 					raise IRCBridgeSignal(f'Not a discord channel: {chan}')
@@ -3222,6 +3253,21 @@ class RDIRCD:
 		except IRCBridgeSignal as err:
 			notice_cmd(f'topic-cmd-error: {err}')
 			raise
+
+	async def irc_cmd_info(self, conn, t, id_str):
+		info, t = None, {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
+		if t == 'users' and not id_str.isdigit():
+			nick, nick_irc = id_str, self.irc_name_revert(id_str)
+			gids = list(gid for gid in self.discord.st.guilds if gid != 1) # skip "me" non-guild
+			info = await self._irc_cmd_query_username(id_str, gids)
+			id_str = f' {nick_irc or nick!r} on {len(gids)} discord(s) '
+			if not nick_irc:
+				info = ( f'NOTE: specified IRC name [ {nick} ]\n   was not cached,'
+					f' will be queried as-is, without reverse IRC-to-Discord translation.\n{info}' )
+		else: info = await self.discord.cmd_info_dump(id_str := f'{t}/{id_str}')
+		conn.cmd_msg_self(f'--- [{id_str}] info follows')
+		conn.cmd_msg_self(info)
+		conn.cmd_msg_self(f'--- [{id_str}] end')
 
 	def irc_msg(self, conn, chan, line):
 		'Called with a new msg, posted by IRC user in any channel'
@@ -3713,35 +3759,6 @@ class RDIRCD:
 		if not (name := self.irc_chans_sys.get('ø_debug')): return # before chan_map init
 		for conn in self.cmd_chan_conns(name):
 			conn.cmd_msg_chan(self.conf.irc_nick_sys, name, line)
-
-	async def cmd_info(self, conn, t, id_str):
-		info, t = None, {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
-		if t == 'users' and not id_str.isdigit():
-			# Getting id_str from user_mention_cache isn't
-			#  useful here - need to query nick on all guilds anyway
-			nick, nick_irc = id_str, self.irc_name_revert(id_str)
-			gids = list(gid for gid in self.discord.st.guilds if gid != 1) # skip "me" non-guild
-			info = await self.discord.session.ws_req_users_query(gids, nick_irc or nick, 5)
-			meta = cs.defaultdict(list)
-			for gid in list(info):
-				if not (users := info.pop(gid)): continue
-				guild = dict(id=gid)
-				if gg := self.discord.st.guilds.get(gid): guild['name'] = gg.name
-				for m in users.values():
-					m.pop('joined_at', None) # to merge otherwise-same records
-					info[dh := data_hash(m)] = m; meta[dh].append(guild)
-					name = self.discord.user_name(m)
-					m.update( discord=meta[dh],
-						rdircd_names=dict(discord=name, irc=self.irc_name(name)) )
-			info = data_repr(list(info.values()))
-			id_str = f' {nick_irc or nick!r} on {len(gids)} discord(s) '
-			if not nick_irc:
-				info = ( f'NOTE: specified IRC name [ {nick} ]\n   was not cached,'
-					f' will be queried as-is, without reverse IRC-to-Discord translation.\n{info}' )
-		else: info = await self.discord.cmd_info_dump(id_str := f'{t}/{id_str}')
-		conn.cmd_msg_self(f'--- [{id_str}] info follows')
-		conn.cmd_msg_self(info)
-		conn.cmd_msg_self(f'--- [{id_str}] end')
 
 	def cmd_msg_monitor( self, nick, msg,
 			prefix='', notice=True, gid=None, leftover_skip=None ):
