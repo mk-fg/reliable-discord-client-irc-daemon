@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.5' # git-version: py-str
+	version = '23.08.6' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2762,8 +2762,9 @@ class DiscordSession:
 		else:
 			flake, ref = m.id, m.get('referenced_message')
 			if self.conf.irc_inline_reply_quote_len > 0 and ref:
-				ref_user = ( '' if not (u := ref.get('author'))
-					else f'<{self.discord.user_name(u, m.get("mentions"))}>' )
+				ref_user = '' if not ( (u := ref.get('author'))
+					and (u := self.discord.bridge.irc_name(
+						self.discord.user_name(u, m.get("mentions")))) ) else f'<{u}>'
 				ref_line, ref_tags = self.op_msg_parse(ref, gg)
 				ref = str_cut(ref_line, self.conf.irc_inline_reply_quote_len)
 				if ref_user and ref:
