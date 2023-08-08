@@ -150,8 +150,6 @@ Limitations
 - `Slash commands`_ (for bots) are not supported in any special way,
   but you can probably still send them, if IRC client will pass these through.
 
-  .. _Slash commands: https://discord.com/developers/docs/interactions/slash-commands
-
 - Not the most user-friendly thing, though probably same as IRC itself.
 
 - I only run it on Linux, so it's unlikely to "just work" on OSX/Windows, but idk.
@@ -160,6 +158,8 @@ Limitations
   kind of exposure and testing on pypi and such wrt compatibility, bugs and corner-cases.
 
 - Seem to be against Discord guidelines to use it - see WARNING section above for more details.
+
+.. _Slash commands: https://discord.com/developers/docs/interactions/slash-commands
 
 
 Usage
@@ -495,8 +495,6 @@ This should:
   see "chan-monitor-guild" and "chan-leftover-guild" options under
   [irc] section for changing that.
 
-  .. _python str.format syntax: https://docs.python.org/3/library/string.html#format-string-syntax
-
 - Rename that long channel to have a shorter name (retaining guild prefix) -
   "chan" renames.
 
@@ -521,6 +519,8 @@ system/monitor/leftover and private-chat channels - "chan-sys", "chan-private",
 
 Set ``chan-monitor-guild = {prefix}`` there for example, to have #game-x channel be
 catch-all for all messages in that discord, without default long #rdircd.monitor.\* prefix.
+
+.. _python str.format syntax: https://docs.python.org/3/library/string.html#format-string-syntax
 
 Private messages and friends
 ````````````````````````````
@@ -1086,6 +1086,7 @@ Terminal UI (TUI, ncurses) clients:
 - discordo_ - relatively new but popular client written in Go.
 - 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
 - Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
+- weechat-discord_ - Weechat terminal IRC client plugin to connect to Discord
 
 Web UI (in-browser) clients/mods (often further extended by plugins):
 
@@ -1124,6 +1125,7 @@ here, for anyone looking for alternatives.
 .. _discordo: https://github.com/ayntgl/discordo
 .. _6cord: https://gitlab.com/diamondburned/6cord/
 .. _Cordless: https://github.com/Bios-Marcel/cordless
+.. _weechat-discord: https://github.com/terminal-discord/weechat-discord
 .. _Harmony: https://github.com/nickolas360/harmony
 
 
@@ -1266,8 +1268,6 @@ Last updated: 2023-05-23
   Code has API number hardcoded as DiscordSession.api_ver, which has to be
   bumped there manually after updating it to handle new features as necessary.
 
-  .. _Change Log page of the API docs: https://discord.com/developers/docs/change-log
-
 - Auth uses undocumented /api/auth/login endpoint for getting "token" value for
   email/password, which is not OAuth2 token and is usable for all other endpoints
   (e.g. POST URLs, Gateway, etc) without any prefix in HTTP Authorization header.
@@ -1282,8 +1282,6 @@ Last updated: 2023-05-23
 - There are some unofficial docs for officially-undocumented APIs and quirks:
 
   - https://luna.gitlab.io/discord-unofficial-docs/ (+ litecord_ api-testing server)
-
-  .. _litecord: https://gitlab.com/litecord/litecord
 
 - Sent message delivery confirmation is done by matching unique "nonce" value in
   MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
@@ -1321,9 +1319,11 @@ Last updated: 2023-05-23
   helper script in this repo can be used to decompress/decode websocket messages saved
   from chromium-engine browser devtools (pass -h/--help option for info on how to do it).
 
-  .. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
-
 - Adding support for initiating private chats might be a bad idea, as Cordless_
   dev apparently got banned for that, as these seem to be main spam vector,
   so more monitoring and anomaly detection is likely done there, leading to
   higher risk for users.
+
+.. _Change Log page of the API docs: https://discord.com/developers/docs/change-log
+.. _litecord: https://gitlab.com/litecord/litecord
+.. _can use zlib compression: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
