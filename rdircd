@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.9' # git-version: py-str
+	version = '23.08.10' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -106,16 +106,11 @@ class RDIRCDConfigBase:
 	discord_gateway = '' # fetched and stored in last config, region-specific
 
 	# Determines which name is used for discord users on IRC.
-	# Following name options are available:
-	#   login - discord "username", unique everywhere, same as entered in "login" field.
-	#   display - "display name" set by the user in discord account settings, not unique.
-	#   nick - server and friend "nicknames", set in discord server settings, not always by you.
+	# Following name options are available: login display nick
 	# "login" is always used as a fallback, if no other names are set,
 	#  but otherwise names above can be listed in order to attempt using them.
 	# For example, "nick display" value will try discord/friend nickname,
 	#  then name that user set in account settings, and login name if there aren't any of those.
-	# Setting this to empty value or "login" allows to remove any confusion and use simple
-	#  globally-unique names for irc nicks, but won't match how official discord clients show them.
 	discord_name_preference_order = 'nick display login'
 
 	# discord_msg_mention_re should match only discord user mentions.
