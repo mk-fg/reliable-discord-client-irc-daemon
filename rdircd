@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.10' # git-version: py-str
+	version = '23.08.11' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -1827,6 +1827,7 @@ class DiscordSession:
 		thread_private = 12 # invite-only threads
 		stage = 13
 		forum = 15
+		media = 16
 
 	class c_msg_type(enum.IntEnum):
 		# https://discord.com/developers/docs/resources/channel#message-object-message-types
@@ -3451,6 +3452,7 @@ class RDIRCD:
 				if cc.nsfw: tags += '[nsfw] '
 				if cc.ct is cc.ct.voice: tags += '[voice] '
 				elif cc.ct is cc.ct.forum: tags += '[forum] '
+				elif cc.ct is cc.ct.media: tags += '[media] '
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = f'{gi.gg.name.strip()}: {tags}{topic}'.strip()
