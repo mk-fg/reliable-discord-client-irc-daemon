@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.08.11' # git-version: py-str
+	version = '23.08.12' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2595,11 +2595,10 @@ class DiscordSession:
 				if not cc.names.old: new_threads.append(cc)
 			elif cc_private:
 				ts, users= time.time(), c.get('recipients') or list()
-				for u in users: self.discord.cmd_user_cache(
-					gg.id, u.id, nick := self.discord.user_name(u) )
-				dict_update( cc.users,
-					( (nick, adict(name=nick, ts=ts))
-						for u in (c.get('recipients') or list()) ), sync=True )
+				for n, u in enumerate(users):
+					self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(u))
+					users[n] = nick, adict(name=nick, ts=ts)
+				dict_update(cc.users, users, sync=True)
 				user_names = list(u.name for u in cc.users.values())
 				name_kws = dict(id=(name_hash := str_hash(c.id, 8)))
 				if any(f'{{{k}}}' in self.conf.irc_chan_private for k in ['names', 'names_or_id']):
@@ -3461,6 +3460,7 @@ class RDIRCD:
 					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
 					name=name, topic=topic, ts_created=gi.gg.ts_joined ))
 
+
 	def cmd_chan_sys(self, sys_type, conn, chan, line):
 		if sys_type not in self.c.chan_sys_types: return
 		getattr(self, f'cmd_chan_sys_{sys_type}')(conn, chan, line)
@@ -3757,6 +3757,7 @@ class RDIRCD:
 		if not (name := self.irc_chans_sys.get('ø_debug')): return # before chan_map init
 		for conn in self.cmd_chan_conns(name):
 			conn.cmd_msg_chan(self.conf.irc_nick_sys, name, line)
+
 
 	def cmd_msg_monitor( self, nick, msg,
 			prefix='', notice=True, gid=None, leftover_skip=None ):
