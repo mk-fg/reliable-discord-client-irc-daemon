@@ -1282,6 +1282,7 @@ Last updated: 2023-05-23
 - There are some unofficial docs for officially-undocumented APIs and quirks:
 
   - https://luna.gitlab.io/discord-unofficial-docs/ (+ litecord_ api-testing server)
+  - https://github.com/Merubokkusu/Discord-S.C.U.M/tree/master/docs
 
 - Sent message delivery confirmation is done by matching unique "nonce" value in
   MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
