@@ -1059,6 +1059,27 @@ Defaults are that way to try to be more explicit and descriptive,
 but once you know what all these channels are for, can easily rename
 them to something shorter/nicer and more convenient for yourself.
 
+Change message edit/embed/attachment prefixes to shorter emojis
+```````````````````````````````````````````````````````````````
+
+When message is edited, you normally get something like ``[edit] new msg text``,
+but it can be ``✍️ new msg text`` or ``📝 new msg text`` instead::
+
+  [irc]
+  prefix-edit = 📝 \
+  prefix-embed = 📎 {} \
+  prefix-attachment = 🖼️ \
+  prefix-uis = ⚙️ \
+  prefix-call = 📞 \
+
+Note the "space and backslash" at the end in these options, which is to preserve
+trailing spaces in values, from both text editors that strip those and configuration
+file parser (which ignores any leading/trailing spaces, unless punctuated by backslash).
+``prefix-embed`` option value needs ``{}`` placeholder for where to put its short id/tag.
+
+Alternatively, set-command like ``set irc-prefix-edit '✍️ '`` can be used in #rdircd.control
+to configure and tweak this stuff on-the-fly (or ``-s/--save`` into config too).
+
 
 Links
 -----
@@ -1078,7 +1099,7 @@ IRC-translation clients (like this one):
 Graphical UI (GUI) clients:
 
 - Pidgin_ + purple-discord_ - popular cross-platform IM client
-- gtkcord_ - liteweight Go/GTK3 client, also works on linuxy phones (like PinePhone_)
+- gtkcord4_ - Go/GTK4 client, which also works on linuxy phones
 - Ripcord_ - cross-platform proprietary shareware client, also supports slack
 
 Terminal UI (TUI, ncurses) clients:
