@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.0' # git-version: py-str
+	version = '23.09.1' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2470,7 +2470,7 @@ class DiscordSession:
 			r'|(guild_)?application_command|embedded_activity)_', mt ): return
 		elif re.search( r'^user_(note|'
 			r'guild_settings|settings|settings_proto)_update$', mt ): return
-		elif mt in [ 'sessions_replace', 'invite_create',
+		elif mt in [ 'sessions_replace', 'invite_create', 'guild_feature_ack',
 			'channel_topic_update', 'channel_unread_update' ]: return
 
 		# Known stuff must be explicitly handled above to not generate "Unhandled event"
