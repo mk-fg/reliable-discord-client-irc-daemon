@@ -1105,7 +1105,7 @@ Graphical UI (GUI) clients:
 Terminal UI (TUI, ncurses) clients:
 
 - discordo_ - relatively new but popular client written in Go.
-- 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord_
+- 6cord_ - Go client, seem to be deprecated atm in favor of gtkcord
 - Cordless_ - fairly mature Go TUI client, abandoned after discord blocking dev's acc
 - weechat-discord_ - Weechat terminal IRC client plugin to connect to Discord
 
@@ -1134,8 +1134,7 @@ here, for anyone looking for alternatives.
 .. _bitlbee: https://www.bitlbee.org/
 .. _Pidgin: https://pidgin.im/
 .. _purple-discord: https://github.com/EionRobb/purple-discord
-.. _gtkcord: https://github.com/diamondburned/gtkcord4
-.. _PinePhone: https://www.pine64.org/pinephone/
+.. _gtkcord4: https://github.com/diamondburned/gtkcord4
 .. _Ripcord: https://cancel.fm/ripcord/
 .. _BandagedBD: https://github.com/rauenzi/BetterDiscordApp
 .. _BetterDiscord: https://github.com/BetterDiscord/BetterDiscord
