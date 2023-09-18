@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.1' # git-version: py-str
+	version = '23.09.2' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -3166,8 +3166,9 @@ class RDIRCD:
 			if gg := self.discord.st.guilds.get(gid): guild['name'] = gg.name
 			for m in users.values():
 				m.pop('joined_at', None) # to merge otherwise-same records
-				info[dh := data_hash(m)] = m; guilds[dh].append(guild)
-				name = self.discord.user_name(m)
+				dh = data_hash(m)
+				guilds[dh].append(guild)
+				info[dh], name = m, self.discord.user_name(m)
 				m.update( discord=guilds[dh],
 					rdircd_names=dict(discord=name, irc=self.irc_name(name)) )
 		return data_repr(info) if (info := list(info.values())) else '-- no results --'

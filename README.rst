@@ -1067,7 +1067,7 @@ but it can be ``✍️ new msg text`` or ``📝 new msg text`` instead::
 
   [irc]
   prefix-edit = 📝 \
-  prefix-embed = 📎 {} \
+  prefix-embed = 📎.{} \
   prefix-attachment = 🖼️ \
   prefix-uis = ⚙️ \
   prefix-call = 📞 \
