@@ -22,4 +22,4 @@ VOLUME /config
 WORKDIR /config
 
 COPY rdircd /
-ENTRYPOINT [ "/rdircd", "--conf", "config.ini" ]
+ENTRYPOINT [ "/rdircd", "--conf", "config.ini", "-i", "0.0.0.0" ]

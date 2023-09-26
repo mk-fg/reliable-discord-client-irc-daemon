@@ -16,7 +16,12 @@ services:
       #  options are used/enabled in the daemon. See Dockerfile for defaults.
       #args: [ALPINE_TAG=latest, UID=12345, GID=12345]
     image: rdircd
-    ports: [6667:6667]
+
+    # Change this to "ports: [6667:6667]" to make rdircd accessible on all interfaces
+    # Default is to only bind to localhost to avoid making it acessible unintentially
+    # rdircd listening on 0.0.0.0 inside container is hardcoded in Dockerfile entrypoint
+    ports: [127.0.0.1:6667:6667]
+
     volumes:
       # This will auto-create and mount volume dir from /var/lib/docker/volumes
       # You'd need to create/edit config.ini file there, which --conf-init passed
