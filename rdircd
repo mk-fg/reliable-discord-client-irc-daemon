@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.3' # git-version: py-str
+	version = '23.09.4' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -177,10 +177,11 @@ class RDIRCDConfigBase:
 	debug_msg_cut = 50 # message part length in debug logs
 	debug_proto_log_shared = True # send protocol logs to normal debug logging and log-file too
 	debug_proto_cut = 90 # cut-length for irc/discord protocol msgs in debug logs, if shared
-	debug_proto_log_filter_ws = '' # space-separated received ws ev-names to skip logging
 	debug_proto_log_file = '' # log file(s) for all irc/discord protocol messages
 	debug_proto_log_file_size = int(1.5e6)
 	debug_proto_log_file_count = 9
+	# Space-separated received ws events to drop from protocol logs
+	debug_proto_log_filter_ws = 'guild_member_list_update typing_start'
 	debug_proto_aiohttp = True # log aiohttp request/response info in proto-log
 	debug_log_file = '' # debug-level log, not affected by "verbose" option
 	debug_log_file_size = int(1.5e6)
