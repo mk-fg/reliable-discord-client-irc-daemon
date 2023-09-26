@@ -28,11 +28,19 @@ def main(args=None):
 	parser.add_argument('har_file', nargs='?', help='HAR dump from websocket connection to process.')
 	parser.add_argument('-n', '--pick', type=int, metavar='n',
 		help='Only pick and print message with specified "ws_seq" sequential number.')
-	parser.add_argument('-m', '--pick-to', type=int, metavar='n',
-		help=dd('''
-			Modifies -n/--pick option to also print all msgs that come
-				after it, up to and including specified one (0 - to the end).'''))
+	parser.add_argument('-m', '--pick-to', type=int, metavar='n', help=dd('''
+		Modifies -n/--pick option to also print all msgs that come
+			after it, up to and including specified one (0 - to the end).'''))
+	parser.add_argument('-r', '--run-on-line', metavar='cmd', help=dd('''
+		Run specified command on each line (with arguments split on spaces),
+			sending JSON to its stdin and passing its stdout/stderr through,
+			with line delimiters added in-between. Example: -r 'jq -C .' '''))
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
+
+	line_cmd = None
+	if opts.run_on_line:
+		import subprocess as sp
+		line_cmd = opts.run_on_line.split()
 
 	src = sys.stdin if not opts.har_file else open(opts.har_file)
 	try: dump = json.load(src)
@@ -75,11 +83,20 @@ def main(args=None):
 				ws_ts_diff=ts_last and msg['time'] - ts_last,
 				ws_ts_rel=ts_start and msg['time'] - ts_start,
 				ws_data=data )
-			json.dump(msg_line, sys.stdout)
+
+			if not line_cmd: json.dump(msg_line, sys.stdout)
+			else:
+				print(f'\n\n\n---------- -=line:{n} ----------', flush=True)
+				sp.run(line_cmd, input=json.dumps(msg_line).encode())
 			sys.stdout.write('\n')
+			sys.stdout.flush()
 
 		ts_last = msg['time']
 		if not ts_start: ts_start = ts_last
 		n += 1
 
-if __name__ == '__main__': sys.exit(main())
+if __name__ == '__main__':
+	try: sys.exit(main())
+	except BrokenPipeError: # stdout pipe closed
+		os.dup2(os.open(os.devnull, os.O_WRONLY), sys.stdout.fileno())
+		sys.exit(1)
