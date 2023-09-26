@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.2' # git-version: py-str
+	version = '23.09.3' # git-version: py-str
 
 	irc_host = '127.0.0.1' # socket bind addr, can be set via -i/--irc-bind cli option
 	irc_port = 6667 # irc listening port, can be set in -i/--irc-bind, see also tls opts
@@ -2290,7 +2290,8 @@ class DiscordSession:
 			return fut.results
 		finally: del self.ws_nonces[nonce]
 
-	def ws_req_thread_list_sync(self):
+	def ws_req_guild_sync(self):
+		'Fetches a list of threads and enables message events in large guilds (>10K users)'
 		for gid, gg in self.st.guilds.items():
 			if gid == 1: continue # "me" pseudo-guild
 			chan_req = list( (cc.id, [[0, 99]])
@@ -2298,8 +2299,9 @@ class DiscordSession:
 			if not chan_req: continue
 			# It doesn't seem to matter what channels= are sent in request_sync_chan -
 			#   all threads are returned regardless, along with GUILD_MEMBER_LIST_UPDATE and such
-			self.ws_send( self.c.request_sync_chan,
-				dict(guild_id=gid, threads=True, channels=dict([chan_req[0]])) )
+			# typing=true activities=true is required to get MESSAGE_CREATE in large guilds
+			self.ws_send( self.c.request_sync_chan, dict( guild_id=gid,
+				threads=True, typing=True, activities=True, channels=dict([chan_req[0]]) ))
 
 	### Gateway Websocket event handlers
 
@@ -2384,7 +2386,7 @@ class DiscordSession:
 				user_n=md.user.discriminator )
 			self.op_ev_guilds(md.get('guilds'), sync=True)
 			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
-			self.ws_req_thread_list_sync()
+			self.ws_req_guild_sync()
 			self.log.debug( 'New session id: {} gw=[ {} ]',
 				self.st.session_id, md.get('resume_gateway_url') )
 		else: resume = True
@@ -2516,6 +2518,8 @@ class DiscordSession:
 			if g.id == self.st.me.id:
 				self.log.error('Skipping guild due to id=1 conflict with "me" guild: {}', g)
 				continue
+			# "properties" key is separated with some capabilities= values sent in IDENTIFY
+			if 'properties' in g: g = adict(g.pop('properties'), **g)
 			gg = gs_new.setdefault( g.id,
 				self.st.guilds.get(g.id, adict(id=g.id, chans=dict())) )
 			if g.id not in self.st.guilds:
