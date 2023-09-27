@@ -612,6 +612,13 @@ def data_hash(data, **str_hash_kws):
 		data = json.dumps(data, sort_keys=True).encode()
 	return str_hash(data)
 
+def host_uid_seed():
+	seed = os.uname().nodename
+	for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
+		try: seed = pl.Path(k).read_text().strip(); break
+		except OSError: pass
+	return f'rdircd.{str_hash(seed)}'
+
 
 @cl.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
@@ -3043,11 +3050,6 @@ class RDIRCD:
 			gid_mon_chan=dict(), gid_nc_chan=dict(), did_chan=dict(),
 			d2i=irc_name_dict(), i2d=irc_name_dict() ) # for all irc <-> discord names
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
-		if not self.uid_seed:
-			for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
-				try: self.uid_seed = str_hash(pl.Path(k).read_text().strip())
-				except OSError: continue
-			else: self.uid_seed = f'rdircd.{self.server_host}'
 		boot_id = pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip()
 		self.uid_start = '.'.join( str_hash(v, c)
 			for c, v in zip([3, 3, 6], [self.uid_seed, boot_id, os.urandom(6)]) )
@@ -4365,6 +4367,7 @@ def main(args=None, conf=None):
 
 	if opts.conf_init:
 		exit_code = 0
+		conf.irc_uid_seed = host_uid_seed()
 		for n, p in enumerate(conf_user_paths):
 			try: fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
 			except OSError as err:
@@ -4514,6 +4517,15 @@ def main(args=None, conf=None):
 			finally: p_key.unlink(missing_ok=True); p_crt.unlink(missing_ok=True)
 		conf.irc_tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
 		conf.irc_tls.load_cert_chain(p_pem, p_pem)
+
+	if not conf.irc_uid_seed: # stored to keep it stable in e.g. docker containers
+		if any( re.search(r'^\s*[^\[;#]', line)
+				for line in pl.Path(conf._conf_path).read_text().splitlines() ):
+			# Compatibility: pre-23.09.07 had a bug that always used hostname like this
+			conf.irc_uid_seed = f'rdircd.{os.uname().nodename}'
+		else: conf.irc_uid_seed = host_uid_seed()
+		conf.update_file_section('irc', 'uid_seed')
+		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
 
 	def _conf_sighup_reload():
 		try: conf_paths = conf.read_from_file()
