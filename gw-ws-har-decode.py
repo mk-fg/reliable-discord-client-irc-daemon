@@ -86,10 +86,9 @@ def main(args=None):
 
 			if not line_cmd: json.dump(msg_line, sys.stdout)
 			else:
-				print(f'\n\n\n---------- -=line:{n} ----------', flush=True)
+				print(f'\n\n\n---------- -=msg:{n} ----------', flush=True)
 				sp.run(line_cmd, input=json.dumps(msg_line).encode())
-			sys.stdout.write('\n')
-			sys.stdout.flush()
+			print(flush=True)
 
 		ts_last = msg['time']
 		if not ts_start: ts_start = ts_last
