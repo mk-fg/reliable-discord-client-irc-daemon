@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.7' # git-version: py-str
+	version = '23.09.8' # git-version: py-str
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -4394,9 +4394,10 @@ def main(args=None, conf=None):
 						if key in req_keys: req_keys.remove(key)
 						elif line.strip(): line = '\n'.join(f';{line}' for line in line.split('\n'))
 					print(line, file=dst)
-				conf.pprint(dd('''
-						Configuration file template with ALL supported options and their default values.
-						Most of it can be removed. Uncomment values to override defaults.'''),
+				conf.pprint(
+					'Configuration file template with ALL supported options'
+						f' and their default values.\nAs of rdircd {conf.version}.'
+						' Uncomment values to override defaults and cleanup as needed.',
 					empty_vals=True, comments=comms, out=_store_commented_line )
 		if not exit_code:
 			print('\nAll specified configuration files do exist or were created:\n')
