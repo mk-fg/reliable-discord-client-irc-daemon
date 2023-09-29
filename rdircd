@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.8' # git-version: py-str
+	version = '23.09.9' # git-version: py-str
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -284,17 +284,19 @@ doc_control_chan_dev_cmds = '''
 Developer-commands for breaking and testing stuff:
 
   ccx file channel - dump all internal state for a working discord channel to file.
-    Resulting YAML file can then be used with "cc" command to load the state and
-     test-generate/send messages to that channel without connecting to discord.
+    Resulting YAML file can then be used with "cc" command to load the state
+     and test-generate/send messages to that channel without connecting to discord.
+    Channel name should be as it is seen on IRC, with #-prefix being optional.
     This is intended for testing various rdircd msg-handling stuff, such as filters.
     YAML can also be inspected or tweaked to understand/test internal state issues.
-    Requires "pyaml" module, which is used for serialization.
+    Requires "pyaml" module, which is used for human-friendly serialization.
 
   cc file [nick [msg...]] - load YAML-dump of discord-chan state, send msg to it.
     Same channel as specified with "ccx" command that produced the YAML is used.
     If nick/msg is not specified, some unique placeholder ones are auto-generated.
     Intended use is to rapidly test various internal message-handling code
-     without needing an actual discord connection, like msg filtering or processing.'''
+     without needing an actual discord connection, like msg filtering or processing.
+    Requires PyYAML module to parse the YAML file.'''
 
 doc_debug_chan_cmds = '''
 This channel is for logging output, with level=warning by default,
@@ -456,10 +458,11 @@ def pyaml_conv_keys(data, enc=True, dd=None):
 	return data
 
 def pyaml_dump(data):
-	if not (pyml := getattr(pyaml_dump, 'module', None)):
+	if not (pyaml := getattr(pyaml_dump, 'module', None)):
 		log_bak.critical('--- !!! Debug-pyaml was left in the code somewhere !!! ---')
-		import pyaml as pyml; pyaml_dump.module = pyml
-	return pyml.dump(pyaml_conv_keys(data), force_embed=False)
+		import pyaml; pyaml_dump.module = pyaml
+	return pyaml.dump( pyaml_conv_keys(data),
+		force_embed=False, sort_dicts=pyaml.PYAMLSort.oneline_group )
 
 def pyaml_load(src):
 	if not (yaml := getattr(pyaml_load, 'module', None)):
@@ -4310,7 +4313,7 @@ def main(args=None, conf=None):
 		scrypt uses random 16B salt and N=2^15 r=8 p=1 parameters (min 32M memory).'''))
 	group.add_argument('--conf-init', action='store_true', help=dd('''
 		Create initial config file(s) with default options in specified path(s) and exit.
-		This will never change overwrite any existing files.
+		This will never change or overwrite any existing files.
 		If multiple -c/--conf files are used, all files after first one are created empty.'''))
 
 	group = parser.add_argument_group('Interfaces')
@@ -4375,8 +4378,7 @@ def main(args=None, conf=None):
 		os.path.expanduser, opts.conf or [conf._conf_path] ))
 
 	if opts.conf_init:
-		exit_code = 0
-		conf.irc_uid_seed = host_uid_seed()
+		exit_code, conf.irc_uid_seed = 0, host_uid_seed()
 		for n, p in enumerate(conf_user_paths):
 			try: fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
 			except OSError as err:
@@ -4417,8 +4419,7 @@ def main(args=None, conf=None):
 			parser.error(f'Specified config file missing or inaccessible{w}: {p}')
 	conf_user_paths = conf.read_from_file(*conf_user_paths)
 
-	if opts.conf_dump:
-		return conf.pprint('Current configuration options')
+	if opts.conf_dump: return conf.pprint('Current configuration options')
 	if opts.conf_dump_state:
 		print('state_timestamps:')
 		for v, k in sorted((v,k) for k,v in conf.state.items()):
@@ -4470,9 +4471,8 @@ def main(args=None, conf=None):
 	log_handler.addFilter(log_proto_debug_filter)
 	log_proto_root.addHandler(log_handler)
 
-	def _handle_exception(err_t, err, err_tb):
-		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb))
-	sys.excepthook = _handle_exception
+	sys.excepthook = ( lambda err_t, err, err_tb:
+		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb)) )
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
 	for k_old, k_new in conf._conf_sections_old.items():
