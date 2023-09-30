@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.9' # git-version: py-str
+	version = '23.09.10' # git-version: py-str
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -147,13 +147,13 @@ class RDIRCDConfigBase:
 	# Prefix for thread-id values, used in thread-chan names
 	#   and msg prefixes if propagation from these to parent channel is enabled.
 	discord_thread_id_prefix = '='
-	# discord_thread_msgs_in_parent_chan propagates messages from threads to a parent channel,
+	# Propagates messages from threads to a parent channel,
 	#   adding thread-id prefix, through which response can be redirected as well, if enabled.
 	discord_thread_msgs_in_parent_chan = True
 	# Enable to see mirrored msgs
 	#   in #rdircd.monitor channel(s) too - e.g. to have it all there as-is.
 	discord_thread_msgs_in_parent_chan_monitor = False
-	# discord_thread_msgs_in_parent_chan_full_prefix - enable to use full
+	# Enable to use full
 	#  chan-name prefix instead of shorter thread-id, for IRC clients with easy click-to-join.
 	discord_thread_msgs_in_parent_chan_full_prefix = False
 	# discord_thread_redirect_prefixed_responses_from_parent_chan allows to send msgs
@@ -166,6 +166,10 @@ class RDIRCDConfigBase:
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
+	# discord_image_strip_re strips trailing ?ex=...&is=...&hm=... query-parameters
+	#   from Discord CDN attachments, with "url" group for result. Set empty value to disable.
+	discord_image_strip_re = ( r'(?i)^(?P<url>https://'
+		r'cdn\.discordapp\.com/attachments/.*\.(jpg|png|webp))\?' )
 
 	discord_chan_dedup_fmt = '{name}.{id_hash}' # how same-irc-name discord chans get disambiguated
 	discord_chan_dedup_hash_len = 4 # length of id_hash part in chan-dedup-fmt
@@ -205,25 +209,25 @@ class RDIRCDConfigBase:
 		filters='unmonitor', replacements='send-replacements' )
 	_conf_sections_old_found = set()
 
+	def _re_chk(key, groups, v_def=''):
+		def _conv(self, v):
+			if not v: return v_def
+			rx = re.compile(v)
+			if missing := set(groups).difference(rx.groupindex):
+				raise ValueError( 'Missing required regexp capture'
+					f' group(s) in regexp for {key} [ {" ".join(missing)} ] {v!r}' )
+			return rx
+		return _conv
+
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
-	def _conv_discord_msg_mention_re(self, v):
-		if not v: return
-		rx = re.compile(v)
-		if 'nick' not in rx.groupindex:
-			raise ValueError(f'Missing "nick" group in discord-mentions regexp: {v!r}')
-		return rx
-	def _conv_discord_msg_edit_re(self, v):
-		if not v: return re.compile('$x')
-		rx = re.compile(v)
-		if {'aaa', 'bbb'}.difference(rx.groupindex):
-			raise ValueError( 'discord-edit regexp must contain named'
-				f' "aaa" and "bbb" groups to capture pattern/replacement: {v!r}' )
-		return rx
+	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
+	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
+	_conv_discord_image_strip_re = _re_chk('discord-image-strip', ['url'])
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -2926,6 +2930,8 @@ class DiscordSession:
 			if not url:
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
+			if ( self.conf._discord_image_strip_re and
+				(ma := self.conf._discord_image_strip_re.search(url)) ): url = ma['url']
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		for stk in m.get('stickers') or m.get('sticker_items') or list():
 			name, desc = stk.get('name'), stk.get('description')
