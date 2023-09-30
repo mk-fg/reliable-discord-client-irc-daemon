@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.09.10' # git-version: py-str
+	version = '23.09.11' # git-version: py-str
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -166,10 +166,10 @@ class RDIRCDConfigBase:
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
-	# discord_image_strip_re strips trailing ?ex=...&is=...&hm=... query-parameters
-	#   from Discord CDN attachments, with "url" group for result. Set empty value to disable.
-	discord_image_strip_re = ( r'(?i)^(?P<url>https://'
-		r'cdn\.discordapp\.com/attachments/.*\.(jpg|png|webp))\?' )
+	# Replaces URLs in attachment links (to "url" group). Empty - disable.
+	# Default regexp is strips trailing ?ex=...&is=...&hm=... query-parameters in
+	#   Discord CDN links, which will likely break these URLs in the future, but works for now.
+	discord_att_url_strip_re = r'^(?P<url>https://cdn\.discordapp\.com/attachments/.*?)\?'
 
 	discord_chan_dedup_fmt = '{name}.{id_hash}' # how same-irc-name discord chans get disambiguated
 	discord_chan_dedup_hash_len = 4 # length of id_hash part in chan-dedup-fmt
@@ -227,7 +227,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
-	_conv_discord_image_strip_re = _re_chk('discord-image-strip', ['url'])
+	_conv_discord_att_url_strip_re = _re_chk('discord-image-strip', ['url'])
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -2930,8 +2930,8 @@ class DiscordSession:
 			if not url:
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
-			if ( self.conf._discord_image_strip_re and
-				(ma := self.conf._discord_image_strip_re.search(url)) ): url = ma['url']
+			if ( self.conf._discord_att_url_strip_re and
+				(ma := self.conf._discord_att_url_strip_re.search(url)) ): url = ma['url']
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
 		for stk in m.get('stickers') or m.get('sticker_items') or list():
 			name, desc = stk.get('name'), stk.get('description')
@@ -3983,6 +3983,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			except configparser.NoOptionError: pass
 
 	def pprint(self, title=None, empty_vals=False, comments=None, out=print):
+		out = lambda line,_out=out: _out(line.rstrip(' ')) # for empty values
 		cat, comms, chk = None, comments or dict(), re.compile(
 			'^({})_(.*)$'.format('|'.join(map(re.escape, self._conf_sections))) )
 		if title: out('\n'.join(f';; {line}' for line in title.rstrip().split('\n')))
