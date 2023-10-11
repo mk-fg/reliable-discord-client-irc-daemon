@@ -603,8 +603,17 @@ for specific discords or channels.
 Discord user mentions
 `````````````````````
 
-| These are ``@username`` tags, designed to alert someone to direct-ish message.
-| rdircd translates whatever matches ``msg-mention-re`` regexp conf-option into them.
+These are ``@username`` tags on discord, designed to alert someone to direct-ish message.
+
+With default config, when you see e.g. ``<Galaxy🌌·Brain> Hi!`` and want to
+reply highlighting them, sending ``Hey @galaxy and welcome`` should probably work.
+Can also use their full irc nick, to be sure.
+
+How it works: if rdircd matches ``msg-mention-re`` regexp conf-option against
+something in a message being sent (e.g. ``@galaxy`` @-mention above), that'd be
+treated as a "mention", which is either uniquely-matched and translated into a
+discord mention in the sent message, or returns an error notice (with nicks that
+match that mention ambiguously, if any).
 
 Default value for it should look like this::
 
@@ -635,8 +644,10 @@ To ID specific discord user, "nick" group will be used in following ways:
 
 - Case-insensitive match against all recent guild-related irc names
   (message authors, reactions, private channel users, etc).
+  ``user-mention-cache-timeout`` config option controls "recent" timeout.
 
-- Lookup unique name completion by prefix, same as in webui after @.
+- Lookup unique name completion by prefix, same as discord does in webui for
+  auto-completion after @ is typed.
 
 - If no cached or unique match found - error notice will be issued
   and message not sent.
