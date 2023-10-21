@@ -635,10 +635,11 @@ matched by ``(?:^|\s)`` part due to that backslash prefix.
 As another example, to have classic irc-style highlights at the start of the
 line, regexp like this one can be used::
 
-  msg-mention-re = ^(?P<nick>[^\s,;@+]+)(:)
+  msg-mention-re = ^(?P<nick>[^\s,;@+]+)(: )
 
 And should translate e.g. ``mk-fg: some msg`` into ``@mk-fg some msg``
-(with @-part being mention-tag).
+(with @-part being mention-tag). Trailing space is included in regexp there
+to avoid matching URL links.
 
 To ID specific discord user, "nick" group will be used in following ways:
 
