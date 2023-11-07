@@ -8,6 +8,7 @@ User=rdircd
 WorkingDirectory=/var/lib/rdircd
 ReadWritePaths=/var/lib/rdircd
 ExecStart=rdircd -c config.ini -c state.ini
+ExecReload=kill -HUP $MAINPID
 
 Restart=always
 RestartSec=5
