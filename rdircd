@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.2' # git-version: py-str
+	version = '23.12.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2922,10 +2922,14 @@ class DiscordSession:
 		line, author = (m.get('content') or '').strip(), m.get('author', dict())
 		line, mtc = line.replace('\u200b', ''), self.c_msg_type # unicode zero-width-space junk
 		try:
-			if not mt and author.get('bot'):
-				if m.get('embeds'): mt = mtc.bot_embeds
-				elif is_update and not line: mt = mtc.bot_empty # updates from bots clearing embeds?
-			else:
+			if not mt:
+				if author.get('bot'):
+					if m.get('embeds'): mt = mtc.bot_embeds
+					elif is_update and not line: mt = mtc.bot_empty # updates from bots clearing embeds?
+				if not mt and ( not set(m).difference([ # attachments cleared on msg w/o type/author
+						'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ])
+					and not (m.get('attachments') or m.get('embeds')) ): mt = mtc.bot_empty
+			if isinstance(mt, str): # no matches/overrides above
 				mt = mtc(int(mt))
 				if mt not in [mtc.default, mtc.reply]: line = ''
 		except ValueError: # new unknown msg type - check how to handle
