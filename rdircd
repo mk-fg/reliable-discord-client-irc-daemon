@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.1' # git-version: py-str
+	version = '23.12.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -190,7 +190,7 @@ class RDIRCDConfigBase:
 	discord_msg_interact_cache_shared = 10_000 # last N msgs to keep in general
 	discord_msg_interact_cache_per_discord = 1_000 # keeps last N msgs per-discord
 	discord_msg_interact_cache_per_chan = 100 # last N msgs per-joined-channel buffer
-	discord_msg_interact_cache_expire = '2d16h' # forget older msgs, except in "hot" cache
+	discord_msg_interact_cache_expire = '2d16h' # forget cached msgs older than this
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
@@ -3036,6 +3036,7 @@ class DiscordSession:
 			if msg_id in c.hot: c.hot[msg_id] = e
 
 	def op_msg_ref_get(self, msg_id, cc):
+		'Return None or adict(nick, line) reference for msg-id/chan'
 		if not (c := self.st.icache): return
 		for ck, cx in ( (False, c.hot),
 				(None, c.shared), (cc.gg.id, c.gid), (cc.id, c.chan) ):

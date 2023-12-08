@@ -935,8 +935,9 @@ There is `an ini file option`_ for this::
   ; disable-reactions: disables all "--- reacts" messages
   disable-reactions = no
 
-Flip that to "yes" in config to disable all those, or alternatively they can be
-blocked in a more fine-grained way in the IRC client.
+Flip that to "yes" in config to disable all those, or alternatively they can
+be blocked in a more fine-grained way in the IRC client, or regexp filters in
+#rdircd.control channel.
 
 There's a bunch of other similar tweaks that can be useful in there too.
 
