@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.0' # git-version: py-str
+	version = '23.12.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2817,14 +2817,17 @@ class DiscordSession:
 				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
 			elif msg_is_update and not set(m.keys()).difference([
 				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
-			else: return self.log.warning('Unhandled no-author msg type [{}]: {}', act, self._repr(m))
+			else: # some bots-changes msgs have no author - try ref-cache
+				if ref := self.op_msg_ref_get(m.id, cc): nick, media_info = ref.nick, ref.line
+				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
 		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update)
 		if not (line or media_info): return # joins/parts/pins events and such
-		if line and not media_info: self.op_msg_ref(m.id, cc, nick, line)
+		if isinstance(media_info, str): media_info, line = None, f'{media_info}\n{line}'
+		elif line and not media_info: self.op_msg_ref(m.id, cc, nick, line)
 		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake, ref = m.id, m.get('referenced_message')
