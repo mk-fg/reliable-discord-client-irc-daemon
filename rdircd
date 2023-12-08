@@ -5,7 +5,7 @@ import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc
 import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
-import hashlib, base64, random, unicodedata, string, ast, urllib.parse
+import pickle, hashlib, base64, random, unicodedata, string, ast, urllib.parse
 import logging, logging.handlers
 
 import aiohttp
@@ -20,7 +20,13 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.11.1' # git-version: py-str
+	version = '23.12.0' # git-version: py-str
+
+	auth_email = '' # discord account email, used to login there
+	auth_password = ''
+
+	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
+	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -64,7 +70,8 @@ class RDIRCDConfigBase:
 	irc_chan_modes = False # causes needless spam on ZNC reconnects
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 	irc_disable_reactions = False # disables all "--- reacts" messages
-	irc_inline_reply_quote_len = 90 # 0 = disable
+	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
+	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -174,11 +181,16 @@ class RDIRCDConfigBase:
 	discord_chan_dedup_fmt = '{name}.{id_hash}' # how same-irc-name discord chans get disambiguated
 	discord_chan_dedup_hash_len = 4 # length of id_hash part in chan-dedup-fmt
 
-	auth_email = '' # discord account email, used to login there
-	auth_password = ''
-
-	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
-	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
+	# Cache used to "remember" messages to provide context for
+	#   various interactions with those - reactions, some bot-annotations and deletions.
+	# These caches can hold ref to same msg, any of them keeping the ref can be used.
+	# This does not affect edits or replies. Debug-channel help command shows cache stats.
+	discord_msg_interact_cache = True
+	discord_msg_interact_cache_hot = 1_000 # for N last interacted-with msgs
+	discord_msg_interact_cache_shared = 10_000 # last N msgs to keep in general
+	discord_msg_interact_cache_per_discord = 1_000 # keeps last N msgs per-discord
+	discord_msg_interact_cache_per_chan = 100 # last N msgs per-joined-channel buffer
+	discord_msg_interact_cache_expire = '2d16h' # forget older msgs, except in "hot" cache
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
@@ -223,11 +235,12 @@ class RDIRCDConfigBase:
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
+	_conv_discord_att_url_strip_re = _re_chk('discord-image-strip', ['url'])
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
-	_conv_discord_att_url_strip_re = _re_chk('discord-image-strip', ['url'])
+	_conv_discord_msg_interact_cache_expire = lambda s, v: parse_duration(v)
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -1932,7 +1945,7 @@ class DiscordSession:
 		self.rate_limits = adict()
 		self.st = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict() )})
-		self.st.update(me=self.st.guilds[1], embed_info=dict())
+		self.st.update(me=self.st.guilds[1], embed_info=dict(), icache=adict())
 		self.auth_token, self.auth_token_manual = (
 			self.get_auth('token'), self.get_auth('token_manual') )
 		self.ws_enabled = False
@@ -2780,17 +2793,16 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
-		flake, nick = None, m.get('author')
-		msg_is_update = act == 'update'
+		flake, nick, msg_is_update = None, m.get('author'), act == 'update'
 
 		if cc.tid and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
-			msg_ts = ts_iso8601(self.discord.flake_parse(m.id), human=True)
-			return self.discord.cmd_msg_recv( cc,
-				None, f'--- message was deleted: {msg_ts} [{m.id}]' )
+			ext = f'[{ts_iso8601(self.discord.flake_parse(m.id), human=True)}]'
+			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
+			return self.discord.cmd_msg_recv(cc, None, f'--- message was deleted {ext}')
 		if not m.get('content') and m.get('call'):
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 
@@ -2805,13 +2817,14 @@ class DiscordSession:
 				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
 			elif msg_is_update and not set(m.keys()).difference([
 				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
-			else: return self.log.warning('Unhandled no-author msg type: {} [{}]', self._repr(m), act)
+			else: return self.log.warning('Unhandled no-author msg type [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
 		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update)
 		if not (line or media_info): return # joins/parts/pins events and such
+		if line and not media_info: self.op_msg_ref(m.id, cc, nick, line)
 		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake, ref = m.id, m.get('referenced_message')
@@ -2994,6 +3007,56 @@ class DiscordSession:
 				tags[k_src] = v
 		return tags
 
+	def op_msg_ref(self, msg_id, cc, nick, line):
+		'Cache message to reference later in reacts and such'
+		if not self.conf.discord_msg_interact_cache:
+			if self.st.icache: self.st.icache.clear()
+			return
+		elif not (c := self.st.icache):
+			self.st.icache.update(hot=dict(), shared=dict(), gid=dict(), chan=dict())
+		caches, ts = list(), time.monotonic()
+		for ck, cx, cxn in (
+				(None, c.shared, self.conf.discord_msg_interact_cache_shared),
+				(cc.gg.id, c.gid, self.conf.discord_msg_interact_cache_per_discord),
+				(cc.id, c.chan, self.conf.discord_msg_interact_cache_per_chan) ):
+			if cxn <= 0 and cx: cx.clear()
+			elif cxn > 0:
+				if ck: cx = cx.setdefault(ck, dict())
+				if not cx.pop(msg_id, None):
+					for kn, k in list(zip(range(cxn - len(cx) - 1), cx)): del cx[k]
+				self.op_msg_ref_ts_cleanup(cx, ts)
+				caches.append(cx)
+		if caches:
+			if not (n := self.conf.irc_ref_quote_len): return
+			e = int(ts), pickle.dumps((nick, str_cut(line, n)))
+			for cx in caches: cx[msg_id] = e
+			if msg_id in c.hot: c.hot[msg_id] = e
+
+	def op_msg_ref_get(self, msg_id, cc):
+		if not (c := self.st.icache): return
+		for ck, cx in ( (False, c.hot),
+				(None, c.shared), (cc.gg.id, c.gid), (cc.id, c.chan) ):
+			if ck: cx = cx.get(ck, dict())
+			if msg_id not in cx: continue
+			ts, data = cx[msg_id]
+			if ck is False: # refresh entry in hot-cache
+				cx.pop(msg_id, None)
+				cx[msg_id] = (ts := time.monotonic()), data
+				self.op_msg_ref_ts_cleanup(cx, ts)
+			elif (n := self.conf.discord_msg_interact_cache_hot) > 0: # hot-cache
+				for kn, k in list(zip(range(n - len(c.hot) - 1), c.hot)): del c.hot[k]
+				c.hot[msg_id] = ts, data
+			nick, ref = pickle.loads(data)
+			return adict(nick=nick, line=ref)
+
+	def op_msg_ref_ts_cleanup(self, cx, ts=None):
+		if ts is None: ts = time.monotonic()
+		ks, ts_cutoff = list(), int(ts - self.conf._discord_msg_interact_cache_expire)
+		for k, (ts_k, e) in cx.items():
+			if ts_k >= ts_cutoff: break
+			ks.append(k)
+		for k in ks: del cx[k]
+
 	def op_react(self, m, act):
 		if self.conf.irc_disable_reactions: return
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
@@ -3008,11 +3071,12 @@ class DiscordSession:
 			if act == 'add': act, emo = '', f'+{emo}'
 			elif act == 'remove': act, emo = '', f'-{emo}'
 			else: emo = f' {emo}'
-		msg_ts = ts_iso8601(self.discord.flake_parse(m.message_id), human=True)
 		try: u = m.member.user
 		except KeyError: nick = None # notice from irc_nick_sys
 		else: self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(m))
-		self.discord.cmd_msg_recv(cc, nick, f'--- reacts [{msg_ts}]: {act}{emo}')
+		ext = f'[{ts_iso8601(self.discord.flake_parse(m.message_id), human=True)}]'
+		if ref := self.op_msg_ref_get(m.message_id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
+		self.discord.cmd_msg_recv(cc, nick, f'--- reacts: {act}{emo} {ext}')
 
 	def op_gift_code(self, m):
 		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
