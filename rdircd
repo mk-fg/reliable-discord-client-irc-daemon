@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.3' # git-version: py-str
+	version = '23.12.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3030,7 +3030,7 @@ class DiscordSession:
 			elif cxn > 0:
 				if ck: cx = cx.setdefault(ck, dict())
 				if not cx.pop(msg_id, None):
-					for kn, k in list(zip(range(cxn - len(cx) - 1), cx)): del cx[k]
+					for kn, k in list(zip(range(len(cx) - cxn + 1), cx)): del cx[k]
 				self.op_msg_ref_ts_cleanup(cx, ts)
 				caches.append(cx)
 		if caches:
@@ -3051,8 +3051,8 @@ class DiscordSession:
 				cx.pop(msg_id, None)
 				cx[msg_id] = (ts := time.monotonic()), data
 				self.op_msg_ref_ts_cleanup(cx, ts)
-			elif (n := self.conf.discord_msg_interact_cache_hot) > 0: # hot-cache
-				for kn, k in list(zip(range(n - len(c.hot) - 1), c.hot)): del c.hot[k]
+			elif (n := self.conf.discord_msg_interact_cache_hot) > 0: # hot-cache++
+				for kn, k in list(zip(range(len(c.hot) - n + 1), c.hot)): del c.hot[k]
 				c.hot[msg_id] = ts, data
 			nick, ref = pickle.loads(data)
 			return adict(nick=nick, line=ref)
