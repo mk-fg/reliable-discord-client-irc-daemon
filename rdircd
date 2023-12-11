@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.4' # git-version: py-str
+	version = '23.12.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1896,11 +1896,6 @@ class DiscordSession:
 		stage_topic = 31 # type=30 is missing in docs
 		guild_application_premium_subscription = 32
 
-		# Negative values are internal types
-		bot_embeds = -1001
-		bot_empty = -1002
-		media_info = -1003
-
 	class c_rel_type(enum.IntEnum):
 		none = 0
 		friend = 1
@@ -2806,27 +2801,27 @@ class DiscordSession:
 		if not m.get('content') and m.get('call'):
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 
-		media_info = None
+		line_cache = media_info = None
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
 			nick = self.st.embed_info.get(m.id)
 			media_info = ( msg_is_update and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) )
-			if media_info: # will be processed into msg below
-				act, m.type = 'media', m.get('type', self.c_msg_type.media_info)
+			if media_info: act = 'media' # will be processed/added to msg below
 			elif msg_is_update and not set(m.keys()).difference([
 				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
 			else: # some bots-changes msgs have no author - try ref-cache
-				if ref := self.op_msg_ref_get(m.id, cc): nick, media_info = ref.nick, ref.line
+				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
 		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update)
-		if not (line or media_info): return # joins/parts/pins events and such
-		if isinstance(media_info, str): media_info, line = None, f'{media_info}\n{line}'
+		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
+		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
+		if not (line or media_info or media_expected): return # joins/parts/pins events and such
 		elif line and not media_info: self.op_msg_ref(m.id, cc, nick, line)
 		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
@@ -2849,7 +2844,7 @@ class DiscordSession:
 					del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
 				self.st.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
 				self.st.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
-			if media_info := media_info or self.op_msg_media_info(m):
+			if media_info := media_info or self.op_msg_media_info(m, force_meta=media_expected):
 				if em_suffs := self.st.embed_info.get(f'lines.{m.id}'):
 					tag = self.conf.irc_prefix_embed.format(str_hash(m.id, 3))
 					if tag not in (pre := tags.get('_prefix', '')): tags['_prefix'] = pre + tag
@@ -2918,32 +2913,25 @@ class DiscordSession:
 		# Must produce non-empty message for any relevant msg type
 		# Most message types are protocol notifications that have their "content" discarded
 		# Also used for parsing history query responses, not just events
-		tags, mt_nx, mt = dict(), False, m.get('type', '')
+		tags, mt, mtc = dict(), m.get('type', ''), self.c_msg_type
 		line, author = (m.get('content') or '').strip(), m.get('author', dict())
-		line, mtc = line.replace('\u200b', ''), self.c_msg_type # unicode zero-width-space junk
-		try:
-			if not mt:
-				if author.get('bot'):
-					if m.get('embeds'): mt = mtc.bot_embeds
-					elif is_update and not line: mt = mtc.bot_empty # updates from bots clearing embeds?
-				if not mt and ( not set(m).difference([ # attachments cleared on msg w/o type/author
-						'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ])
-					and not (m.get('attachments') or m.get('embeds')) ): mt = mtc.bot_empty
-			if isinstance(mt, str): # no matches/overrides above
-				mt = mtc(int(mt))
-				if mt not in [mtc.default, mtc.reply]: line = ''
-		except ValueError: # new unknown msg type - check how to handle
-			self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
-			if line: tags['_prefix'] = f'[msg-type={mt!r}] '
-			mt_nx = True
+		line = line.replace('\u200b', '') # unicode zero-width-space junk
+		if not mt:
+			if author.get('bot'): # bots adding/removing media-info annotations
+				if m.get('embeds'): mt, tags['_bot-media-info'] = None, True
+				elif is_update and not line: mt = None
+			# Attachments added/removed on earlier msg w/o type/author info
+			if is_update and not set(m).difference([
+					'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ]): mt = None
+		if mt is not None:
+			try: mt = mtc(int(mt))
+			except ValueError: # new unknown msg type - check how to handle
+				self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
+				if line: tags['_prefix'] = f'[msg-type={mt!r}] '
+			if mt not in [mtc.default, mtc.reply]:
+				if mt == mtc.thread_created: line = '' # handled separately elsewhere
+				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
-
-		if mt == mtc.bot_embeds:
-			if media_info := self.op_msg_media_info(m, force_meta=True):
-				tags['_prefix'] = ( tags.get('_prefix', '') +
-					self.conf.irc_prefix_embed.format(str_hash(m.id, 3)) )
-				line = '\n'.join([line, *(str_cut( line,
-					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
 
 		for att in m.get('attachments') or list():
 			url = att.get('url')
@@ -2978,7 +2966,7 @@ class DiscordSession:
 				return ' '.join(line)
 			line += f'\n{self.conf.irc_prefix_uis}' + _tags(m.components)
 
-		if not mt_nx and not line: # represent some non-text/embed events
+		if mt is not None and not line: # represent some non-text/embed events
 			if mt == mtc.recipient_add: line = '[+recipient]'
 			elif mt == mtc.recipient_remove: line = '[-recipient]'
 			elif mt == mtc.channel_name_change:
