@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.5' # git-version: py-str
+	version = '23.12.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -184,7 +184,7 @@ class RDIRCDConfigBase:
 	# Cache used to "remember" messages to provide context for
 	#   various interactions with those - reactions, some bot-annotations and deletions.
 	# These caches can hold ref to same msg, any of them keeping the ref can be used.
-	# This does not affect edits or replies. Debug-channel help command shows cache stats.
+	# This does not affect edits or replies. See also "cache-stats" in the control channel.
 	discord_msg_interact_cache = True
 	discord_msg_interact_cache_hot = 1_000 # for N last interacted-with msgs
 	discord_msg_interact_cache_shared = 10_000 # last N msgs to keep in general
@@ -249,6 +249,7 @@ Commands:
   status - [alias: st] show whether discord is connected and working.
   connect - [alias: on] connect/login to discord.
   disconnect - [alias: off] disconnect from discord.
+  cache-stats - [alias: cs] show statistics on various caches.
 
   set [-s|--save] [option value] - set config option value,
      saving it to the last ini file if -s/--save is specified.
@@ -3016,14 +3017,16 @@ class DiscordSession:
 				(cc.id, c.chan, self.conf.discord_msg_interact_cache_per_chan) ):
 			if cxn <= 0 and cx: cx.clear()
 			elif cxn > 0:
-				if ck: cx = cx.setdefault(ck, dict())
-				if not cx.pop(msg_id, None):
+				if ck: cxx, cx = cx, cx.setdefault(ck, dict())
+				if cx and not cx.pop(msg_id, None):
 					for kn, k in list(zip(range(len(cx) - cxn + 1), cx)): del cx[k]
+					if ck and not cx: cxx.pop(ck)
 				self.op_msg_ref_ts_cleanup(cx, ts)
 				caches.append(cx)
 		if caches:
 			if not (n := self.conf.irc_ref_quote_len): return
-			e = int(ts), pickle.dumps((nick, str_cut(line, n)))
+			# Remember to update _cmd_chan_sys_cache on changing cache tuples
+			e = ts, pickle.dumps((nick, str_cut(line, n)))
 			for cx in caches: cx[msg_id] = e
 			if msg_id in c.hot: c.hot[msg_id] = e
 
@@ -3047,7 +3050,7 @@ class DiscordSession:
 
 	def op_msg_ref_ts_cleanup(self, cx, ts=None):
 		if ts is None: ts = time.monotonic()
-		ks, ts_cutoff = list(), int(ts - self.conf._discord_msg_interact_cache_expire)
+		ks, ts_cutoff = list(), ts - self.conf._discord_msg_interact_cache_expire
 		for k, (ts_k, e) in cx.items():
 			if ts_k >= ts_cutoff: break
 			ks.append(k)
@@ -3572,6 +3575,7 @@ class RDIRCD:
 				+ '\n\nOnly immediate response to sent'
 					' commands is logged here - no noise over time.' ))
 		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status())
+		elif cmd in ['cache-stats', 'cs']: return send(self._cmd_chan_sys_cache())
 		try:
 			if cmd in ['connect', 'on']:
 				send('discord: connection started')
@@ -3620,6 +3624,42 @@ class RDIRCD:
 			f'  connection-time: {conn_time}',
 			f'  connection-gateway: {self.conf.discord_gateway}',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ])
+
+	def _cmd_chan_sys_cache(self):
+		'Implementation for cache-stats display in control-channel'
+		def _sz(sz, _units=list(
+				reversed(list((u, 2 ** (i * 10))
+				for i, u in enumerate('BKMGT'))) )):
+			for u, u1 in _units:
+				if sz > u1: break
+			sz = f'{sz / u1:.1f}'.removesuffix('.0')
+			return f'{sz} {u}'
+		med = lambda v, n: v / n if n > 0 else 0
+		c, stats = self.discord.st.icache, list()
+		for name, ck, cx, cxn in (
+				('Shared', None, 'shared', 'shared'),
+				('Interacted-with "hot"', None, 'hot', 'hot'),
+				('Per-discord', 'discord', 'gid', 'per_discord'),
+				('Per-channel', 'channel', 'chan', 'per_chan') ):
+			cx = c.get(cx, dict())
+			cxn = getattr(self.conf, f'discord_msg_interact_cache_{cxn}')
+			if not ck:
+				bs = sum((80 + sys.getsizeof(ct[1])) for ct in cx.values())
+				bsa = med(bs, n := len(cx))
+				s = [ f'{name} cache: {n:,d} / {cxn:,d} [{100*n/cxn:.0f}%]'
+					f' entries, ~{_sz(bs)} total ({_sz(bsa)} median msg)' ]
+			else:
+				nk, n = len(cx), sum(len(cxx) for cxx in cx.values())
+				bs = sum( (80 + sys.getsizeof(ct[1]))
+					for cxx in cx.values() for ct in cxx.values() )
+				na, bska, bsa = med(n, nk), med(bs, nk), med(bs, n)
+				s = [
+					f'{name} cache: {nk:,d} {ck}(s) with {n:,d} entries,'
+						f' {na:,.0f} / {cxn:,d} [{100*(na)/cxn:.0f}%] median usage,',
+					f'  ~{_sz(bs)} total, {_sz(bska)} per {ck}, {_sz(bsa)} median msg' ]
+			stats.extend(f'  {s}' for s in s)
+		return '\n'.join([ 'Cache statistics:', *stats,
+			'Note: same-msg cache entries are shared between all caches' ])
 
 	def _cmd_chan_sys_set(self, send, line, line_raw):
 		'Implementation for control-channel "set" command'
