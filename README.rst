@@ -1084,6 +1084,7 @@ but it can be ``✍️ new msg text`` or ``📝 new msg text`` instead::
   prefix-attachment = 🖼️ \
   prefix-uis = ⚙️ \
   prefix-call = 📞 \
+  prefix-interact = 🤖 \
 
 Note the "space and backslash" at the end in these options, which is to preserve
 trailing spaces in values, from both text editors that strip those and configuration
