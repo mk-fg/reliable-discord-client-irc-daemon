@@ -2870,8 +2870,8 @@ class DiscordSession:
 		lines, meta_skip, embeds = list(), dict(), m.get('embeds')
 		if not embeds: return
 		for n, em in enumerate(embeds):
-			emt, title, desc = (em.get(k, '') for k in ['type', 'title', 'description'])
-			meta_add, em_src = dict(), em.get('author', dict()).get('name')
+			emt, title, desc = ((em.get(k) or '') for k in ['type', 'title', 'description'])
+			meta_add, em_src = dict(), em.get('author', dict()).get('name') or ''
 			if emt == 'rich': # there are many types of these
 				if em.get('footer', dict()).get('text') == 'Twitter':
 					media = dict()
@@ -2891,6 +2891,13 @@ class DiscordSession:
 				elif ( (url := em.get(meta_skip.get('image', 'image')))
 						and (url := url.get('url') or url.get('proxy_url')) ):
 					lines.append(f'Image :: {url}'); meta_add['title'] = 'title'
+				elif (url := em.get('url') or '') and (m := re.match(
+						r'https?://(' r'github\.com|gitlab\.com|bitbucket\.org'
+						r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url)):
+					commit_desc = desc and re.fullmatch(
+						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)' ) or ''
+					if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
+					lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 			if emt == 'video':
 				host = em.get('provider', dict()).get('name')
