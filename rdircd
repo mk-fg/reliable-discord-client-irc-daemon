@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.8' # git-version: py-str
+	version = '23.12.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2806,7 +2806,7 @@ class DiscordSession:
 		if not m.get('content') and m.get('call'):
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 
-		line_cache = media_info = None
+		ref = line_cache = media_info = None
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
@@ -2827,7 +2827,7 @@ class DiscordSession:
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
-		elif line and not media_info: self.op_msg_ref(m.id, cc, nick, line)
+		if not ref: self.op_msg_ref(m.id, cc, nick, line) # don't re-cache no-content media-updates
 		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake, ref = m.id, m.get('referenced_message')
