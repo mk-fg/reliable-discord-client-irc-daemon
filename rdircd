@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.11' # git-version: py-str
+	version = '23.12.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2895,7 +2895,7 @@ class DiscordSession:
 						r'https?://(' r'github\.com|gitlab\.com|bitbucket\.org'
 						r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url)):
 					commit_desc = desc and re.fullmatch(
-						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)' ) or ''
+						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
 					if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
 					lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
