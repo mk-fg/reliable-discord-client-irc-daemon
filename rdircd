@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.12' # git-version: py-str
+	version = '23.12.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2893,7 +2893,7 @@ class DiscordSession:
 					lines.append(f'Image :: {url}'); meta_add['title'] = 'title'
 				elif (url := em.get('url') or '') and (m := re.match(
 						r'https?://(' r'github\.com|gitlab\.com|bitbucket\.org'
-						r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url)):
+						r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url )):
 					commit_desc = desc and re.fullmatch(
 						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
 					if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
@@ -3666,7 +3666,7 @@ class RDIRCD:
 				bs = sum((80 + sys.getsizeof(ct[1])) for ct in cx.values())
 				bsa = med(bs, n := len(cx))
 				s = [ f'{name} cache: {n:,d} / {cxn:,d} [{100*n/cxn:.0f}%]'
-					f' entries, ~{_sz(bs)} total ({_sz(bsa)} median msg)' ]
+					f' entries, ~{_sz(bs)} total ({_sz(bsa)} mean msg size)' ]
 			else:
 				nk, n = len(cx), sum(len(cxx) for cxx in cx.values())
 				bs = sum( (80 + sys.getsizeof(ct[1]))
@@ -3674,8 +3674,8 @@ class RDIRCD:
 				na, bska, bsa = med(n, nk), med(bs, nk), med(bs, n)
 				s = [
 					f'{name} cache: {nk:,d} {ck}(s) with {n:,d} entries,'
-						f' {na:,.0f} / {cxn:,d} [{100*(na)/cxn:.0f}%] median usage,',
-					f'  ~{_sz(bs)} total, {_sz(bska)} per {ck}, {_sz(bsa)} median msg' ]
+						f' {na:,.0f} / {cxn:,d} [{100*(na)/cxn:.0f}%] mean usage,',
+					f'  ~{_sz(bs)} total, {_sz(bska)} per {ck}, {_sz(bsa)} msg mean' ]
 			stats.extend(f'  {s}' for s in s)
 		return '\n'.join([ 'Cache statistics:', *stats,
 			'Note: same msgs are shared between caches, so numbers can be inflated' ])
