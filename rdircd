@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.13' # git-version: py-str
+	version = '23.12.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2814,16 +2814,15 @@ class DiscordSession:
 			media_info = ( msg_is_update and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) )
 			if media_info: act = 'media' # will be processed/added to msg below
-			elif msg_is_update and not set(m.keys()).difference([
-				'id', 'flags', 'embeds', 'channel_id', 'guild_id', 'call' ]): return
-			else: # some bots-changes msgs have no author - try ref-cache
+			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
-		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update)
+		line, tags = self.op_msg_parse( m, gg,
+			is_update=msg_is_update, has_media_info=media_info )
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
@@ -2922,7 +2921,7 @@ class DiscordSession:
 		if not lines: return
 		return list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
 
-	def op_msg_parse(self, m, gg, is_update=None):
+	def op_msg_parse(self, m, gg, is_update=None, has_media_info=False):
 		# Must produce non-empty message for any relevant msg type
 		# Most message types are protocol notifications that have their "content" discarded
 		# Also used for parsing history query responses, not just events
@@ -2938,9 +2937,11 @@ class DiscordSession:
 					'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ]): mt = None
 		if mt is not None:
 			try: mt = mtc(int(mt))
-			except ValueError: # new unknown msg type - check how to handle
-				self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
-				if line: tags['_prefix'] = f'[msg-type={mt!r}] '
+			except ValueError:
+				if not mt and has_media_info: mt = mtc.default # no-type media update
+				else: # new unknown msg type - check how to handle
+					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
+					if line: tags['_prefix'] = f'[msg-type={mt!r}] '
 			if mt is mtc.application_command:
 				pre = self.conf.irc_prefix_interact
 				if cmd := m.get('interaction'):
