@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.15' # git-version: py-str
+	version = '23.12.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2795,6 +2795,9 @@ class DiscordSession:
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
 		flake, nick, msg_is_update = None, m.get('author'), act == 'update'
 
+		if ( msg_is_update # sometimes discord sends completely empty msg-updates
+			and not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']) ): return
+
 		if cc.tid and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
@@ -2938,9 +2941,7 @@ class DiscordSession:
 		if mt is not None:
 			try: mt = mtc(int(mt))
 			except ValueError:
-				if not mt and is_update and ( has_media_info or
-						not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']) ):
-					mt = mtc.default # no-type updates: media info or just empty msgs
+				if not mt and is_update and has_media_info: mt = mtc.default
 				else: # new unknown msg type - check how to handle
 					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 					if line: tags['_prefix'] = f'[msg-type={mt!r}] '
