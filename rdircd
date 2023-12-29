@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.14' # git-version: py-str
+	version = '23.12.15' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2938,7 +2938,9 @@ class DiscordSession:
 		if mt is not None:
 			try: mt = mtc(int(mt))
 			except ValueError:
-				if not mt and has_media_info: mt = mtc.default # no-type media update
+				if not mt and is_update and ( has_media_info or
+						not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']) ):
+					mt = mtc.default # no-type updates: media info or just empty msgs
 				else: # new unknown msg type - check how to handle
 					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 					if line: tags['_prefix'] = f'[msg-type={mt!r}] '
