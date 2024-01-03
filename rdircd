@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '23.12.17' # git-version: py-str
+	version = '24.01.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1900,6 +1900,7 @@ class DiscordSession:
 		stage_speaker = 29
 		stage_topic = 31 # type=30 is missing in docs
 		guild_application_premium_subscription = 32
+		media = -1 # internal type, same as "default" but can have empty "content"
 
 	class c_rel_type(enum.IntEnum):
 		none = 0
@@ -2942,7 +2943,7 @@ class DiscordSession:
 		if mt is not None:
 			try: mt = mtc(int(mt))
 			except ValueError:
-				if not mt and is_update and has_media_info: mt = mtc.default
+				if not mt and is_update and has_media_info: mt = mtc.media
 				else: # new unknown msg type - check how to handle
 					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 					if line: tags['_prefix'] = f'[msg-type={mt!r}] '
@@ -2953,7 +2954,7 @@ class DiscordSession:
 					cmd, line = line, f'{pre}<{cmd_nick}> used /{cmd}'
 				else: cmd, line = line, '{pre}<some-interaction-command>'
 				if cmd: line += f' :: {cmd}'.rstrip()
-			elif mt not in [mtc.default, mtc.reply]:
+			elif mt not in [mtc.default, mtc.reply, mtc.media]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
 				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
