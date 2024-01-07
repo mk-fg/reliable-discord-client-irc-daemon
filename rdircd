@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '24.01.0' # git-version: py-str
+	version = '24.01.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2954,7 +2954,7 @@ class DiscordSession:
 					cmd, line = line, f'{pre}<{cmd_nick}> used /{cmd}'
 				else: cmd, line = line, '{pre}<some-interaction-command>'
 				if cmd: line += f' :: {cmd}'.rstrip()
-			elif mt not in [mtc.default, mtc.reply, mtc.media]:
+			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
 				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
