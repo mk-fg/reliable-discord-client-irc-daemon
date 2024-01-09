@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '24.01.1' # git-version: py-str
+	version = '24.01.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2911,6 +2911,8 @@ class DiscordSession:
 				if info:
 					host = '' if not host else f' ({host})'
 					lines.append(f'Video{host} :: {info}')
+			if emt == 'article': lines.append('Article :: ' + (' :: '.join(
+				filter(None, [title, desc]) ) or em.get('url', '') or '-no-more-info-'))
 			if meta_add or force_meta:
 				if not meta_add: # some unrecognized embed-type, added on force_meta
 					info = ' '.join(k for k in ['image', 'thumbnail', 'video', 'provider'] if em.get(k))
