@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '24.01.2' # git-version: py-str
+	version = '24.01.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -888,7 +888,7 @@ def iter_gather(container):
 
 
 class adict(cs.UserDict):
-	'dict with simplier access via attrs and update-tracking for cache invalidation.'
+	'dict with simpler access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
 
 	@classmethod
@@ -2912,7 +2912,7 @@ class DiscordSession:
 					host = '' if not host else f' ({host})'
 					lines.append(f'Video{host} :: {info}')
 			if emt == 'article': lines.append('Article :: ' + (' :: '.join(
-				filter(None, [title, desc]) ) or em.get('url', '') or '-no-more-info-'))
+				filter(None, [title, desc]) ) or em.get('url', '') or '-no-useful-info-'))
 			if meta_add or force_meta:
 				if not meta_add: # some unrecognized embed-type, added on force_meta
 					info = ' '.join(k for k in ['image', 'thumbnail', 'video', 'provider'] if em.get(k))

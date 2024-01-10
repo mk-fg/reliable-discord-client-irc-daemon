@@ -175,8 +175,7 @@ Requirements
 Installation
 ````````````
 
-Simpliest way might be to use package for/from your linux distribution,
-if it is available.
+Simplest way might be to use package for/from your linux distribution, if it is available.
 
 Currently known distro packages (as of 2020-05-17):
 
@@ -831,7 +830,7 @@ More random examples of recv-regexp-filters, incl. more advanced CNF weirdness::
   ∨ but skip github CI logs there = ^<github> #myc\.
 
 Pretty much anything can be matched with clever regexps, so CNF-logic stuff
-like in last examples is seldom useful, but might still be simplier than
+like in last examples is seldom useful, but might still be simpler than
 expressing arbitrary ordering or negation in regexps.
 
 .. _last example on regex101.com: https://regex101.com/r/VMvyfS/2
@@ -1036,8 +1035,8 @@ Random tips and tricks
 
 Some cool configurations mentioned in #rdircd on IRC and such.
 
-Simplier DM and monitor channel names
-`````````````````````````````````````
+Simpler DM and monitor channel names
+````````````````````````````````````
 
 Normally rdircd uses these long strange "#rdircd.monitor" channel name
 templates, as well as unnecessary "#me.chat."  prefixes, instead of this::
@@ -1067,7 +1066,7 @@ What these options do, in the same order: rename "#rdircd.monitor" to "#rdircd",
 set names for all discord-specific monitor channels to just "{prefix}"
 (e.g. "#dm" or "#minecraft"), set private-chat channels to use people's name(s)
 without "chat." prefix, rename default "me" guild (private chats) to "DMs",
-use simplier @ + name format for any channels there.
+use simpler @ + name format for any channels there.
 
 Defaults are that way to try to be more explicit and descriptive,
 but once you know what all these channels are for, can easily rename
