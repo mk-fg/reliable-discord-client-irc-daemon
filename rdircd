@@ -815,7 +815,9 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None, short=False)
 		ts = ts.strftime(ts_fmt)
 		if short and ts.endswith(':00'): ts = ts[:-3]
 		return ts
-	if int(ts_ext := f'{ts.microsecond:06d}'[:ms]): ts_ext = f'.{ts_ext}'
+	if short: ms = 0
+	ts_ext = f'{ts.microsecond:06d}'[:ms]
+	if ms and int(ts_ext): ts_ext = f'.{ts_ext}'
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 _td_days = dict(
@@ -2821,6 +2823,10 @@ class DiscordSession:
 			if media_info: act = 'media' # will be processed/added to msg below
 			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
+				elif msg_is_update and (ts := self.discord.flake_parse(m.id)) < (
+						time.time() - self.conf._discord_user_mention_cache_timeout * 5 ):
+					return self.log.debug( 'Ignoring no-author update'
+						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
