@@ -243,7 +243,7 @@ install aiohttp module (and its deps) to unprivileged "rdircd" user's home dir
 might work (which is also used to run rdircd in the next example below),
 but ignore this if you've already installed it via OS package manager or such:
 
-``` console
+```
 root # useradd -m rdircd
 root # su - rdircd
 
@@ -261,7 +261,7 @@ rdircd % python3 -m pip install --user aiohttp
 After requirements above are installed, script itself can be fetched
 from this repository and run like this:
 
-``` console
+```
 ## Ignore "useradd" if you've already created a user when running "pip" above
 root # useradd -m rdircd
 root # su - rdircd
