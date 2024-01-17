@@ -1,6 +1,48 @@
 # Reliable Discord-client IRC Daemon (rdircd)
 
-XXX: restore TOC here
+Table of Contents
+
+- [Description](#hdr-description)
+- [WARNING](#hdr-warning)
+- [Features](#hdr-features)
+- [Limitations](#hdr-limitations)
+- [Usage](#hdr-usage)
+
+    - [Requirements](#hdr-requirements)
+    - [Installation](#hdr-installation)
+    - [Setup and actual usage](#hdr-setup_and_actual_usage)
+
+- [Misc Feature Info](#hdr-misc_feature_info)
+
+    - [Multiple Config Files](#hdr-multiple_config_files)
+    - [Channel Commands](#hdr-channel_commands)
+    - [#rdircd.monitor and #rdircd.leftover channels](#hdr-_rdircd.monitor_and_rdircd.leftover_channels)
+    - [People's names on discord](#hdr-people_s_names_on_discord)
+    - [Local Name Aliases](#hdr-local_name_aliases)
+    - [Private messages and friends](#hdr-private_messages_and_friends)
+    - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
+    - [Auto-joining channels](#hdr-auto-joining_channels)
+    - [Discord user mentions](#hdr-discord_user_mentions)
+    - [Quick edits/deletes for just-sent messages](#hdr-quick_edits_deletes_for_just-sent_messages)
+    - [@silent messages and other such flags](#hdr-_silent_messages_and_other_such_flags)
+    - [Custom replacements/blocks in outgoing messages](#hdr-custom_replacements_blocks_in_outgoing_m.NzCf)
+    - [Custom filtering for all received messages](#hdr-custom_filtering_for_all_received_messages)
+    - [Lookup Discord IDs](#hdr-lookup_discord_ids)
+    - [Channel name disambiguation](#hdr-channel_name_disambiguation)
+    - [WARNING :: Session/auth rejected unexpectedly - disabling connection](#hdr-warning_session_auth_rejected_unexpected.ZboG)
+    - [Captcha-solving is required to login for some reason](#hdr-captcha-solving_is_required_to_login_for.ls9P)
+    - [Almost every message I see are reacts by people :(](#hdr-almost_every_message_i_see_are_reacts_by.0z4N)
+    - [Debugging anything strange, unknown or unexpected](#hdr-debugging_anything_strange_unknown_or_un.NQDm)
+
+- [Random tips and tricks](#hdr-random_tips_and_tricks)
+
+    - [Simplier DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
+    - [Change message edit/embed/attachment prefixes to shorter emojis](#hdr-change_message_edit_embed_attachment_pre.xxnp)
+
+- [Links]
+- [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
+- [API and Implementation Notes](#hdr-api_and_implementation_notes)
+
 
 
 <a name=hdr-description></a><a name=user-content-hdr-description></a>
@@ -19,7 +61,7 @@ lacking in other similar clients at the time.
 There's an IRC channel to talk about the thing - join [#rdircd at libera.chat].\
 IRC URL: <ircs://irc.libera.chat/rdircd> (github refuses to make ircs:// links)
 
-See also [Links](#hdr-links) section below for rarely-updated list of other alternative clients.
+See also [Links] section below for rarely-updated list of other alternative clients.
 
 Repository URLs:
 
@@ -32,6 +74,7 @@ Last one has git-notes with todo list and such at the default ref for those.
 [Discord]: http://discord.gg/
 [IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 [#rdircd at libera.chat]: https://web.libera.chat/?channels=#rdircd
+[Links]: #hdr-links
 
 
 <a name=hdr-warning></a><a name=user-content-hdr-warning></a>
