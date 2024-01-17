@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '24.01.4' # git-version: py-str
+	version = '24.01.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2824,7 +2824,7 @@ class DiscordSession:
 			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
 				elif msg_is_update and (ts := self.discord.flake_parse(m.id)) < (
-						time.time() - self.conf._discord_user_mention_cache_timeout * 5 ):
+						time.time() - self.conf._discord_user_mention_cache_timeout * 2 ):
 					return self.log.debug( 'Ignoring no-author update'
 						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
