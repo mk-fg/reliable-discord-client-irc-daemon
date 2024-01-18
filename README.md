@@ -544,8 +544,8 @@ This should:
 
   This format option does not affect monitor/leftover channel name(s)
   (e.g. #rdircd.monitor.log-bot or #rdircd.leftover.game-x) -
-  see "chan-monitor-guild" and "chan-leftover-guild" options under
-  \[irc\] section for changing that.
+  see "chan-monitor-guild" and "chan-leftover-guild" options under \[irc\]
+  section for changing that.
 
 - Rename that long channel to have a shorter name (retaining guild prefix) -
   "chan" renames.
@@ -834,9 +834,9 @@ If you join #rdircd.monitor channel, see - for example - a message like this:
 
     <helper-bot> #pub.welcomes :: Welcome!
 
-...and think "don't want to see messages like that again!" - config files'
-\[recv-regexp-filters\] section or corresponding "rx" command in #rdircd.control
-channel can help.
+...and think "don't want to see messages like that again!" -
+config files' \[recv-regexp-filters\] section or corresponding "rx"
+command in #rdircd.control channel can help.
 
 Depending on what "messages like that" means, here are some ways to filter those out:
 
@@ -1387,7 +1387,7 @@ Last updated: 2023-05-23
     in this repo can be used to decompress/decode websocket messages saved from
     chromium-engine browser devtools (pass -h/--help option for info on how to do it).
 
--   Adding support for initiating private chats might be a bad idea, as Cordless_
+-   Adding support for initiating private chats might be a bad idea, as [Cordless]
     dev apparently got banned for that, as these seem to be main spam vector,
     so more monitoring and anomaly detection is likely done there, leading to
     higher risk for users.
