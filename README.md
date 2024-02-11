@@ -29,19 +29,30 @@ Table of Contents
     - [Custom filtering for all received messages](#hdr-custom_filtering_for_all_received_messages)
     - [Lookup Discord IDs](#hdr-lookup_discord_ids)
     - [Channel name disambiguation](#hdr-channel_name_disambiguation)
-    - [WARNING :: Session/auth rejected unexpectedly - disabling connection](#hdr-warning_session_auth_rejected_unexpected.ZboG)
-    - [Captcha-solving is required to login for some reason](#hdr-captcha-solving_is_required_to_login_for.ls9P)
-    - [Almost every message I see are reacts by people :(](#hdr-almost_every_message_i_see_are_reacts_by.0z4N)
-    - [Debugging anything strange, unknown or unexpected](#hdr-debugging_anything_strange_unknown_or_un.NQDm)
+    - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
+    - [Captcha-solving is required to login for some reason]
+    - [Almost every message I see are reacts by people :(]
+    - [Debugging anything strange, unknown or unexpected]
 
 - [Random tips and tricks](#hdr-random_tips_and_tricks)
 
     - [Simplier DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
-    - [Change message edit/embed/attachment prefixes to shorter emojis](#hdr-change_message_edit_embed_attachment_pre.xxnp)
+    - [Change message edit/embed/attachment prefixes to shorter emojis]
 
 - [Links]
 - [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
+
+[WARNING :: Session/auth rejected unexpectedly - disabling connection]:
+  #hdr-warning_session_auth_rejected_unexpected.ZboG
+[Captcha-solving is required to login for some reason]:
+  #hdr-captcha-solving_is_required_to_login_for.ls9P
+[Almost every message I see are reacts by people :(]:
+  #hdr-almost_every_message_i_see_are_reacts_by.0z4N
+[Debugging anything strange, unknown or unexpected]:
+  #hdr-debugging_anything_strange_unknown_or_un.NQDm
+[Change message edit/embed/attachment prefixes to shorter emojis]:
+  #hdr-change_message_edit_embed_attachment_pre.xxnp
 
 
 
