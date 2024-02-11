@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.02.3' # git-version: py-str
+	version = '24.02.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -64,6 +64,7 @@ class RDIRCDConfigBase:
 
 	irc_len_hwm = 450 # split irc lines when they're longer than hwm to lwm length
 	irc_len_lwm = 300
+	irc_len_dont_split_re = r'\x1b\\(.*?)\x1b]8;;\x1b\\' # terminal links to avoid splitting
 	irc_len_topic = 300 # cannot be split, so is truncated instead
 	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor/leftover channels
 	irc_len_monitor_lines = 4 # to limit multiline msgs in #rdircd.monitor/leftover channels
@@ -183,6 +184,7 @@ class RDIRCDConfigBase:
 	discord_terminal_links_re = (
 		r'^https://cdn\.discordapp\.com/attachments/(?P<hash>[\d/]+/(?P<name>.+?)\?.*)' )
 	# Template for OSC 8 terminal hyperlink. Should have "url" and "name" keys in it.
+	# See also corresponding [irc] len-dont-split-re opt to avoid breaking these links in long msgs.
 	discord_terminal_links_tpl = '\x1b]8;;{url}\x1b\\{name}\x1b]8;;\x1b\\'
 
 	discord_chan_dedup_fmt = '{name}.{id_hash}' # how same-irc-name discord chans get disambiguated
@@ -242,7 +244,8 @@ class RDIRCDConfigBase:
 		return _conv
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
-	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
@@ -1125,13 +1128,19 @@ class IRCProtocol:
 		if '\n' in line:
 			for line in line.split('\n'): self.send(pre, f':{line.rstrip()}')
 			return
+		subs, lines = list(), list()
+		for m in reversed(list(self.conf._irc_len_dont_split_re.finditer(line))):
+			line = line[:m.start()] + '\uf0ff'*len(m[1]) + line[m.end():]
+			subs.append(m[0]) # to replace back later
 		line, ws = '', re.findall(r'(\S+)(\s*)', line)
 		for w, sep in ws:
 			if line.strip() and len(line) + len(w) > max_len:
-				self.send(pre, f':{line.rstrip()}', auto_split=False)
-				line = sep_last
+				lines.append(line); line = sep_last
 			sep_last, line = sep, line + w + sep
-		if line.strip(): self.send(pre, f':{line.rstrip()}', auto_split=False)
+		if line.strip(): lines.append(line)
+		for line in lines:
+			line = re.sub(r'\uf0ff+', lambda m: subs.pop(), line.rstrip())
+			self.send(pre, f':{line}', auto_split=False)
 
 	async def recv_queue_proc(self):
 		try:
