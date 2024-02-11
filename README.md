@@ -29,6 +29,7 @@ Table of Contents
     - [Custom filtering for all received messages](#hdr-custom_filtering_for_all_received_messages)
     - [Lookup Discord IDs](#hdr-lookup_discord_ids)
     - [Channel name disambiguation](#hdr-channel_name_disambiguation)
+    - [OSC 8 hyperlinks for terminal IRC clients](#hdr-osc_8_hyperlinks_for_terminal_irc_clients)
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Almost every message I see are reacts by people :(]
@@ -957,6 +958,37 @@ IRC notice lines about it are always issued in affected channels,
 and any relevant monitor/leftover channels, topic should be changed
 to reflect that old-name channel is no longer useful, and posting msgs
 there should emit immediate warnings about it.
+
+<a name=hdr-osc_8_hyperlinks_for_terminal_irc_clients></a><a name=user-content-hdr-osc_8_hyperlinks_for_terminal_irc_clients></a>
+### OSC 8 hyperlinks for terminal IRC clients
+
+Discord CDN URLs for attachments can end up being quite long with
+same host, long discord/channel IDs in there, then actual filename,
+and `?ex=...&is=...&hm=...` trail of CDN parameters after that.
+
+Many Linux IRC clients run in Terminal Emulators though, which often support
+[OSC 8 terminal hyperlink standard], so can display clickable links in a much
+more compact and readable form.
+
+For example, this attachment URL to a Discord CDN:
+
+    https://cdn.discordapp.com/attachments/1183893786254905414/1206216641877377024/20240211_My_Cat_Photo.jpg?ex=65db33c9&is=65c8bec9&hm=9c1dbecbfb2f9edf2302ec078f5e62fffa7f8c2f32e5cd6e3563ae25d8a356e1&
+
+Can be displayed in a terminal like this instead: [20240211_My_Cat_Photo.jpg]\
+I.e. same as how one would see hyperlinks displayed in a browser.
+
+This is disabled by default, but if you use terminal IRC client that might
+support those, set `terminal-links = yes` option in config file or via `set`
+command in an #rdircd.control channel to try it out.
+
+Adjacent `terminal-links-re` and `terminal-links-tpl` options can be used to
+control which part of the link to display as its visible name, which terminal-specific
+escape characters to use, and such customization.
+
+[OSC 8 terminal hyperlink standard]:
+  https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
+[20240211_My_Cat_Photo.jpg]:
+  https://cdn.discordapp.com/attachments/1183893786254905414/1206216641877377024/20240211_My_Cat_Photo.jpg?ex=65db33c9&is=65c8bec9&hm=9c1dbecbfb2f9edf2302ec078f5e62fffa7f8c2f32e5cd6e3563ae25d8a356e1&
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a><a name=user-content-hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection
