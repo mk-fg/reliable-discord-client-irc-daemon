@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash. Example: prefix-guild-event = \ - ev
 
-	version = '24.02.1' # git-version: py-str
+	version = '24.02.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -183,7 +183,7 @@ class RDIRCDConfigBase:
 	discord_terminal_links_re = (
 		r'^https://cdn\.discordapp\.com/attachments/(?P<hash>[\d/]+/(?P<name>.+?)\?.*)' )
 	# Template for OSC 8 terminal hyperlink. Should have "url" and "name" keys in it.
-	discord_terminal_links_tpl = r'\e]8;;{url}\e\\{name}\e]8;;\e\\\n'
+	discord_terminal_links_tpl = '\x1b]8;;{url}\x1b\\{name}\x1b]8;;\x1b\\'
 
 	discord_chan_dedup_fmt = '{name}.{id_hash}' # how same-irc-name discord chans get disambiguated
 	discord_chan_dedup_hash_len = 4 # length of id_hash part in chan-dedup-fmt
