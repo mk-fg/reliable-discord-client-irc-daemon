@@ -893,6 +893,7 @@ More random examples of \[recv-regexp-filters\], incl. more advanced CNF weirdne
 disregard wordle thread there = ^\S+ #pub\.general\.=w8mk\.wordle ::
 ignore "wordle" threads everywhere = ^\S+ #\S+\.=\w{4}\.wordle ::
 activity-level bots are annoying = (?i) advanced to level \d+[ !]
+gif replies of YY in ZZ = (?i)^<YY> #ZZ\.\S+ :: (-- re:[^\n]+\n)?\[att\] .*/image\d\.gif\?
 
 ;; Advanced stuff: connect multiple regexps via CNF logic (Conjunctive Normal Form)
 ;; If key starts with "∧ " (conjunction symbol), it's AND'ed with previous regexp
