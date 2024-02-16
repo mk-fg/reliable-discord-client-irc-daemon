@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.02.4' # git-version: py-str
+	version = '24.02.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2852,7 +2852,7 @@ class DiscordSession:
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
-		if not ref: self.op_msg_ref(m.id, cc, nick, line) # don't re-cache no-content media-updates
+		self.op_msg_ref(m.id, cc, nick, line, ref=ref)
 		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 		else:
 			flake, ref = m.id, m.get('referenced_message')
@@ -3054,13 +3054,17 @@ class DiscordSession:
 				tags[k_src] = v
 		return tags
 
-	def op_msg_ref(self, msg_id, cc, nick, line):
+	def op_msg_ref(self, msg_id, cc, nick, line, ref=None):
 		'Cache message to reference later in reacts and such'
+		# If empty line is passed, an earlier cached line for this msg_id
+		#  is used, if any (or if "ref" is passed), to avoid follow-up
+		#  no-content embed-info updates replacing meaningful cached line
 		if not self.conf.discord_msg_interact_cache:
 			if self.st.icache: self.st.icache.clear()
 			return
 		elif not (c := self.st.icache):
 			self.st.icache.update(hot=dict(), shared=dict(), gid=dict(), chan=dict())
+		if not line and ref: line = ref.line
 		caches, ts = list(), time.monotonic()
 		for ck, cx, cxn in (
 				(None, c.shared, self.conf.discord_msg_interact_cache_shared),
@@ -3069,9 +3073,12 @@ class DiscordSession:
 			if cxn <= 0 and cx: cx.clear()
 			elif cxn > 0:
 				if ck: cxx, cx = cx, cx.setdefault(ck, dict())
-				if cx and not cx.pop(msg_id, None):
-					for kn, k in list(zip(range(len(cx) - cxn + 1), cx)): del cx[k]
-					if ck and not cx: cxx.pop(ck)
+				if cx:
+					if e := cx.pop(msg_id, None):
+						if not line: nick, line = pickle.loads(e[1])
+					else:
+						for kn, k in list(zip(range(len(cx) - cxn + 1), cx)): del cx[k]
+						if ck and not cx: cxx.pop(ck)
 				self.op_msg_ref_ts_cleanup(cx, ts)
 				caches.append(cx)
 		if caches:
