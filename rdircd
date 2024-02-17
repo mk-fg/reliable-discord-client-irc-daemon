@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.02.6' # git-version: py-str
+	version = '24.02.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2261,7 +2261,7 @@ class DiscordSession:
 					handled = True
 					try: status = await aio_await_wrap(h.func(msg_data))
 					except Exception as err: # unhandled exc is unlikely to have event info
-						self.log.error( 'ws event caused handler exception',
+						self.log.error( 'ws event caused handler exception'
 							' [{}]: {}', err.__class__.__name__, self._repr(msg_str) )
 						raise
 					if status is self.c.oneshot: hs_discard.add(k)
