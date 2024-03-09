@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.02.7' # git-version: py-str
+	version = '24.03.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4712,8 +4712,10 @@ def main(args=None, conf=None):
 		if any( re.search(r'^\s*[^\[;#]', line)
 				for line in pl.Path(conf._conf_path).read_text().splitlines() ):
 			# Compatibility: pre-23.09.07 had a bug that always used hostname like this
-			conf.irc_uid_seed = f'rdircd.{os.uname().nodename}'
-		else: conf.irc_uid_seed = host_uid_seed()
+			# >32B hostname couldn't have started rdircd with legacy uid, use new one there
+			uid_seed = f'rdircd.{os.uname().nodename}'
+			if len(uid_seed.encode()) <= 32: conf.irc_uid_seed = uid_seed
+		if not conf.irc_uid_seed: conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
 
