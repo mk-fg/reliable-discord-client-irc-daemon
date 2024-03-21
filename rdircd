@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.0' # git-version: py-str
+	version = '24.03.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1577,13 +1577,17 @@ class Discord:
 				if not u: u = m.get('user')
 			elif mu := u.get('user'): u, m = mu, u
 			else: m = dict()
+		if (uid := u.get('id')) and (
+			rename := self.conf.renames.get(('user', f'@{uid}')) ): return rename
 		if not u: return fallback
 		if not m and mentions:
 			for mn in mentions:
-				if mn.get('id') != u.get('id'): continue
+				if mn.get('id') != uid: continue
 				m = mn.get('member') or dict(); break
+		if (username := u.get('username')) and (
+			rename := self.conf.renames.get(('user', username)) ): return rename
 		for k in (vs := self.conf._discord_name_preference_order):
-			if k == 'login' and (name := u.get('username')): break
+			if k == 'login' and (name := username): break
 			elif k == 'nick':
 				if name := (m.get('nick') or u.get('nick')): break
 			elif k == 'display':
@@ -1593,7 +1597,7 @@ class Discord:
 				self.log.warning( 'Ignoring unsupported name-type'
 					' in discord name-preference-order value: {!r}', k )
 				self.conf._discord_name_preference_order = list(v for v in vs if v != k)
-		else: name = u.get('username') or f'@{u.get("id", fallback)}'
+		else: name = username or f'@{uid or fallback}'
 		if name.isdigit(): name += '´' # avoid digit-only names to not confuse with raw IDs
 		return name
 
@@ -2680,8 +2684,7 @@ class DiscordSession:
 					topic = ( f'private chat <{name_hash}>'
 						f'{topic} [{len(user_names)}] ' + ', '.join(user_names) )
 
-			rename = self.conf.renames.get(('chan', f'@{c.id}'))
-			if not rename:
+			if not (rename := self.conf.renames.get(('chan', f'@{c.id}'))):
 				rename = self.conf.renames.get(('chan', self.discord.bridge.irc_name(name)))
 			if rename:
 				self.log.debug('Renaming channel/thread: {} -> {}', name, rename)
@@ -4517,7 +4520,7 @@ def main(args=None, conf=None):
 		File to dump full non-truncated protocol logs to.
 		Max file size and rotation options can be configured via --conf file.'''))
 	group.add_argument('-l', '--debug-log', metavar='file', help=dd('''
-		Separate file for debug-level logging, regardless of levels set elsewhere.
+		Separate file for debug-level logging, to use regardless of any verbosity options.
 		Max file size and rotation options can be configured via --conf file.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)

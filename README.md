@@ -17,7 +17,7 @@ Table of Contents
     - [Multiple Config Files](#hdr-multiple_config_files)
     - [Channel Commands](#hdr-channel_commands)
     - [#rdircd.monitor and #rdircd.leftover channels](#hdr-_rdircd.monitor_and_rdircd.leftover_channels)
-    - [People's names on discord](#hdr-people_s_names_on_discord)
+    - [People's names on discord]
     - [Local Name Aliases](#hdr-local_name_aliases)
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
@@ -27,7 +27,7 @@ Table of Contents
     - [@silent messages and other such flags](#hdr-_silent_messages_and_other_such_flags)
     - [Custom replacements/blocks in outgoing messages](#hdr-custom_replacements_blocks_in_outgoing_m.NzCf)
     - [Custom filtering for all received messages](#hdr-custom_filtering_for_all_received_messages)
-    - [Lookup Discord IDs](#hdr-lookup_discord_ids)
+    - [Lookup Discord IDs]
     - [Channel name disambiguation](#hdr-channel_name_disambiguation)
     - [OSC 8 hyperlinks for terminal IRC clients](#hdr-osc_8_hyperlinks_for_terminal_irc_clients)
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
@@ -44,6 +44,8 @@ Table of Contents
 - [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
+[People's names on discord]: #hdr-people_s_names_on_discord
+[Lookup Discord IDs]: #hdr-lookup_discord_ids
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Captcha-solving is required to login for some reason]:
@@ -553,6 +555,8 @@ guild.sn3y = log-bot
 guild.sn3y.chan-fmt = logs/{name}.log
 chan.some-long-and-weird-name = weird
 chan.@710035588048224269 = general-subs
+user.noname123 = my-pal-bob
+user.@123980071029577864 = joe
 ```
 
 This should:
@@ -589,6 +593,11 @@ This should:
 
   This is especially useful when two channels have same exact name within same
   discord, and normally will be assigned `.<id-hash>` non-descriptive suffixes.
+
+- Rename couple users, referenced by their discord username and id.
+
+  `/t info <nick-or-part-of-it>` command in discord channel or similar `/who`
+  irc-command can help to [Lookup Discord IDs], like ones used there.
 
 Currently only listed types of renaming are implemented, for discord prefixes
 and channels, but there are also options under \[irc\] section to set names for
@@ -946,7 +955,7 @@ expressing arbitrary ordering or negation in regexps.
 <a name=user-content-hdr-lookup_discord_ids></a>
 ### Lookup Discord IDs
 
-Mostly useful for debugging - /who command can resolve specified ID
+Mostly useful for debugging - `/who` command can resolve specified ID
 (e.g. channel_id from protocol logs) to a channel/user/guild info:
 
 - `/who #123456` - find/describe channel with id=123456.
@@ -964,6 +973,19 @@ All above ID values are unique across Discord service within their type.
 
 Results of all these commands should be dumped into a server buffer
 (not into channels), regardless of where they were issued from.
+
+In irc channels corresponding to ones on discord, `/topic info` command
+(often works as shortened `/t info` in clients too) can be used to print
+more information about linked discord channel and its server/guild.
+
+`/t info <username>` can also print info on user in that discord
+(unlike `/who @<username>` which looks the name up in all connected discords),
+for example `/t info john` will print info for anyone with "john" in the name.
+
+Usernames in these queries can match exact irc name or discord username,
+in which case that result is returned, or otherwise more general server-side
+lookup is made, which can return matches in any type of discord name(s)
+(see [People's names on discord] for more info on those).
 
 <a name=hdr-channel_name_disambiguation></a>
 <a name=user-content-hdr-channel_name_disambiguation></a>
