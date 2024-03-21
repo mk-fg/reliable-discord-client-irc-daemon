@@ -30,6 +30,7 @@ Table of Contents
     - [Lookup Discord IDs]
     - [Channel name disambiguation](#hdr-channel_name_disambiguation)
     - [OSC 8 hyperlinks for terminal IRC clients](#hdr-osc_8_hyperlinks_for_terminal_irc_clients)
+    - [Voice chat activity notifications](#hdr-voice_chat_activity_notifications)
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Almost every message I see are reacts by people :(]
@@ -1037,6 +1038,35 @@ escape characters to use, and such customization.
   https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda
 [20240211_My_Cat_Photo.jpg]:
   https://cdn.discordapp.com/attachments/1183893786254905414/1206216641877377024/20240211_My_Cat_Photo.jpg?ex=65db33c9&is=65c8bec9&hm=9c1dbecbfb2f9edf2302ec078f5e62fffa7f8c2f32e5cd6e3563ae25d8a356e1&
+
+<a name=hdr-voice_chat_activity_notifications></a>
+<a name=user-content-hdr-voice_chat_activity_notifications></a>
+### Voice chat activity notifications
+
+Discord has voice channels, where in addition to text people can talk verbally,
+share camera or screen capture (aka streaming, screen sharing).
+IRC protocol does not support anything like this of course, but it can be useful
+to get notified when someone starts talking, to hop into different discord client
+(e.g. open it in a browser), and use these channels from there.
+
+All IRC channels corresponding to discord voice chats automatically get `.vc`
+suffix (unless renamed), and get notice messages about voice activity in there,
+but limited to following events, to avoid being too spammy:
+
+- Someone "joins" an empty voice channel to talk there.
+- Voice channel becomes empty, i.e. last person leaves.
+- When some activity (e.g. join/leave/talk/etc) happens in voice channel
+  after configured `voice-notify-after-inactivity` timeout of inactivity,
+  default = 20 minutes.
+
+And with additional rate-limit set by `voice-notify-rate-limit-tbf` value,
+to notify about up to 5 events in a row, but otherwise no more often than
+once in 5 minutes (["token bucket algorithm"] is technically how this
+limit is implemented/works).
+
+Both voice-notify-\* values above are configurable under \[discord\] section.
+
+["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 <a name=user-content-hdr-warning_session_auth_rejected_unexpected.ZboG></a>

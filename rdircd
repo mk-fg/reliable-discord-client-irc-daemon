@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.1' # git-version: py-str
+	version = '24.03.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -204,6 +204,17 @@ class RDIRCDConfigBase:
 	discord_msg_interact_cache_per_chan = 100 # last N msgs per-discord-channel buffer
 	discord_msg_interact_cache_expire = '2d16h' # forget cached msgs older than this
 
+	# Issue notices in *.vc chans for voice-chats after inactivity.
+	# Otherwise notices are only sent when voice chat toggles between empty/non-empty.
+	# Can be set to 0 to notify about every voice event (spammy), or to e.g. 1y
+	#   (any large timespan) to notify only when voice-chat changes between empty/non-empty.
+	discord_voice_notify_after_inactivity = '20m'
+	# Token-bucket rate limit on all voice-chat notices in vc-channel.
+	# Can be used with after-inactivity=0 to send simple
+	#   rate-limited notifications instead of tracking active/inactive state.
+	# Value like 300:3 means "token-bucket algorithm with rate=1/300s burst=5".
+	discord_voice_notify_rate_limit_tbf = '300:5'
+
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50 # message part length in debug logs
@@ -256,6 +267,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
 	_conv_discord_msg_interact_cache_expire = lambda s, v: parse_duration(v)
+	_conv_discord_voice_notify_after_inactivity = lambda s, v: parse_duration(v)
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -2521,6 +2533,9 @@ class DiscordSession:
 			for msg_id in m.d.ids: self.op_msg(adict(id=msg_id, **m.d), 'delete')
 			return
 		elif mt == 'gift_code_update': return self.op_gift_code(m.d)
+		elif mt.startswith('voice_'):
+			if mt == 'voice_state_update': return self.op_voice_st_user(m.d)
+			elif mt == 'voice_channel_status_update': return self.op_voice_st_chan(m.d)
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 
 		# Known-ignored events
@@ -2528,7 +2543,7 @@ class DiscordSession:
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
 			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers',
 			'guild_audit_log_entry', 'burst_credit_balance' }: return
-		elif re.search( r'^(voice|guild_scheduled_event'
+		elif re.search( r'^(guild_scheduled_event'
 			r'|(guild_)?application_command|embedded_activity)_', mt ): return
 		elif re.search( r'^user_(note|'
 			r'guild_settings|settings|settings_proto)_update$', mt ): return
@@ -2573,7 +2588,7 @@ class DiscordSession:
 		else: self.st.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guilds, sync=False):
-		gs_new, gs_chans = {1: self.st.me}, dict()
+		gs_new, gs_chans, gs_vcs = {1: self.st.me}, dict(), cs.defaultdict(set)
 		for g in force_list(guilds):
 			if g.get('unavailable'): continue # can be sent in "ready" event
 			if g.id == self.st.me.id:
@@ -2593,9 +2608,12 @@ class DiscordSession:
 				roles=dict((r.id, r) for r in g.get('roles', list())) )
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
 			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
+			gs_vcs[g.id].update(vs.get('channel_id') for vs in g.get('voice_states') or list())
 		dict_update(self.st.guilds, gs_new, sync=sync)
 		for (gid, sk), chans in sorted(gs_chans.items()):
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
+			for cid, cc in self.st.guilds[gid].chans.items():
+				if cid in gs_vcs[gid]: cc.vc_active = True
 
 	def op_ev_chans(self, gid, chans, sync=None):
 		if not (gg := self.st.guilds.get(gid)): return
@@ -3125,9 +3143,8 @@ class DiscordSession:
 
 	def op_react(self, m, act):
 		if self.conf.irc_disable_reactions: return
-		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
-		if gg: cc = gg.chans.get(m.channel_id)
-		if not cc: return
+		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+			and (cc := gg.chans.get(m.channel_id)) ): return
 		try: # emo_id seem to be only passed if it's not unicode emoji
 			emo_id, emo = m.emoji.get('id'), m.emoji.get('name') or ''
 			if emo_id and len(emo) != 1: emo = f'[{emo_id}]' if not emo else f':{emo}:'
@@ -3145,11 +3162,39 @@ class DiscordSession:
 		self.discord.cmd_msg_recv(cc, nick, f'--- reacts: {act}{emo} {ext}')
 
 	def op_gift_code(self, m):
-		cc, gg = None, self.st.guilds.get(m.get('guild_id', 1))
-		if gg: cc = gg.chans.get(m.channel_id)
-		if not cc: return
+		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+			and (cc := gg.chans.get(m.channel_id)) ): return
 		self.discord.cmd_msg_recv( cc, None,
 			f'--- gift-code: uses={m.uses} sku={m.sku_id} code={m.code}' )
+
+	def op_voice_st_tbf_check(self, cc):
+		if not (tbf := cc.get('vc_tbf')):
+			tbf = cc.vc_tbf = token_bucket(self.conf.discord_voice_notify_rate_limit_tbf)
+		return not next(tbf)
+
+	def op_voice_st_chan(self, m):
+		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+			and (cc := gg.chans.get(m.id)) ): return
+		# status here seem to always be null, indicating empty channel
+		if ( bool(st := m.get('status')) == bool(cc.get('vc_active'))
+			or not self.op_voice_st_tbf_check(cc) ): return
+		self.discord.cmd_msg_recv( cc, None,
+			f'--- voice-chat status: ' + str(st or 'empty'), notice=True )
+		cc.vc_active = bool(st)
+
+	def op_voice_st_user(self, m):
+		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+			and (cc := gg.chans.get(m.channel_id)) ): return
+		ts, td = time.monotonic(), self.conf._discord_voice_notify_after_inactivity
+		if cc.get('vc_active') and td and cc.get('vc_ts', -td) >= ts - td: return
+		if not self.op_voice_st_tbf_check(cc): return
+		ev = set(k for k in 'mute deaf suppress'.split() if m.get(k))
+		ev.update(k for k in 'mute deaf video stream'.split() if m.get(f'self_{k}'))
+		if rtst := m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
+		if not ev: ev.add('voice')
+		ev, nick = ' '.join(sorted(ev)), self.discord.user_name(m, fallback='') or None
+		self.discord.cmd_msg_recv(cc, nick, f'--- voice-chat activity: {ev}', notice=True)
+		cc.vc_active, cc.vc_ts = True, ts
 
 
 
