@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.5' # git-version: py-str
+	version = '24.03.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -100,6 +100,8 @@ class RDIRCDConfigBase:
 	irc_chan_leftover_guild = 'rdircd.leftover.{prefix}'
 	# Name for a global voice-chat notifications channel. Empty - won't be created.
 	irc_chan_voice = 'rdircd.voice'
+	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
+	irc_chan_voice_guild = ''
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -3219,6 +3221,7 @@ class RDIRCD:
 			'rdircd: read-only msgs for non-joined channels of discord [ {} ]' )
 		chan_voice_topic = (
 			'rdircd: read-only voice-chat notifications from all discords/channels' )
+		chan_voice_topic_guild_tpl = 'rdircd: read-only voice-chat events for discord [ {} ]'
 
 	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc vc proxy')
 
@@ -3645,10 +3648,11 @@ class RDIRCD:
 				bt=getattr(self.c_bc_type, k), ts_created=sys_chan_ts ))
 		yield from _agg_chan('mon')
 		yield from _agg_chan('nc')
+		yield from _agg_chan('vc')
 		for gi in gg_info:
 			yield from _agg_chan('mon', gi)
 			yield from _agg_chan('nc', gi)
-		yield from _agg_chan('vc')
+			yield from _agg_chan('vc', gi)
 
 		# Normal channels for each discord-guild
 		for gi in gg_info:

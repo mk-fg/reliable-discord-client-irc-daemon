@@ -357,10 +357,10 @@ Run `/list` to see channels for all joined discord servers/guilds:
     #rdircd.debug         1  rdircd: debug logging channel, read-only
     #rdircd.monitor       1  rdircd: read-only catch-all channel with messages from everywhere
     #rdircd.leftover      1  rdircd: read-only channel for any discord messages in channels ...
+    #rdircd.voice         1  rdircd: read-only voice-chat notifications from all discords/channels
     #rdircd.monitor.jvpp  1  rdircd: read-only catch-all channel for discord [ Server-A ]
     #rdircd.leftover.jvpp 1  rdircd: read-only msgs for non-joined channels of discord [ Server-A ]
     ...
-    #rdircd.voice         1  rdircd: read-only voice-chat notifications from all discords/channels
     #me.chat.SomeUser     1  me: private chat - SomeUser
     #me.chat.x2s456gl0t   3  me: private chat - some-other-user, another-user, user3
     #jvpp.announcements   1  Server-A: Please keep this channel unmuted
@@ -463,11 +463,12 @@ including e.g. `/join #rdircd.leftover.game-x` hiding that "game-x" discord
 msgs from global catch-all #rdircd.leftover, but not counting #rdircd.monitor
 channels (i.e. joining them doesn't affect "leftover" ones in any way).
 
-#rdircd.voice is a single channel similar to #rdircd.monitor, but only catching
-voice-chat event notices, to be able to track those in a timely manner there.
+#rdircd.voice is a channel similar to #rdircd.monitor, but only catching
+voice-chat event notices, to be able to track those in a timely manner.
 
 These channels can be ignored if not needed, or disabled entirely by setting
 e.g. `chan-monitor` to an empty value under \[irc\] ini config-file section.
+For example, per-discord voice-activity channels are default-disabled there.
 
 Configuration file also has \[unmonitor\] section for an optional list
 of channel-names to ignore in monitor/leftover channels, for example:
@@ -1073,9 +1074,9 @@ to notify about up to 5 events in a row, but otherwise no more often than
 once in 5 minutes (["token bucket algorithm"] is technically how this
 limit is implemented/works).
 
-A global #rdircd.voice monitor-channel can also be used to only track
-voice-chat notifications across all discords/channels, potentially filtered
-via "um" command in #rdircd.control or \[unmonitor\] in ini config(s).
+#rdircd.voice monitor-channel(s) can also be used to only track voice-chat
+notifications across discords/channels, potentially filtered via "um" command
+in #rdircd.control or \[unmonitor\] in ini config(s).
 
 ["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
 
