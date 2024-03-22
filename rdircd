@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.2' # git-version: py-str
+	version = '24.03.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -59,6 +59,7 @@ class RDIRCDConfigBase:
 	irc_prefix_call = '[call] '
 	irc_prefix_interact = '[cmd] '
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
+	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
 	irc_prefix_all_private = '' # universal prefix to include in all incoming private-chat msgs
 
@@ -2796,7 +2797,7 @@ class DiscordSession:
 		cc = self.st.guilds[1].chans.get(m.channel_id)
 		nick = (u := m.get('user')) and self.discord.user_name(u)
 		if u: self.discord.cmd_user_cache(1, u.id, nick)
-		self.discord.cmd_msg_recv(cc, nick, f'--- recipient {act.lower()}')
+		self.discord.cmd_msg_recv(cc, nick, f'recipient {act.lower()}', dict(_ev=True))
 
 	def op_ev_ban(self, m, act):
 		name = self.discord.user_name(m)
@@ -2851,7 +2852,7 @@ class DiscordSession:
 		if act == 'delete':
 			ext = f'[{ts_iso8601(self.discord.flake_parse(m.id), human=True)}]'
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
-			return self.discord.cmd_msg_recv(cc, None, f'--- message was deleted {ext}')
+			return self.discord.cmd_msg_recv(cc, None, f'message was deleted {ext}', dict(_ev=True))
 		if not m.get('content') and m.get('call'):
 			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
 
@@ -3144,7 +3145,7 @@ class DiscordSession:
 	def op_react(self, m, act):
 		if self.conf.irc_disable_reactions: return
 		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
-			and (cc := gg.chans.get(m.channel_id)) ): return
+			and (cc := gg.chans.get(m.get('channel_id'))) ): return
 		try: # emo_id seem to be only passed if it's not unicode emoji
 			emo_id, emo = m.emoji.get('id'), m.emoji.get('name') or ''
 			if emo_id and len(emo) != 1: emo = f'[{emo_id}]' if not emo else f':{emo}:'
@@ -3159,13 +3160,13 @@ class DiscordSession:
 		else: self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(m))
 		ext = f'[{ts_iso8601(self.discord.flake_parse(m.message_id), human=True)}]'
 		if ref := self.op_msg_ref_get(m.message_id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
-		self.discord.cmd_msg_recv(cc, nick, f'--- reacts: {act}{emo} {ext}')
+		self.discord.cmd_msg_recv(cc, nick, f'reacts: {act}{emo} {ext}', dict(_ev=True))
 
 	def op_gift_code(self, m):
 		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
-			and (cc := gg.chans.get(m.channel_id)) ): return
+			and (cc := gg.chans.get(m.get('channel_id'))) ): return
 		self.discord.cmd_msg_recv( cc, None,
-			f'--- gift-code: uses={m.uses} sku={m.sku_id} code={m.code}' )
+			f'gift-code: uses={m.uses} sku={m.sku_id} code={m.code}', dict(_ev=True) )
 
 	def op_voice_st_tbf_check(self, cc):
 		if not (tbf := cc.get('vc_tbf')):
@@ -3174,17 +3175,17 @@ class DiscordSession:
 
 	def op_voice_st_chan(self, m):
 		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
-			and (cc := gg.chans.get(m.id)) ): return
+			and (cc := gg.chans.get(m.get('id'))) ): return
 		# status here seem to always be null, indicating empty channel
 		if ( bool(st := m.get('status')) == bool(cc.get('vc_active'))
 			or not self.op_voice_st_tbf_check(cc) ): return
-		self.discord.cmd_msg_recv( cc, None,
-			f'--- voice-chat status: ' + str(st or 'empty'), notice=True )
 		cc.vc_active = bool(st)
+		self.discord.cmd_msg_recv( cc, None,
+			'voice-chat status: ' + str(st or 'empty'), dict(_ev='vc'), notice=True )
 
 	def op_voice_st_user(self, m):
 		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
-			and (cc := gg.chans.get(m.channel_id)) ): return
+			and (cc := gg.chans.get(m.get('channel_id'))) ): return
 		ts, td = time.monotonic(), self.conf._discord_voice_notify_after_inactivity
 		if cc.get('vc_active') and td and cc.get('vc_ts', -td) >= ts - td: return
 		if not self.op_voice_st_tbf_check(cc): return
@@ -3193,8 +3194,9 @@ class DiscordSession:
 		if rtst := m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
 		if not ev: ev.add('voice')
 		ev, nick = ' '.join(sorted(ev)), self.discord.user_name(m, fallback='') or None
-		self.discord.cmd_msg_recv(cc, nick, f'--- voice-chat activity: {ev}', notice=True)
 		cc.vc_active, cc.vc_ts = True, ts
+		self.discord.cmd_msg_recv( cc, nick,
+			f'voice-chat activity: {ev}', dict(_ev='vc'), notice=True )
 
 
 
@@ -4029,7 +4031,7 @@ class RDIRCD:
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
-		prefix, name = '', name_irc or self.cache.did_chan.get(cc.did)
+		prefix, ev, name = '', '', name_irc or self.cache.did_chan.get(cc.did)
 		if nick:
 			if nick not in cc.users: cc.users[nick] = adict(name=nick)
 			cc.users[nick].ts = ts or time.time()
@@ -4041,6 +4043,7 @@ class RDIRCD:
 
 		if tags:
 			mt, prefix = DiscordSession.c_msg_tags, tags.pop('_prefix', prefix)
+			if ev := tags.pop('_ev', None): prefix += self.conf.irc_prefix_event
 			for k, (tt, v) in tags.items():
 				if tt == mt.user: v = f'@{self.irc_name(v)}'
 				elif tt == mt.chan:
