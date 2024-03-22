@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.7' # git-version: py-str
+	version = '24.03.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3060,7 +3060,8 @@ class DiscordSession:
 				if name := m.get('content'): line = f'[channel renamed to] {name}'
 				else: line = '[channel renamed]'
 			elif mt == mtc.context_menu_command: pass # "Loading..." placeholder
-			elif mt == mtc.default:
+			elif mt == mtc.default and not (m.get('activity') and m.get('timestamp')):
+				# discord embedded-app activities don't seem to display channel msgs anyway
 				self.log.warning( 'Discarded basic text-msg'
 					' without contents (processing bug?): {}', self._repr(m) )
 		return line.strip(), tags
