@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.4' # git-version: py-str
+	version = '24.03.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -57,7 +57,6 @@ class RDIRCDConfigBase:
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
 	irc_prefix_interact = '[cmd] '
-	irc_prefix_call = '[call] ' # only used in private chats, not voice channels
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
@@ -2842,7 +2841,7 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
-		flake, nick, msg_is_update = None, m.get('author'), act == 'update'
+		flake, nick, msg_ev, msg_is_update = None, m.get('author'), None, act == 'update'
 
 		if ( msg_is_update # sometimes discord sends completely empty msg-updates
 			and not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']) ): return
@@ -2856,7 +2855,7 @@ class DiscordSession:
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
 			return self.discord.cmd_msg_recv(cc, None, f'message was deleted {ext}', dict(_ev=True))
 		if not m.get('content') and m.get('call'):
-			m.content = f'{self.conf.irc_prefix_call} --- discord audio/video call notification ---'
+			msg_ev, m.content = 'vc', 'voice-chat: incoming audio/video call notification'
 
 		ref = line_cache = media_info = None
 		if not nick:
@@ -2880,6 +2879,7 @@ class DiscordSession:
 		line, tags = self.op_msg_parse( m, gg,
 			is_update=msg_is_update, has_media_info=media_info )
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
+		if msg_ev: tags.update(_ev=msg_ev)
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
 		self.op_msg_ref(m.id, cc, nick, line, ref=ref)

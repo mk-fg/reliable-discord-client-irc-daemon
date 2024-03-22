@@ -1308,7 +1308,6 @@ prefix-edit = 📝 \
 prefix-embed = 📎.{} \
 prefix-attachment = 🖼️ \
 prefix-uis = ⚙️ \
-prefix-call = 📞 \
 prefix-interact = 🤖 \
 ```
 
