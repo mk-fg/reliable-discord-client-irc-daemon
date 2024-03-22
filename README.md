@@ -360,6 +360,7 @@ Run `/list` to see channels for all joined discord servers/guilds:
     #rdircd.monitor.jvpp  1  rdircd: read-only catch-all channel for discord [ Server-A ]
     #rdircd.leftover.jvpp 1  rdircd: read-only msgs for non-joined channels of discord [ Server-A ]
     ...
+    #rdircd.voice         1  rdircd: read-only voice-chat notifications from all discords/channels
     #me.chat.SomeUser     1  me: private chat - SomeUser
     #me.chat.x2s456gl0t   3  me: private chat - some-other-user, another-user, user3
     #jvpp.announcements   1  Server-A: Please keep this channel unmuted
@@ -378,6 +379,7 @@ Notes on information here:
 - #rdircd.control and #rdircd.debug are special channels, send "help" there for more info.
 - There's #rdircd.monitor catch-all channel and guild-specific ones (see notes below).
 - #rdircd.leftover channels are like #rdircd.monitor, but skip msgs from already-joined channels.
+- #rdircd.voice is also there to monitor only voice channel notifications from everywhere.
 - Public IRC channel users are transient and only listed/counted if they sent
   something to a channel, as discord has no concept of "joining" for publics.
 - Everything in that /list and everything used to talk through this app are IRC
@@ -461,6 +463,12 @@ including e.g. `/join #rdircd.leftover.game-x` hiding that "game-x" discord
 msgs from global catch-all #rdircd.leftover, but not counting #rdircd.monitor
 channels (i.e. joining them doesn't affect "leftover" ones in any way).
 
+#rdircd.voice is a single channel similar to #rdircd.monitor, but only catching
+voice-chat event notices, to be able to track those in a timely manner there.
+
+These channels can be ignored if not needed, or disabled entirely by setting
+e.g. `chan-monitor` to an empty value under \[irc\] ini config-file section.
+
 Configuration file also has \[unmonitor\] section for an optional list
 of channel-names to ignore in monitor/leftover channels, for example:
 
@@ -471,6 +479,7 @@ Ignore this particular "bot-commands" channel = game-X.bot-commands
 skip forum threads in "game-X" guild = glob:game-X.forum.=*
 "wordle" threads in any guild (and chans ending in .wordle) = glob:*.wordle
 Don't show threads in any forum-like channels = re:^[^.]+\.(forum|discuss)\.=.*
+disregard all voice-chat stuff = glob:*.vc
 ```
 
 Keys (as in part before "=") in such config section are ignored, and can be
@@ -484,8 +493,8 @@ Channel names matched by those filters will be dropped from monitor-channels,
 so this can be used to define a list of spammy things that you don't care about
 and don't want to see even there.
 
-"unmonitor" (or "um") command in #rdircd.control can add/remove such filters
-on-the-fly anytime.
+"unmonitor" (or "um") command in #rdircd.control can add/remove
+such filters on-the-fly anytime.
 
 Messages in monitor-channels are limited to specific length/lines,
 to avoid excessive flooding by long and/or multi-line msgs.
@@ -1064,7 +1073,9 @@ to notify about up to 5 events in a row, but otherwise no more often than
 once in 5 minutes (["token bucket algorithm"] is technically how this
 limit is implemented/works).
 
-Both voice-notify-\* values above are configurable under \[discord\] section.
+A global #rdircd.voice monitor-channel can also be used to only track
+voice-chat notifications across all discords/channels, potentially filtered
+via "um" command in #rdircd.control or \[unmonitor\] in ini config(s).
 
 ["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
 
@@ -1249,11 +1260,14 @@ templates, as well as unnecessary "#me.chat."  prefixes, instead of this:
 #@some-friend
 #@some-friend+other-friend+more-ppl
 #rdircd
+#rdircd.rest
+#rdircd.voice
 #rdircd.control
 #rdircd.debug
 #minecraft
 #minecraft.general
 #minecraft.modding
+#minecraft.rest
 ```
 
 Use these lines in any loaded ini config file to make it work like that:
@@ -1261,7 +1275,9 @@ Use these lines in any loaded ini config file to make it work like that:
 ``` ini
 [irc]
 chan-monitor = rdircd
+chan-leftover = rdircd.rest
 chan-monitor-guild = {prefix}
+chan-leftover-guild = {prefix}.rest
 chan-private = {names}
 
 [renames]

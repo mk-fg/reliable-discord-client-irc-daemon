@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.3' # git-version: py-str
+	version = '24.03.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -56,8 +56,8 @@ class RDIRCDConfigBase:
 	irc_prefix_embed = '[em.{}] '
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
-	irc_prefix_call = '[call] '
 	irc_prefix_interact = '[cmd] '
+	irc_prefix_call = '[call] ' # only used in private chats, not voice channels
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
@@ -99,6 +99,8 @@ class RDIRCDConfigBase:
 	# Name of "leftover" chan for msgs in any
 	#  non-joined channels of one specific discord server/guild. Empty - disable.
 	irc_chan_leftover_guild = 'rdircd.leftover.{prefix}'
+	# Name for a global voice-chat notifications channel. Empty - won't be created.
+	irc_chan_voice = 'rdircd.voice'
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -3208,15 +3210,17 @@ class RDIRCD:
 		chan_sys_types = 'control', 'debug'
 		chan_sys_control_topic = 'rdircd: control channel, type "help" for more info'
 		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
-		chan_monitor_topic = ( 'rdircd: read-only'
-			' catch-all channel with messages from everywhere' )
+		chan_monitor_topic = (
+			'rdircd: read-only catch-all channel with messages from everywhere' )
 		chan_monitor_topic_guild_tpl = 'rdircd: read-only catch-all channel for discord [ {} ]'
 		chan_leftover_topic = ( 'rdircd: read-only channel for any'
 			' discord messages in channels that IRC client is not connected to' )
 		chan_leftover_topic_guild_tpl = (
 			'rdircd: read-only msgs for non-joined channels of discord [ {} ]' )
+		chan_voice_topic = (
+			'rdircd: read-only voice-chat notifications from all discords/channels' )
 
-	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc proxy')
+	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc vc proxy')
 
 	def __init__(self, conf):
 		self.conf, self.log = conf, get_logger('rdircd.bridge')
@@ -3236,8 +3240,8 @@ class RDIRCD:
 		self.tasks = StacklessContext(self.log)
 		self.cache = adict( chan_map=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
-			# None is used as an id for global monitor/leftover channel
-			gid_mon_chan=dict(), gid_nc_chan=dict(), did_chan=dict(),
+			# None is used as an id for global monitor/leftover/voice channels
+			gid_mon_chan=dict(), gid_nc_chan=dict(), gid_vc_chan=dict(), did_chan=dict(),
 			d2i=irc_name_dict(), i2d=irc_name_dict() ) # for all irc <-> discord names
 		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
 		try: boot_id = str_hash(pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 3)
@@ -3629,7 +3633,7 @@ class RDIRCD:
 				topic=getattr(self.c, f'chan_sys_{sys_type}_topic') ))
 
 		# Order monitor/leftover channels at the top
-		def _agg_chan(k, gi=None, _kc=dict(mon='monitor', nc='leftover')):
+		def _agg_chan(k, gi=None, _kc=dict(mon='monitor', nc='leftover', vc='voice')):
 			kc = _kc[k]
 			name = ( getattr(self.conf, f'irc_chan_{kc}') if not gi else
 				getattr(self.conf, f'irc_chan_{kc}_guild').format(prefix=gi.prefix) )
@@ -3644,6 +3648,7 @@ class RDIRCD:
 		for gi in gg_info:
 			yield from _agg_chan('mon', gi)
 			yield from _agg_chan('nc', gi)
+		yield from _agg_chan('vc')
 
 		# Normal channels for each discord-guild
 		for gi in gg_info:
@@ -4002,7 +4007,7 @@ class RDIRCD:
 
 
 	def cmd_msg_monitor( self, nick, msg,
-			prefix='', notice=True, gid=None, leftover_skip=None ):
+			prefix='', notice=True, gid=None, leftover_skip=None, ev=None ):
 		'Sends message to monitor/leftover IRC channel(s)'
 		lines_n = len(lines := msg.splitlines())
 		m, n = self.conf.irc_len_monitor, self.conf.irc_len_monitor_lines
@@ -4012,7 +4017,8 @@ class RDIRCD:
 			lines = lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
 		nc_conns_skip = set(leftover_skip or list())
-		for ct in 'mon', 'nc':
+		for ct in 'mon', 'nc', 'vc':
+			if ct == 'vc' and ev != 'vc': continue
 			chans, cache = list(), getattr(self.cache, f'gid_{ct}_chan')
 			if gid and (name := cache.get(gid)): chans.append(name)
 			if name := cache[None]: chans.append(name)
@@ -4092,7 +4098,7 @@ class RDIRCD:
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
 				conns_joined += self.cmd_chan_conns(cc.parent)
 		self.cmd_msg_monitor( nick, line, prefix=prefix_mon,
-			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined )
+			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 
 	def cmd_msg_rename_func(self, cc):
 		'''Returns cmd_msg_discord func to send rename-notice to old channel.
