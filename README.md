@@ -31,6 +31,7 @@ Table of Contents
     - [Channel name disambiguation](#hdr-channel_name_disambiguation)
     - [OSC 8 hyperlinks for terminal IRC clients](#hdr-osc_8_hyperlinks_for_terminal_irc_clients)
     - [Voice chat activity notifications](#hdr-voice_chat_activity_notifications)
+    - [Highlight on incoming private messages](#hdr-highlight_on_incoming_private_messages)
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Almost every message I see are reacts by people :(]
@@ -1079,6 +1080,35 @@ notifications across discords/channels, potentially filtered via "um" command
 in #rdircd.control or \[unmonitor\] in ini config(s).
 
 ["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
+
+<a name=hdr-highlight_on_incoming_private_messages></a>
+<a name=user-content-hdr-highlight_on_incoming_private_messages></a>
+### Highlight on incoming private messages
+
+IRC convention is to treat mention of a nickname as a "highlight" - a more
+notification-worthy event than a regular channel message, so it might be useful
+if messages in private channels did always highlight the nick for IRC client.
+
+`prefix-all-private` option can be used for that:
+
+``` ini
+[irc]
+prefix-all-private = mynick: \
+```
+
+Might also be necessary to either join [monitor/leftover channels] or setup
+[auto-joining channels] for new PMs to be received by IRC client at all.
+
+Private chats are not implemented via direct IRC messages for various practical
+reasons, i.e. to have everything work via channels, because it works that way on
+the discord side, they can have multiple users, to list those easily, to query
+topic/history/etc there, and such stuff.
+
+There is a similar `prefix-all` option, to add prefix to all messages,
+if `prefix-all-private` doesn't go far enough.
+
+[monitor/leftover channels]: #hdr-_rdircd.monitor_and_rdircd.leftover_channels
+[auto-joining channels]: #hdr-auto-joining_channels
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 <a name=user-content-hdr-warning_session_auth_rejected_unexpected.ZboG></a>
