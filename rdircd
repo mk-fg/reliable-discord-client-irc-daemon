@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.11' # git-version: py-str
+	version = '24.03.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1844,8 +1844,8 @@ class Discord:
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
 		prefix = ( f'%{gid}' if not (gg := self.st.guilds.get(gid))
 			else ('%' + self.bridge.uid("guild", gg.id, kh=gg.get("kh"))) )
-		prefix += f' :: {self.conf.irc_prefix_guild_event} [{gg.name}] '
-		if ev_hash: prefix += f'ev#{ev_hash} '
+		prefix += f' :: {self.conf.irc_prefix_guild_event}[{gg.name}] '
+		if ev_hash: prefix += f'ev.{ev_hash} ' # to tie multiline stuff and updates together
 		if self.bridge.cmd_msg_recv_filter(nick := self.conf.irc_nick_sys, prefix + msg): return
 		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
 
