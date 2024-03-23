@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.9' # git-version: py-str
+	version = '24.03.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1842,13 +1842,12 @@ class Discord:
 
 	def cmd_guild_event(self, gid, msg, ev_hash=''):
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
-		if gid == 1: prefix = ''
-		else: prefix = gg.name if (gg := self.st.guilds.get(gid)) else f'%{gid}'
-		if ev_hash: prefix = f'{prefix} ev#{ev_hash}'
-		if prefix := prefix.strip(): prefix = f'[{prefix}] '
-		self.bridge.cmd_msg_monitor(
-			nick=self.conf.irc_nick_sys, gid=gid, notice=True,
-			prefix=f'{self.conf.irc_prefix_guild_event}{prefix}', msg=msg )
+		prefix = ( f'%{gid}' if not (gg := self.st.guilds.get(gid))
+			else ('%' + self.bridge.uid("guild", gg.id, kh=gg.get("kh"))) )
+		prefix += f' :: {self.conf.irc_prefix_guild_event} [{gg.name}] '
+		if ev_hash: prefix += f'ev#{ev_hash} '
+		if self.bridge.cmd_msg_recv_filter(nick := self.conf.irc_nick_sys, prefix + msg): return
+		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
 
 
 
@@ -2647,8 +2646,7 @@ class DiscordSession:
 	def op_ev_chans_process(self, gg, chans):
 		'''Process channel data from discord into internal information.
 			Earlier information from gg.chans is used as a base and for diffs, if it is there.'''
-		def _gg_prefix(): # used only for error logging here
-			return self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
+		_gg_prefix = lambda: self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
 		ct, chans_updated, new_threads = self.c_chan_type, dict(), list()
 		for c in force_list(chans):
 			name, topic = c.get('name'), c.get('topic') or ''
@@ -2834,7 +2832,7 @@ class DiscordSession:
 		if act == 'update' and ev_st in _sts: act = f' {_sts[ev_st]}'
 		else: act = f' {act}' if act != 'create' else ''
 		self.discord.cmd_guild_event( m.guild_id,
-			f'Scheduled event{act}: {ev_info}', ev_hash )
+			f'Scheduled event{act} :: {ev_info}', ev_hash )
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
@@ -4015,6 +4013,19 @@ class RDIRCD:
 			conn.cmd_msg_chan(self.conf.irc_nick_sys, name, line)
 
 
+	def cmd_msg_recv_filter(self, nick, msg):
+		if not (recv_rxs := self.conf.recv_filters): return
+		m, recv_msg = False, f'<{nick}> {msg}' # can be multiline, unlike in #monitor
+		for n, (k, mx) in enumerate(recv_rxs.items()):
+			if op_and := re.search(r'^\s*∧+¬*(\s|$)', k[1:]):
+				if n and not m: continue # skip &&-tails after mismatch
+			elif m: break # standalone match found earlier
+			op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k[1:]))
+			if m := bool(mx.rx.search(recv_msg)) ^ op_not: m = k, recv_msg
+		if not m: return
+		return self.log.debug( 'recv-regexp-filter msg-drop at'
+			' [ {} ]: {}', m[0], str_cut(m[1], self.conf.debug_msg_cut) ) or True
+
 	def cmd_msg_monitor( self, nick, msg,
 			prefix='', notice=True, gid=None, leftover_skip=None, ev=None ):
 		'Sends message to monitor/leftover IRC channel(s)'
@@ -4078,19 +4089,7 @@ class RDIRCD:
 				' {!r} [cc={}] for line: [{}] {}', cc.did, cc, nick, tags, nick, line )
 			name = f'ERR [ {cc.gg.name} ] {cc.name}'
 		prefix_mon = f'{IRCProtocol.chan_spec(name)} :: {prefix}'
-
-		if recv_rxs := self.conf.recv_filters:
-			m, recv_msg = False, f'<{nick}> {prefix_mon}{line}' # can be multiline
-			for n, (k, mx) in enumerate(recv_rxs.items()):
-				if op_and := re.search(r'^\s*∧+¬*(\s|$)', k[1:]):
-					if n and not m: continue # skip &&-tails after mismatch
-				elif m: break # standalone match found earlier
-				op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k[1:]))
-				if m := bool(mx.rx.search(recv_msg)) ^ op_not: m = k, recv_msg
-			if m:
-				return self.log.debug(
-					'recv-regexp-filter msg-drop at [ {} ]: {}',
-					m[0], str_cut(m[1], self.conf.debug_msg_cut) )
+		if self.cmd_msg_recv_filter(nick, prefix_mon + line): return
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
@@ -4106,7 +4105,7 @@ class RDIRCD:
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
 				conns_joined += self.cmd_chan_conns(cc.parent)
-		self.cmd_msg_monitor( nick, line, prefix=prefix_mon,
+		self.cmd_msg_monitor( nick, line, prefix_mon,
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 
 	def cmd_msg_rename_func(self, cc):
