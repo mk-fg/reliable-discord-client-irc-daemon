@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.10' # git-version: py-str
+	version = '24.03.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2540,6 +2540,7 @@ class DiscordSession:
 			if mt == 'voice_state_update': return self.op_voice_st_user(m.d)
 			elif mt == 'voice_channel_status_update': return self.op_voice_st_chan(m.d)
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
+		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 
 		# Known-ignored events
 		elif o in { 'typing', 'integration', 'channel_pins', 'webhooks', 'call',
@@ -2833,6 +2834,10 @@ class DiscordSession:
 		else: act = f' {act}' if act != 'create' else ''
 		self.discord.cmd_guild_event( m.guild_id,
 			f'Scheduled event{act} :: {ev_info}', ev_hash )
+
+	def op_ev_note(self, m):
+		self.discord.cmd_guild_event(m.guild_id, ' :: '.join( str(v) for v in
+			['Notification', m.get('type'), m.get('body') or m.get('message')] if v ))
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st.guilds.get(m.get('guild_id', 1))
