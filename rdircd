@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.12' # git-version: py-str
+	version = '24.03.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -57,6 +57,7 @@ class RDIRCDConfigBase:
 	irc_prefix_sticker = '[sticker] '
 	irc_prefix_uis = '[UIs] '
 	irc_prefix_interact = '[cmd] '
+	irc_prefix_poll = '[poll.{}] '
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
@@ -846,6 +847,14 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None, short=False)
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
 	if ms and int(ts_ext): ts_ext = f'.{ts_ext}'
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
+
+def convert_iso8601_str(ts, human=True, short=True):
+	if not ts: return '???'
+	try: return ts_iso8601(parse_iso8601(ts), human=human, short=short)
+	except Exception as err:
+		get_logger('rdircd.time').warning(
+			'Failed to convert timestamp [ {!r} ]: {}', ts, err_fmt(err) )
+		return ts
 
 _td_days = dict(
 	y=365.25, yr=365.25, year=365.25,
@@ -2546,7 +2555,7 @@ class DiscordSession:
 		elif o in { 'typing', 'integration', 'channel_pins', 'webhooks', 'call',
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
 			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers',
-			'guild_audit_log_entry', 'burst_credit_balance' }: return
+			'guild_audit_log_entry', 'burst_credit_balance', 'message_poll_vote' }: return
 		elif re.search( r'^(guild_scheduled_event'
 			r'|(guild_)?application_command|embedded_activity)_', mt ): return
 		elif re.search( r'^user_(note|'
@@ -3014,15 +3023,14 @@ class DiscordSession:
 				if cmd: line += f' :: {cmd}'.rstrip()
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
 				tags['_ev'], line = 'vc', f'{mt.name.replace("_", "-")}: {line!r}'
-				if ts := m.get('timestamp'): line += f' [ {ts} ]'
+				if ts := m.get('timestamp'): line += f' [ {convert_iso8601_str(ts)} ]'
 			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
 				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
 
 		for att in m.get('attachments') or list():
-			url = att.get('url')
-			if not url:
+			if not (url := att.get('url')):
 				self.log.warning('Unhandled msg attachment type: {}', self._repr(att))
 				continue
 			if ( self.conf.discord_terminal_links and
@@ -3035,26 +3043,38 @@ class DiscordSession:
 			name, desc = stk.get('name'), stk.get('description')
 			line += f'\n{self.conf.irc_prefix_sticker}{name}'
 			if desc: line += f' ({desc})'
-		uis = m.get('components')
-		if uis:
+		if uis := m.get('components'):
 			def _tags(uis, types=dict(enumerate(['row', 'btn', 'menu'], 1))):
 				line = list()
 				for ui in uis:
 					tag = types.get(ui.type, f'ui{ui.type}')
-					if ui.get('label'): tag += f' {repr(ui.label)}'
-					if ui.get('placeholder'): tag += f' {repr(ui.placeholder)}'
-					if ui.get('emoji'): tag += f' :{ui.emoji.name}:'
-					if ui.get('url'): tag += f' url={ui.url}'
-					if ui.get('options'):
-						for opt in ui.options:
-							tag += ' ({})'.format(
-								opt.get('label', '').replace(' ', '_')
-								or f":{opt.get('emoji', dict()).get('name', 'x')}:" )
-					line.append(
-						f'<{tag}/>' if not ui.get('components') else
-						f'<{tag}>' + _tags(ui.components) + f'</{tag}>' )
+					if ext := ui.get('label'): tag += f' {repr(ext)}'
+					if ext := ui.get('placeholder'): tag += f' {repr(ext)}'
+					if ext := ui.get('emoji'): tag += f' :{ext.name}:'
+					if ext := ui.get('url'): tag += f' url={ext}'
+					if ext := ui.get('options'):
+						for opt in ext: tag += ' ({})'.format(
+							opt.get('label', '').replace(' ', '_') or
+							f":{opt.get('emoji', dict()).get('name', 'x')}:" )
+					line.append( f'<{tag}/>' if not
+						(ext := ui.get('components')) else f'<{tag}>' + _tags(ext) + f'</{tag}>' )
 				return ' '.join(line)
 			line += f'\n{self.conf.irc_prefix_uis}' + _tags(m.components)
+		if poll := m.get('poll'):
+			pre = self.conf.irc_prefix_poll.format(str_hash(m.id, 3))
+			ext, line = list(), line and f'{line}\n'
+			if poll.get('allow_multiselect'): ext.append('multi-select')
+			if ts := poll.get('expiry'): ext.append(f'until {convert_iso8601_str(ts)}')
+			if qa := poll.get('question'):
+				line += f'{pre}Question: ' + str(qa.get('text') or qa).strip()
+			if ext: line = (line or f'{pre}-no-question-') + f' [ {", ".join(ext)} ]'
+			for qa in poll.get('answers') or list():
+				ext = f'A-{aid}: ' if (aid := qa.get('answer_id')) else 'A: '
+				if qa := qa.pop('poll_media', None) or dict():
+					if e := (qa.pop('emoji', None) or dict()).get('name'): ext += f':{e}: '
+					ext += str(qa.get('text', qa)).strip()
+				else: ext += str(qa)
+				line += f'\n{pre}{ext.rstrip()}'
 
 		if mt is not None and not line: # represent some non-text/embed events
 			if mt == mtc.recipient_add: line = '[+recipient]'

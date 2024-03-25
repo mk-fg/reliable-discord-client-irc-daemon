@@ -1340,12 +1340,13 @@ prefix-embed = 📎.{} \
 prefix-attachment = 🖼️ \
 prefix-uis = ⚙️ \
 prefix-interact = 🤖 \
+prefix-poll = 🗳️.{} \
 ```
 
 Note the "space and backslash" at the end in these options, which is to preserve
 trailing spaces in values, from both text editors that strip those and configuration
 file parser (which ignores any leading/trailing spaces, unless punctuated by backslash).
-`prefix-embed` option value needs `{}` placeholder for where to put its short id/tag.
+`prefix-embed` and poll values need `{}` placeholder for where to put short id/tag.
 
 Alternatively, set-command like `set irc-prefix-edit '✍️ '` can be used in #rdircd.control
 to configure and tweak this stuff on-the-fly (or `-s/--save` into config too).
