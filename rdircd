@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.13' # git-version: py-str
+	version = '24.03.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3039,10 +3039,12 @@ class DiscordSession:
 				if mh := ma.groupdict().get('hash'): name += f' {str_hash(mh, 4)}'
 				url = self.conf.discord_terminal_links_tpl.format(url=url, name=name)
 			line += f'\n{self.conf.irc_prefix_attachment}{url}'
+
 		for stk in m.get('stickers') or m.get('sticker_items') or list():
 			name, desc = stk.get('name'), stk.get('description')
 			line += f'\n{self.conf.irc_prefix_sticker}{name}'
 			if desc: line += f' ({desc})'
+
 		if uis := m.get('components'):
 			def _tags(uis, types=dict(enumerate(['row', 'btn', 'menu'], 1))):
 				line = list()
@@ -3060,6 +3062,7 @@ class DiscordSession:
 						(ext := ui.get('components')) else f'<{tag}>' + _tags(ext) + f'</{tag}>' )
 				return ' '.join(line)
 			line += f'\n{self.conf.irc_prefix_uis}' + _tags(m.components)
+
 		if poll := m.get('poll'):
 			pre = self.conf.irc_prefix_poll.format(str_hash(m.id, 3))
 			ext, line = list(), line and f'{line}\n'
@@ -3068,8 +3071,15 @@ class DiscordSession:
 			if qa := poll.get('question'):
 				line += f'{pre}Question: ' + str(qa.get('text') or qa).strip()
 			if ext: line = (line or f'{pre}-no-question-') + f' [ {", ".join(ext)} ]'
+			if res := poll.get('results'):
+				for qa in res.get('answer_counts') or list(): res[str(qa.get('id'))] = qa
 			for qa in poll.get('answers') or list():
-				ext = f'A-{aid}: ' if (aid := qa.get('answer_id')) else 'A: '
+				if aid := str(qa.get('answer_id') or ''):
+					if res and (ext := res.get(aid)):
+						aid += f' = {ext.get("count") or 0:,d}'
+						if ext.get('me_voted'): aid += '++'
+					ext = f'A#{aid}: '
+				else: ext = 'A: '
 				if qa := qa.pop('poll_media', None) or dict():
 					if e := (qa.pop('emoji', None) or dict()).get('name'): ext += f':{e}: '
 					ext += str(qa.get('text', qa)).strip()
