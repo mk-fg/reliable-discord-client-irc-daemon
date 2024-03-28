@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.03.15' # git-version: py-str
+	version = '24.03.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3065,25 +3065,27 @@ class DiscordSession:
 
 		if poll := m.get('poll'):
 			pre = self.conf.irc_prefix_poll.format(str_hash(m.id, 3))
-			ext, line = list(), line and f'{line}\n'
-			if poll.get('allow_multiselect'): ext.append('multi-select')
-			if ts := poll.get('expiry'): ext.append(f'until {convert_iso8601_str(ts)}')
+			ext, closed, line = list(), False, line and f'{line}\n'
 			if qa := poll.get('question'):
 				line += f'{pre}Question: ' + str(qa.get('text') or qa).strip()
-			if ext: line = (line or f'{pre}-no-question-') + f' [ {", ".join(ext)} ]'
+			if poll.get('allow_multiselect'): ext.append('multi-select')
 			if res := poll.get('results'):
+				if closed := res.get('is_finalized'): ext.append('closed')
 				for qa in res.get('answer_counts') or list(): res[str(qa.get('id'))] = qa
+			if not closed and (ts := poll.get('expiry')):
+				ext.append(f'until {convert_iso8601_str(ts)}')
+			if ext: line = (line or f'{pre}-no-question-') + f' [ {", ".join(ext)} ]'
 			for qa in poll.get('answers') or list():
-				if aid := str(qa.get('answer_id') or ''):
+				if aid := str(qa.pop('answer_id', '')):
 					if res and (ext := res.get(aid)):
 						aid += f' = {ext.get("count") or 0:,d}'
 						if ext.get('me_voted'): aid += '++'
 					ext = f'A#{aid}: '
 				else: ext = 'A: '
-				if qa := qa.pop('poll_media', None) or dict():
-					if e := (qa.pop('emoji', None) or dict()).get('name'): ext += f':{e}: '
-					ext += str(qa.get('text', qa)).strip()
-				else: ext += str(qa)
+				if ans := qa.pop('poll_media', None):
+					if e := (ans.pop('emoji', None) or dict()).get('name'): ext += f':{e}: '
+					ext += str(ans.get('text', ans)).strip()
+				else: ext += str(qa or '')
 				line += f'\n{pre}{ext.rstrip()}'
 
 		if mt is not None and not line: # represent some non-text/embed events
