@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.04.1' # git-version: py-str
+	version = '24.04.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3278,6 +3278,8 @@ class RDIRCD:
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
+		self.uptime_ts = time.monotonic()
+		self.uptime_dt = dt.datetime.now().astimezone()
 		self.server_ver = self.conf.version
 		self.server_ts = dt.datetime.utcnow()
 		self.server_host = os.uname().nodename
@@ -3787,12 +3789,15 @@ class RDIRCD:
 			(v and repr_duration(ts, v, ext=None))
 			for v in (st.get(k, '') for k in ('session_ts', 'connect_ts')) )
 		if sess_st != 'ready': conn_time = ''
+		up_td = repr_duration(self.discord.bridge.uptime_ts, time.monotonic())
+		up_dt = self.discord.bridge.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
 		return '\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
 			f'  session-id: {sess_id}',
 			f'  session-time: {sess_time}',
 			f'  connection-time: {conn_time}',
 			f'  connection-gateway: {self.conf.discord_gateway}',
+			f'  rdircd uptime: since {up_dt} ({up_td})',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ])
 
 	def _cmd_chan_sys_cache(self):
