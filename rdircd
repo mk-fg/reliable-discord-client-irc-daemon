@@ -145,6 +145,7 @@ class RDIRCDConfigBase:
 	discord_user_mention_cache_timeout = '3d' # to remember nicks for user-mentions
 	discord_user_query_timeout = 60.0
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
+	discord_media_info_timeout = '30m' # ignore no-author attachment updates for old msgs
 
 	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
 	# "aaa" group is used as a python regexp to match what to replace, "bbb" - replacement.
@@ -266,6 +267,7 @@ class RDIRCDConfigBase:
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
+	_conv_discord_media_info_timeout = lambda s, v: parse_duration(v)
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
@@ -2889,7 +2891,7 @@ class DiscordSession:
 			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
 				elif msg_is_update and (ts := self.discord.flake_parse(m.id)) < (
-						time.time() - self.conf._discord_user_mention_cache_timeout * 2 ):
+						time.time() - self.conf._discord_media_info_timeout ):
 					return self.log.debug( 'Ignoring no-author update'
 						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
@@ -3007,13 +3009,18 @@ class DiscordSession:
 		tags, mt, mtc = dict(), m.get('type', ''), self.c_msg_type
 		line, author = (m.get('content') or '').strip(), m.get('author', dict())
 		line = line.replace('\u200b', '') # unicode zero-width-space junk
+
 		if not mt:
 			if author.get('bot'): # bots adding/removing media-info annotations
 				if m.get('embeds'): mt, tags['_bot-media-info'] = None, True
 				elif is_update and not line: mt = None
 			# Attachments added/removed on earlier msg w/o type/author info
+			# Sometimes identical updates like this get spammed every hour, not sure why
 			if is_update and not set(m).difference([
-					'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ]): mt = None
+					'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ]):
+				mt, ts = None, self.discord.flake_parse(m.get('id'))
+				if ts < time.time() - self.conf._discord_media_info_timeout: return '', dict()
+
 		if mt is not None:
 			try: mt = mtc(int(mt))
 			except ValueError:
