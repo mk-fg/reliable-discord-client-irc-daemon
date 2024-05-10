@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.05.0' # git-version: py-str
+	version = '24.05.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -278,7 +278,7 @@ class RDIRCDConfigBase:
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
-doc_control_chan_cmds = '''
+doc_control_chan_cmds = r'''
 Commands:
   status - [alias: st] show whether discord is connected and working.
   connect - [alias: on] connect/login to discord.
@@ -3290,7 +3290,7 @@ class RDIRCD:
 		self.uptime_ts = time.monotonic()
 		self.uptime_dt = dt.datetime.now().astimezone()
 		self.server_ver = self.conf.version
-		self.server_ts = dt.datetime.utcnow()
+		self.server_ts = dt.datetime.now(dt.UTC)
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
@@ -4482,7 +4482,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		sec_re, sec_k = re.compile(r'(?i)^\[\s*(\S+)\s*\]$'), str_norm(section)
 		src.seek(0)
 		offsets, parse = dict(), False
-		val_re = re.compile(b'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
+		val_re = re.compile(br'^\s*([\w\d]\S+)\s*=\s*(\S+)\s*$')
 		for line in iter(src.readline, b''):
 			if m := sec_re.search(line.decode().strip()):
 				if sec_k == str_norm(m.group(1)): parse = True
