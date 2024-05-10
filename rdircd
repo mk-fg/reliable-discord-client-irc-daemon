@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.04.4' # git-version: py-str
+	version = '24.05.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1521,8 +1521,10 @@ class IRCProtocol:
 			self.cmd_msg_self('\n'.join([ '--- /who command usage:',
 				'/who #123456 - find/describe channel with id=123456.',
 				'/who %123456 - server/guild id lookup.', '/who @123456 - user id lookup.',
-				'/who @John·Smith - user lookup by IRC nick.', '--- /who info end' ]))
-		elif name[0] == '@' or re.search(r'^[#%]\d+$', name):
+				'/who @John·Smith - user lookup by IRC nick.',
+				'/who *665560022562111489 - translate discord snowflake-id to date/time.',
+				'--- /who info end' ]))
+		elif name[0] == '@' or re.search(r'^[#%*]\d+$', name):
 			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[0], name[1:]))
 		else:
 			if conn := self.bridge.cmd_conn_map().get(name):
@@ -3518,8 +3520,15 @@ class RDIRCD:
 			raise
 
 	async def irc_cmd_info(self, conn, t, id_str):
-		info, t = None, {'#': 'channels', '@': 'users', '%': 'guilds'}[t]
-		if t == 'users' and not id_str.isdigit():
+		info, t = None, {'#': 'channels', '@': 'users', '%': 'guilds', '*': 'snowflake'}[t]
+		if t == 'snowflake':
+			if ts := self.discord.flake_parse(id_str):
+				ts_dt = ts_iso8601(ts, human=True, short=True)
+				ts_rel = repr_duration(ts, time.time())
+				info = f'Date/time: {ts_dt} [{ts_rel}]'
+			else: info = 'Error: unrecognized snowflake format'
+			id_str = f'{t}/{id_str}'
+		elif t == 'users' and not id_str.isdigit():
 			nick, nick_irc = id_str, self.irc_name_revert(id_str)
 			gids = list(gid for gid in self.discord.st.guilds if gid != 1) # skip "me" non-guild
 			info = await self._irc_cmd_query_username(id_str, gids)
