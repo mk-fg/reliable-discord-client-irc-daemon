@@ -62,7 +62,6 @@ Table of Contents
 
 
 <a name=hdr-description></a>
-<a name=user-content-hdr-description></a>
 ## Description
 
 rdircd is a daemon that allows using a personal [Discord] account through an [IRC] client.
@@ -95,7 +94,6 @@ Last one has git-notes with todo list and such at the default ref for those.
 
 
 <a name=hdr-warning></a>
-<a name=user-content-hdr-warning></a>
 ## WARNING
 
 While I wouldn't call this app a "bot" or "automating standard user accounts" -
@@ -118,7 +116,6 @@ You have been warned! :)
 
 
 <a name=hdr-features></a>
-<a name=user-content-hdr-features></a>
 ## Features
 
 - Reliable outgoing message ordering and delivery, with explicit notifications
@@ -173,7 +170,6 @@ You have been warned! :)
 
 
 <a name=hdr-limitations></a>
-<a name=user-content-hdr-limitations></a>
 ## Limitations
 
 - Only user mentions sent from IRC are translated into discord tags
@@ -226,18 +222,15 @@ You have been warned! :)
 
 
 <a name=hdr-usage></a>
-<a name=user-content-hdr-usage></a>
 ## Usage
 
 <a name=hdr-requirements></a>
-<a name=user-content-hdr-requirements></a>
 ### Requirements
 
 * [Python 3.8+](http://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 
 <a name=hdr-installation></a>
-<a name=user-content-hdr-installation></a>
 ### Installation
 
 Simplest way might be to use package for/from your linux distribution, if it is available.
@@ -319,7 +312,6 @@ Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 [rdircd.service]: rdircd.service
 
 <a name=hdr-setup_and_actual_usage></a>
-<a name=user-content-hdr-setup_and_actual_usage></a>
 ### Setup and actual usage
 
 Create configuration file with discord and ircd auth credentials in ~/.rdircd.ini
@@ -408,14 +400,12 @@ and more on particular uses of those below.
 
 
 <a name=hdr-misc_feature_info></a>
-<a name=user-content-hdr-misc_feature_info></a>
 ## Misc Feature Info
 
 Notes on various optional and less obvious features are collected here.\
 See "Usage" section for a more general information.
 
 <a name=hdr-multiple_config_files></a>
-<a name=user-content-hdr-multiple_config_files></a>
 ### Multiple Config Files
 
 Multiple ini files can be specified with `-c` option, overriding each other in sequence.
@@ -439,14 +429,12 @@ Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
 
 <a name=hdr-channel_commands></a>
-<a name=user-content-hdr-channel_commands></a>
 ### Channel Commands
 
 In special channels like #rdircd.control and #rdircd.debug: send "h" or "help".\
 All discord channels - send "/t" or "/topic".
 
 <a name=hdr-_rdircd.monitor_and_rdircd.leftover_channels></a>
-<a name=user-content-hdr-_rdircd.monitor_and_rdircd.leftover_channels></a>
 ### #rdircd.monitor and #rdircd.leftover channels
 
 #rdircd.monitor can be used to see activity from all connected servers -
@@ -511,7 +499,6 @@ There are also options to change name format of monitor channels.
 ["./rdircd --conf-dump-defaults" output]: rdircd.defaults.ini
 
 <a name=hdr-people_s_names_on_discord></a>
-<a name=user-content-hdr-people_s_names_on_discord></a>
 ### People's names on discord
 
 On IRC, everyone has one name, but that's [not the case with Discord],
@@ -552,7 +539,6 @@ name on that specific discord, while `/who` command searches all joined discords
   https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
 
 <a name=hdr-local_name_aliases></a>
-<a name=user-content-hdr-local_name_aliases></a>
 ### Local Name Aliases
 
 (more like "renames" than "aliases", as old names don't continue to work for these)
@@ -623,7 +609,6 @@ catch-all for all messages in that discord, without default long #rdircd.monitor
   https://docs.python.org/3/library/string.html#format-string-syntax
 
 <a name=hdr-private_messages_and_friends></a>
-<a name=user-content-hdr-private_messages_and_friends></a>
 ### Private messages and friends
 
 Discord private messages create and get posted to channels in "me" server/guild,
@@ -641,7 +626,6 @@ See also [Auto-joining channels] section below for an easy way to pop-up
 new private chats in the IRC client via invites.
 
 <a name=hdr-discord_channel_threads___forums></a>
-<a name=user-content-hdr-discord_channel_threads___forums></a>
 ### Discord channel threads / forums
 
 "Threads" is a Discord feature, allowing non-admin users to create transient
@@ -683,7 +667,6 @@ there should do that automatically.
 [see --conf-dump-defaults output]: rdircd.defaults.ini
 
 <a name=hdr-auto-joining_channels></a>
-<a name=user-content-hdr-auto-joining_channels></a>
 ### Auto-joining channels
 
 "chan-auto-join-re" setting in \[irc\] section allows to specify regexp to match
@@ -711,7 +694,6 @@ for specific discords or channels.
   https://docs.python.org/3/library/re.html#regular-expression-syntax
 
 <a name=hdr-discord_user_mentions></a>
-<a name=user-content-hdr-discord_user_mentions></a>
 ### Discord user mentions
 
 These are `@username` tags on discord, designed to alert someone to direct-ish message.
@@ -781,7 +763,6 @@ by channel, and are not intended to be pre-fetched by the client, only queried
 for completions or visible parts, which doesn't map well to irc, hence all this magic.
 
 <a name=hdr-quick_edits_deletes_for_just-sent_messages></a>
-<a name=user-content-hdr-quick_edits_deletes_for_just-sent_messages></a>
 ### Quick edits/deletes for just-sent messages
 
 Similar to [Discord user mentions] above, there's a special regexp-option that
@@ -828,7 +809,6 @@ only tracks last one for easy quick follow-up oops-fixes, nothing more than that
 [PCRE-like]: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
 
 <a name=hdr-_silent_messages_and_other_such_flags></a>
-<a name=user-content-hdr-_silent_messages_and_other_such_flags></a>
 ### @silent messages and other such flags
 
 Somewhat similar to quick edits/deletes above, "msg-flag-silent-re" option is
@@ -839,7 +819,6 @@ That and similar message flags on incoming messages are not represented
 in any way, as they don't seem to be relevant for an irc client anyway.
 
 <a name=hdr-custom_replacements_blocks_in_outgoing_m.NzCf></a>
-<a name=user-content-hdr-custom_replacements_blocks_in_outgoing_m.NzCf></a>
 ### Custom replacements/blocks in outgoing messages
 
 Config can have a \[send-replacements\] section to block or regexp-replace
@@ -882,7 +861,6 @@ like @username that can normally be typed in messages can be used there too.
 [re.sub()]: https://docs.python.org/3/library/re.html#re.sub
 
 <a name=hdr-custom_filtering_for_all_received_messages></a>
-<a name=user-content-hdr-custom_filtering_for_all_received_messages></a>
 ### Custom filtering for all received messages
 
 If you join #rdircd.monitor channel, see - for example - a message like this:
@@ -959,12 +937,10 @@ like in last examples is seldom useful, but might still be simpler than
 expressing arbitrary ordering or negation in regexps.
 
 [last example on regex101.com]: https://regex101.com/r/VMvyfS/2
-[here's a link to nice tutorial on those]:
-  https://github.com/ziishaned/learn-regex
+[here's a link to nice tutorial on those]: https://github.com/ziishaned/learn-regex
 [python re syntax]: https://docs.python.org/3/howto/regex.html
 
 <a name=hdr-lookup_discord_ids></a>
-<a name=user-content-hdr-lookup_discord_ids></a>
 ### Lookup Discord IDs
 
 Mostly useful for debugging - `/who` command can resolve specified ID
@@ -1000,7 +976,6 @@ lookup is made, which can return matches in any type of discord name(s)
 (see [People's names on discord] for more info on those).
 
 <a name=hdr-channel_name_disambiguation></a>
-<a name=user-content-hdr-channel_name_disambiguation></a>
 ### Channel name disambiguation
 
 Discord name translation is "mostly" deterministic due to one exception -
@@ -1019,7 +994,6 @@ to reflect that old-name channel is no longer useful, and posting msgs
 there should emit immediate warnings about it.
 
 <a name=hdr-osc_8_hyperlinks_for_terminal_irc_clients></a>
-<a name=user-content-hdr-osc_8_hyperlinks_for_terminal_irc_clients></a>
 ### OSC 8 hyperlinks for terminal IRC clients
 
 Discord CDN URLs for attachments can end up being quite long with
@@ -1051,7 +1025,6 @@ escape characters to use, and such customization.
   https://cdn.discordapp.com/attachments/1183893786254905414/1206216641877377024/20240211_My_Cat_Photo.jpg?ex=65db33c9&is=65c8bec9&hm=9c1dbecbfb2f9edf2302ec078f5e62fffa7f8c2f32e5cd6e3563ae25d8a356e1&
 
 <a name=hdr-voice_chat_activity_notifications></a>
-<a name=user-content-hdr-voice_chat_activity_notifications></a>
 ### Voice chat activity notifications
 
 Discord has voice channels, where in addition to text people can talk verbally,
@@ -1082,7 +1055,6 @@ in #rdircd.control or \[unmonitor\] in ini config(s).
 ["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
 
 <a name=hdr-highlight_on_incoming_private_messages></a>
-<a name=user-content-hdr-highlight_on_incoming_private_messages></a>
 ### Highlight on incoming private messages
 
 IRC convention is to treat mention of a nickname as a "highlight" - a more
@@ -1111,7 +1083,6 @@ if `prefix-all-private` doesn't go far enough.
 [auto-joining channels]: #hdr-auto-joining_channels
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
-<a name=user-content-hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection
 
 This should happen by default when discord gateway responds with op=9
@@ -1131,7 +1102,6 @@ If auth data is supposed to be correct, can be fixed by setting
 which will force client to keep reconnecting regardless.
 
 <a name=hdr-captcha-solving_is_required_to_login_for.ls9P></a>
-<a name=user-content-hdr-captcha-solving_is_required_to_login_for.ls9P></a>
 ### Captcha-solving is required to login for some reason
 
 Don't know why or when it happens, but was reported by some users in this and
@@ -1163,7 +1133,6 @@ Never encountered this problem myself so far.
 [issue-1]: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
 
 <a name=hdr-almost_every_message_i_see_are_reacts_by.0z4N></a>
-<a name=user-content-hdr-almost_every_message_i_see_are_reacts_by.0z4N></a>
 ### Almost every message I see are reacts by people :(
 
 There is [an ini file option] for this:
@@ -1184,7 +1153,6 @@ There's a bunch of other similar tweaks that can be useful in there too.
 [an ini file option]: rdircd.defaults.ini
 
 <a name=hdr-debugging_anything_strange_unknown_or_un.NQDm></a>
-<a name=user-content-hdr-debugging_anything_strange_unknown_or_un.NQDm></a>
 ### Debugging anything strange, unknown or unexpected
 
 Most likely source of that should be missing handling for some new/uncommon
@@ -1274,13 +1242,11 @@ or maybe give an idea where to look at for fixing or working around these.
 
 
 <a name=hdr-random_tips_and_tricks></a>
-<a name=user-content-hdr-random_tips_and_tricks></a>
 ## Random tips and tricks
 
 Some cool configurations mentioned in #rdircd on IRC and such.
 
 <a name=hdr-simpler_dm_and_monitor_channel_names></a>
-<a name=user-content-hdr-simpler_dm_and_monitor_channel_names></a>
 ### Simpler DM and monitor channel names
 
 Normally rdircd uses these long strange "#rdircd.monitor" channel name
@@ -1327,7 +1293,6 @@ but once you know what all these channels are for, can easily rename
 them to something shorter/nicer and more convenient for yourself.
 
 <a name=hdr-change_message_edit_embed_attachment_pre.xxnp></a>
-<a name=user-content-hdr-change_message_edit_embed_attachment_pre.xxnp></a>
 ### Change message edit/embed/attachment prefixes to shorter emojis
 
 When message is edited, you normally get something like `[edit] new msg text`,
@@ -1353,7 +1318,6 @@ to configure and tweak this stuff on-the-fly (or `-s/--save` into config too).
 
 
 <a name=hdr-links></a>
-<a name=user-content-hdr-links></a>
 ## Links
 
 There is a good and well-maintained list of alternative clients here:
@@ -1368,7 +1332,6 @@ and dedicated lists like that are probably best way to discover those.
 
 
 <a name=hdr-more_info_on_third-party_client_blocking></a>
-<a name=user-content-hdr-more_info_on_third-party_client_blocking></a>
 ## More info on third-party client blocking
 
 As mentioned in the "WARNING" section above, [Bot vs User Accounts]
@@ -1492,7 +1455,6 @@ without explicit indication.
 
 
 <a name=hdr-api_and_implementation_notes></a>
-<a name=user-content-hdr-api_and_implementation_notes></a>
 ## API and Implementation Notes
 
 Note: only using this API here, only going by public info, can be wrong,
