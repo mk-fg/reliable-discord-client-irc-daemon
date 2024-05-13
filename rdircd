@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.05.1' # git-version: py-str
+	version = '24.05.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3290,7 +3290,7 @@ class RDIRCD:
 		self.uptime_ts = time.monotonic()
 		self.uptime_dt = dt.datetime.now().astimezone()
 		self.server_ver = self.conf.version
-		self.server_ts = dt.datetime.now(dt.UTC)
+		self.server_ts = dt.datetime.now(dt.timezone.utc)
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
