@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.05.3' # git-version: py-str
+	version = '24.05.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2982,13 +2982,14 @@ class DiscordSession:
 					lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 				else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
-			if emt == 'video':
-				host = em.get('provider', dict()).get('name')
+			if emt in ['video', 'gifv']:
+				host = (em.get('provider') or dict()).get('name')
 				info = ' :: '.join(filter(None, ( ['-clip-', title, desc]
 					if host == 'YouTube' and not em_src else [em_src, title or desc] )))
+				if not info: info = (em.get('video') or dict()).get('url') or em.get('url')
 				if info:
 					host = '' if not host else f' ({host})'
-					lines.append(f'Video{host} :: {info}')
+					lines.append(f'{emt.title()}{host} :: {info}')
 			elif emt == 'image' and (url := em.get('url')):
 				if ( re.match(r'https?://(.*\.)?discord(app)?\.com/emojis/', url)
 						and (emoji := dict(up.parse_qsl(up.urlparse(url).query)).get('name')) ):
