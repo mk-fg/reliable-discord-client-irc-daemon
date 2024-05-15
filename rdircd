@@ -2,10 +2,10 @@
 
 import itertools as it, operator as op, functools as ft
 import contextlib as cl, datetime as dt, pathlib as pl
-import collections as cs, collections.abc as cs_abc
+import collections as cs, collections.abc as cs_abc, urllib.parse as up
 import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
-import pickle, hashlib, base64, random, unicodedata, string, ast, urllib.parse
+import pickle, hashlib, base64, random, unicodedata, string, ast
 import logging, logging.handlers
 
 import aiohttp
@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.05.2' # git-version: py-str
+	version = '24.05.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -189,6 +189,8 @@ class RDIRCDConfigBase:
 	# Non-empty "hash" group will be hashed to short tag to tell same-name links apart.
 	discord_terminal_links_re = (
 		r'^https://cdn\.discordapp\.com/attachments/(?P<hash>[\d/]+/(?P<name>.+?)\?.*)' )
+	# Use links for posted emoji-images instead of long CDN URLs, if enabled.
+	discord_terminal_links_emojis = True
 	# Template for OSC 8 terminal hyperlink. Should have "url" and "name" keys in it.
 	# See also corresponding [irc] len-dont-split-re opt to avoid breaking these links in long msgs.
 	discord_terminal_links_tpl = '\x1b]8;;{url}\x1b\\{name}\x1b]8;;\x1b\\'
@@ -2115,7 +2117,7 @@ class DiscordSession:
 
 	async def req( self, url, m='get',
 			route=None, auth=True, raw=False, **kws ):
-		if not re.search(r'^https?:', url): url = urllib.parse.urljoin(self.api_url, url.lstrip('/'))
+		if not re.search(r'^https?:', url): url = up.urljoin(self.api_url, url.lstrip('/'))
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
 			'User-Agent', self.conf.discord_api_user_agent )
@@ -2217,11 +2219,11 @@ class DiscordSession:
 					self.log.info('Failed to fetch discord gateway URL: {}', err_fmt(err))
 					continue # ws_connect will fail
 				self.conf.update_file_section('discord', 'gateway')
-			parts = adict(urllib.parse.urlsplit(self.conf.discord_gateway)._asdict())
-			query = urllib.parse.parse_qs(parts.query)
+			parts = adict(up.urlsplit(self.conf.discord_gateway)._asdict())
+			query = up.parse_qs(parts.query)
 			query.update(v=str(self.api_ver), encoding='json', compress='zlib-stream')
-			parts.query = urllib.parse.urlencode(query)
-			ws_url = urllib.parse.urlunsplit(tuple(parts.values()))
+			parts.query = up.urlencode(query)
+			ws_url = up.urlunsplit(tuple(parts.values()))
 			self.log_ws.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
 			self.state('connecting.ws')
 			try:
@@ -2987,6 +2989,14 @@ class DiscordSession:
 				if info:
 					host = '' if not host else f' ({host})'
 					lines.append(f'Video{host} :: {info}')
+			elif emt == 'image' and (url := em.get('url')):
+				if ( re.match(r'https?://(.*\.)?discord(app)?\.com/emojis/', url)
+						and (emoji := dict(up.parse_qsl(up.urlparse(url).query)).get('name')) ):
+					if self.conf.discord_terminal_links and self.conf.discord_terminal_links_emojis:
+						emoji = self.conf.discord_terminal_links_tpl.format(url=url, name=emoji)
+					else: emoji = f'{emoji} :: {url}'
+					lines.append(f'Emoji :: {emoji}')
+				else: lines.append(f'Image :: {url}')
 			elif emt in ['article', 'link']: lines.append(f'{emt.title()} :: ' + (
 				' :: '.join(filter(None, [title, desc])) or em.get('url', '') or '-no-useful-info-' ))
 			if meta_add or force_meta:
