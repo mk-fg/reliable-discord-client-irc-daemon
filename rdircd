@@ -20,7 +20,7 @@ class RDIRCDConfigBase:
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 
-	version = '24.05.4' # git-version: py-str
+	version = '24.05.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3029,7 +3029,7 @@ class DiscordSession:
 				elif is_update and not line: mt = None
 			# Attachments added/removed on earlier msg w/o type/author info
 			# Sometimes identical updates like this get spammed every hour, not sure why
-			if is_update and not set(m).difference([
+			if is_update and not set(k for k, v in m.items() if v).difference([
 					'id', 'guild_id', 'channel_id', 'attachments', 'embeds' ]):
 				mt, ts = None, self.discord.flake_parse(m.get('id'))
 				if ts < time.time() - self.conf._discord_media_info_timeout: return '', dict()

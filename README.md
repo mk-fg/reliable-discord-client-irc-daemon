@@ -39,7 +39,7 @@ Table of Contents
 
 - [Random tips and tricks](#hdr-random_tips_and_tricks)
 
-    - [Simplier DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
+    - [Simpler DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
     - [Change message edit/embed/attachment prefixes to shorter emojis]
 
 - [Links]
