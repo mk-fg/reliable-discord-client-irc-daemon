@@ -21,9 +21,10 @@ class RDIRCDConfigBase:
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
 	# "<xyz>-tbf" rate-limits are token-bucket specs in "interval[/rate][:burst]" format,
 	#  where "interval[/rate]" part can be just interval in seconds (integer or real number),
-	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30.
+	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
+	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.05.8' # git-version: py-str
+	version = '24.05.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -736,7 +737,8 @@ def token_bucket(spec, negative_tokens=False):
 		Expects a number of tokens (can be float, def=1),
 			and subtracts these, borrowing below zero with negative_tokens set.
 		Yields either None if there's enough tokens
-			or delay (in seconds, float) until when there will be.'''
+			or delay (in seconds, float) until when there will be.
+		Simple "0" value means "always None", or "inf" for "infinite delays".'''
 	try:
 		try: interval, burst = spec.rsplit(':', 1)
 		except (ValueError, AttributeError): interval, burst = spec, 1.0
@@ -747,6 +749,10 @@ def token_bucket(spec, negative_tokens=False):
 			else: interval = float(a) / float(b)
 		if min(interval, burst) < 0: raise ValueError
 	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
+	if interval <= 0:
+		while True: yield None
+	elif interval == math.inf:
+		while True: yield 2**31 # safe "infinite delay" value
 	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
 	val = (yield) or 1
 	while True:
