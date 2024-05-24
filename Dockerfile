@@ -1,4 +1,4 @@
-ARG ALPINE_TAG=3.18
+ARG ALPINE_TAG=3.20
 FROM alpine:${ALPINE_TAG}
 
 LABEL \
@@ -9,6 +9,7 @@ LABEL \
 
 RUN apk add --no-cache python3 py3-aiohttp
 
+# See README.docker-permissions.md doc for a common "Permission denied" issue due to these
 ARG UID=55373
 ARG GID=55373
 

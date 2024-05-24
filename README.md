@@ -230,6 +230,7 @@ You have been warned! :)
 * [Python 3.8+](http://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 
+
 <a name=hdr-installation></a>
 ### Installation
 
@@ -240,7 +241,8 @@ Currently known distro packages (as of 2020-05-17):
 - Arch Linux (AUR): <https://aur.archlinux.org/packages/rdircd-git/>
 
 There's also a [Dockerfile] and [docker-compose.yml] for running this
-in a docker/podman or some other OCI-compatible containerized environment.
+in a docker/podman or some other OCI-compatible containerized environment.\
+(see also [README.docker-permissions.md] doc for common problem with those)
 
 Should be easy to install one script and its few dependencies manually as well,
 as described in the rest of this section below.
@@ -309,7 +311,9 @@ Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
 [Dockerfile]: Dockerfile
 [docker-compose.yml]: docker-compose.yml
+[README.docker-permissions.md]: README.docker-permissions.md
 [rdircd.service]: rdircd.service
+
 
 <a name=hdr-setup_and_actual_usage></a>
 ### Setup and actual usage

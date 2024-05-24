@@ -23,16 +23,18 @@ services:
     ports: [127.0.0.1:6667:6667]
 
     volumes:
+      # See README.docker-permissions.md doc for a common "Permission denied" with those.
+
       # This will auto-create and mount volume dir from /var/lib/docker/volumes
       # You'd need to create/edit config.ini file there, which --conf-init passed
       #  via "command:" below will create with defaults (if it's not there already).
       - config:/config
 
       # Alternative - pass through any local dir, e.g. "conf" dir next to this file.
-      # If you use line below, then
-      #  (A) use it instead of "config:/config" volume above, not both at the same time
-      #  (B) make sure to mkdir and chown this local "conf" dir accordingly,
-      #    for example (as a local user): sudo install -Dm0770 -u $SUDO_UID -g55373 -d conf
+      # If you use line below, then:
+      #  (A) Use it instead of "config:/config" volume above, not both at the same time.
+      #  (B) Make sure to mkdir and chown this local "conf" dir accordingly,
+      #    for example (as a local user): sudo install -m770 -u $SUDO_UID -g55373 -d conf
       # uid/gid access will be different from Dockerfile if docker userns remapping is enabled.
       #- ./conf:/config
 
