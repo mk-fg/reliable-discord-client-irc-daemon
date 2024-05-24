@@ -27,8 +27,13 @@ services:
       # You'd need to create/edit config.ini file there, which --conf-init passed
       #  via "command:" below will create with defaults (if it's not there already).
       - config:/config
+
       # Alternative - pass through any local dir, e.g. "conf" dir next to this file.
-      # Permissions on files can be tricky if docker userns remapping is enabled.
+      # If you use line below, then
+      #  (A) use it instead of "config:/config" volume above, not both at the same time
+      #  (B) make sure to mkdir and chown this local "conf" dir accordingly,
+      #    for example (as a local user): sudo install -Dm0770 -u $SUDO_UID -g55373 -d conf
+      # uid/gid access will be different from Dockerfile if docker userns remapping is enabled.
       #- ./conf:/config
 
     # This option will create config.ini file on first run and exit with info-message.
