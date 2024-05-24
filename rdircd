@@ -19,8 +19,11 @@ class RDIRCDConfigBase:
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# Values starting with spaces/tabs should be prefixed
 	#  with a backslash too. Example: prefix-guild-event = \ - ev
+	# "<xyz>-tbf" rate-limits are token-bucket specs in "interval[/rate][:burst]" format,
+	#  where "interval[/rate]" part can be just interval in seconds (integer or real number),
+	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30.
 
-	version = '24.05.6' # git-version: py-str
+	version = '24.05.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -114,7 +117,7 @@ class RDIRCDConfigBase:
 	discord_ws_reconnect_min = '70s'
 	discord_ws_reconnect_max = '12min'
 	discord_ws_reconnect_factor = 1.6
-	discord_ws_reconnect_warn = '1800:6' # to filter-out expected reconnects
+	discord_ws_reconnect_warn_tbf = '1800:6' # rate-limit to filter-out expected reconnects
 	discord_ws_reconnect_warn_max_delay = True # log warnings when reconnects reached max delay
 	discord_ws_reconnect_warn_always = False # log warning with session info on every reconnect
 	discord_ws_reconnect_on_auth_fail = False # useful for discord service disruptions
@@ -250,7 +253,10 @@ class RDIRCDConfigBase:
 	_conf_sections_old = dict( # old -> new section renames
 		auth_main='auth', aliases='renames',
 		filters='unmonitor', replacements='send-replacements' )
-	_conf_sections_old_found = set()
+	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
+		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'] )
+	_conf_old_found = dict() # old -> new
+
 	# RDIRCDConfig.read_from_file also parses:
 	#   renames, send_repls, unmon_filters, recv_filters
 
@@ -739,7 +745,7 @@ def token_bucket(spec, negative_tokens=False):
 			try: a, b = interval.split('/', 1)
 			except ValueError: interval = float(interval)
 			else: interval = float(a) / float(b)
-		if min(interval, burst) < 0: raise ValueError()
+		if min(interval, burst) < 0: raise ValueError
 	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
 	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
 	val = (yield) or 1
@@ -3262,7 +3268,7 @@ class DiscordSession:
 		if not self.op_voice_st_tbf_check(cc): return
 		ev = set(k for k in 'mute deaf suppress'.split() if m.get(k))
 		ev.update(k for k in 'mute deaf video stream'.split() if m.get(f'self_{k}'))
-		if rtst := m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
+		if m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
 		if not ev: ev.add('voice')
 		ev, nick = ' '.join(sorted(ev)), self.discord.user_name(m, fallback='') or None
 		cc.vc_active, cc.vc_ts = True, ts
@@ -4282,9 +4288,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
-		for k in set([k, k.replace('-', '_'), k.replace('_', '-')]):
+		k_old = list(it.chain.from_iterable(
+			(ko, ko.replace('_', '-')) for ko in self._conf_keys_old.get(conf_k) or list() ))
+		for k in [k, k.replace('-', '_'), k.replace('_', '-')] + k_old:
 			try:
 				self.set(conf_k, func(section_old or section, k))
+				if k in k_old: self._conf_old_found[k] = conf_k
 				return True
 			except configparser.NoSectionError: pass
 			except configparser.NoOptionError: pass
@@ -4334,13 +4343,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		conf_file.read(conf_paths)
 
 		self._conf_path = conf_paths[-1] # one to update via set and state stuff
-		self._conf_sections_old_found.clear()
+		self._conf_old_found.clear()
 		for k, k_new in list(self._conf_sections_old.items()):
 			if k_new not in self._conf_sections: continue # special sections
 			if self.update_from_file_section(
 					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
 				# Warnings will be issued for existing keys after logging is configured later
-				self._conf_sections_old_found.add(k)
+				self._conf_old_found.add(k)
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 		self.read(conf_file.getboolean, 'state', 'tracked')
@@ -4351,16 +4360,16 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				self.state[k] = parse_iso8601(v)
 
 		self.renames.clear()
-		for new, sk in enumerate(['aliases', 'renames']):
+		for new, sk in enumerate(['aliases', sk_new := 'renames']):
 			if not conf_file.has_section(sk): continue
-			if not new: self._conf_sections_old_found.add(sk)
+			if not new: self._conf_old_found[sk] = sk_new
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 
 		self.send_repls.clear()
-		for new, sk in enumerate(['replacements', 'send-replacements']):
+		for new, sk in enumerate(['replacements', sk_new := 'send-replacements']):
 			if not conf_file.has_section(sk): continue
-			if not new: self._conf_sections_old_found.add(sk)
+			if not new: self._conf_old_found[sk] = sk_new
 			val_conv = self.opt_to_val_func(str)
 			for k, v in conf_file[sk].items():
 				repl = self.make_send_repl(k, val_conv(v or ''))
@@ -4368,7 +4377,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 		self.unmon_filters.clear(); filters_old = dict()
 		if conf_file.has_section('filters'): # deprecated section
-			self._conf_sections_old_found.add('filters')
+			self._conf_old_found['filters'] = 'unmonitor'
 			for v in conf_file['filters'].keys():
 				if '[' in v:
 					v_new = f're:^{re.escape(v)}'
@@ -4789,11 +4798,12 @@ def main(args=None, conf=None):
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb)) )
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
-	for k_old, k_new in conf._conf_sections_old.items():
-		if k_old not in conf._conf_sections_old_found: continue
+	for k_old, k_new in conf._conf_old_found.items():
+		if k_old in conf._conf_sections_old: kt, k_old = 'section', repr(k_old)
+		else: kt, k_old = 'value', f'[{k_new.split("_", 1)[0]}] {k_old!r}'
 		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
-		log.warning( 'Old and deprecated section'
-			' in config file(s) - {!r} - replace it with {!r}', k_old, k_new )
+		log.warning( 'Old and deprecated {} in config'
+			' file(s) - {} - replace it with {!r}', kt, k_old, k_new )
 
 	if conf.irc_password:
 		if conf.irc_password_hash:
