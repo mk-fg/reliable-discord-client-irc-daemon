@@ -23,7 +23,7 @@ class RDIRCDConfigBase:
 	#  where "interval[/rate]" part can be just interval in seconds (integer or real number),
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30.
 
-	version = '24.05.7' # git-version: py-str
+	version = '24.05.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -733,10 +733,10 @@ def file_tail(p, n, grep=None, bs=100 * 2**10):
 def token_bucket(spec, negative_tokens=False):
 	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
 			Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
-		Expects a number of tokens (can be float, default: 1)
-			and *always* subtracts these.
-		Yields either None if there's enough
-			tokens or delay (in seconds, float) until when there will be.'''
+		Expects a number of tokens (can be float, def=1),
+			and subtracts these, borrowing below zero with negative_tokens set.
+		Yields either None if there's enough tokens
+			or delay (in seconds, float) until when there will be.'''
 	try:
 		try: interval, burst = spec.rsplit(':', 1)
 		except (ValueError, AttributeError): interval, burst = spec, 1.0
@@ -746,7 +746,7 @@ def token_bucket(spec, negative_tokens=False):
 			except ValueError: interval = float(interval)
 			else: interval = float(a) / float(b)
 		if min(interval, burst) < 0: raise ValueError
-	except: raise ValueError('Invalid format for rate-limit: {!r}'.format(spec))
+	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
 	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
 	val = (yield) or 1
 	while True:
@@ -4229,6 +4229,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		k = k.replace('-', '_')
 		k_conv, v_conv = f'_{k}', getattr(self, f'_conv_{k}', None)
 		if v_conv: setattr(self, k_conv, v_conv(v))
+		if k.endswith('_tbf'): # test token-bucket spec here to report format errors
+			try: tbf = token_bucket(v); next(tbf); next(tbf)
+			except: raise RDIRCDError(f'Invalid token-bucket rate-limit spec [ {k} ]: {v}')
 		setattr(self, k, v)
 
 	def val_to_opt(self, v):
