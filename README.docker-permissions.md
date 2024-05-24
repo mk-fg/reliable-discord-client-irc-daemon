@@ -7,12 +7,13 @@ Failed to create initial configuration file [ config.ini ]:
   [PermissionError] [Errno 13] Permission denied: 'config.ini'
 ```
 
-Unfortunately it's somewhat complicated, and I don't know good-and-easy fix for this.\
+Unfortunately it's somewhat complicated, and I don't know a good-and-easy fix for this.\
 This small document tries to explain what the issue is and how to address it.
 
 Docker has complicated relationship with user/group permissions on its "volume"
 directories, which exist on host, but need to be accessible to its containers,
-with user/group values (or uid/gid - same thing) that are configured in those.
+with user/group values (or uid/gid - same thing for the purposes of this document)
+that are configured in those, and don't match users/groups configured on host.
 
 Complicating matters further, docker can be configured to use uid/gid
 namespacing mode ("[userns-remap]"), which makes container see different
@@ -26,7 +27,8 @@ line in [docker-compose.yml].
 
 Again, note that those are uid/gid values *inside* the container, which can be
 different on host system if something like userns-remap mode is enabled in
-docker/podman/etc. It can be enabled by default there.
+docker/podman/etc.
+And it might be enabled there for distro/setup or by default in the future.
 
 rdircd in this docker configuration needs its volume directory to be writable,
 to create and change files in there.
@@ -38,11 +40,11 @@ slightly different - see either of the first two sections below for each:
 - [With default `config:/config` volume spec]
 - [When using e.g `./conf:/config` local directory]
 
-Common workaround for this issue in docker containers is to run root entrypoint
-wrapper script, which will chown/chmod volumes as necessary, then drop privileges
-for running the actual app, which has its own issues (like granting root privileges
-to anything in a container) and doesn't work for userns-remapping case anyhow,
-so is not used here.
+Common workaround for this quirk in docker containers is to run entrypoint
+wrapper script as root, which will chown/chmod volumes as necessary,
+then drop privileges for running the actual app, which has its own problems
+(like granting root privileges to anything in a container) and doesn't
+work for userns-remapping case anyhow, so is not used here.
 
 This is written as of early 2024 with docker 24.0.x in mind, so it's possible
 that all this is handled better by other container runtimes (e.g. [podman])
@@ -59,8 +61,8 @@ overlayfs level, so maybe also check for more modern solutions for such issues.
 <a name=hdr-if_you_re_using_default_volume_spec_in_d.9MBw></a>
 ## If you're using default `config:/config` volume spec in docker-compose.yml
 
-Then that "named docker volume" SHOULD be created by docker with correct uid/gid
-set for the container on first `docker-compose up` invocation.
+Then that "named docker volume" *should* be created by docker with correct
+uid/gid set for the container on first `docker-compose up` invocation.
 
 Then if you change these uid/gid values after that volume is already created,
 it **won't** change permissions on this volume, so either:
@@ -71,7 +73,7 @@ it **won't** change permissions on this volume, so either:
 - Run "chown" on the volume directory on the host system to correct uid/gid.
 
 If there's no userns-remap'ping involved, last option (chown to new uid/gid),
-after a failed "docker-compose up" invocation, can be done like this:
+after a failed `docker-compose up`, can be done like this:
 
 ```
 % docker-compose run -u root --entrypoint sh rdircd \
@@ -87,8 +89,10 @@ drwxr-xr-x    1 root     root        3.4K May 24 10:05 ..
 changing permissions and other metadata on the volume dir itself, and can only
 manage stuff under it)
 
-If userns remapping is enabled, command above shouldn't work, and you might need
-to use "chown" and "chmod" commands from the host system.
+If userns remapping is enabled, command above shouldn't work (with "permission
+denied" or such error), and you might need to use "chown" and "chmod" commands
+from the host system instead.
+
 See [userns-remap] documentation for more details, but quick-and-dirty way to see
 what's the uid/gid on the host in such case and do the chmod/chown like above,
 can be something like this:
@@ -108,7 +112,7 @@ root# chmod 770 /var/lib/docker/volumes/rdircd_config/_data
 root# pkill -9 -f 'sleep infinity'
 ```
 
-Maybe there's a special docker command to do this stuff
+Maybe there's some special docker command to do this stuff easier, idk.
 
 [userns-remap]: https://docs.docker.com/engine/security/userns-remap/
 
