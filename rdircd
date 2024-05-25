@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.05.9' # git-version: py-str
+	version = '24.05.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2168,16 +2168,16 @@ class DiscordSession:
 		opts = adict((k, parse_duration(
 			self.conf.get(f'discord_ws_reconnect_{k}') )) for k in ['min', 'max'] )
 		opts.factor = self.conf.discord_ws_reconnect_factor
-		reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
+		reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn_tbf)
 		interval, loop = opts.min, asyncio.get_running_loop()
 		self.log.debug('Starting ws_connect_loop...')
 		while self.ws_enabled:
 			if next(reconn_warn_tb):
 				self.log.warning( 'Reconnecting to discord faster than {},'
 						' can be persistent problem, see info/debug/protocol logs for details',
-					self.conf.discord_ws_reconnect_warn )
+					self.conf.discord_ws_reconnect_warn_tbf )
 				# Reset tbf to avoid re-issuing warning on every subsequent reconnect
-				reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn)
+				reconn_warn_tb = token_bucket(self.conf.discord_ws_reconnect_warn_tbf)
 			elif self.conf.discord_ws_reconnect_warn_max_delay and interval == opts.max:
 				self.log.warning( 'Detected persistent discord server connection failures'
 					' at max delay between attempts - there is likely some persistent problem,'
