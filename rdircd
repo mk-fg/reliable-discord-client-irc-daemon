@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.05.10' # git-version: py-str
+	version = '24.05.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -691,7 +691,7 @@ def host_uid_seed():
 	for k in '/etc/machine-id', '/var/lib/dbus/machine-id':
 		try: seed = pl.Path(k).read_text().strip(); break
 		except OSError: pass
-	return f'rdircd.{str_hash(seed)}'
+	return f'rdircd.{str_hash(seed, 25)}'
 
 
 @cl.contextmanager
@@ -4879,6 +4879,10 @@ def main(args=None, conf=None):
 		if not conf.irc_uid_seed: conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
+	if len(conf.irc_uid_seed) > 32:
+		conf.irc_uid_seed = host_uid_seed()
+		conf.update_file_section('irc', 'uid_seed')
+		log.debug('Replaced bogus >32B irc-uid-seed value in config file: {}', conf._conf_path)
 
 	def _conf_sighup_reload():
 		try: conf_paths = conf.read_from_file()
