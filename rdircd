@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.0' # git-version: py-str
+	version = '24.06.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -107,6 +107,21 @@ class RDIRCDConfigBase:
 	irc_chan_voice = 'rdircd.voice'
 	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
 	irc_chan_voice_guild = ''
+
+	# topic-*: topic templates for all channels, using python str.format templating
+	# Following template-vars are available, where they make sense,
+	#  empty strings otherwise: guild_id, guild_name, guild_prefix, chan_tags, chan_topic
+	irc_topic_control = 'rdircd: control channel, type "help" for more info'
+	irc_topic_debug = 'rdircd: debug logging channel, type "help" for more info'
+	irc_topic_monitor = 'rdircd: read-only catch-all channel with messages from everywhere'
+	irc_topic_monitor_guild = 'rdircd: [ {guild_name} ] read-only catch-all channel for discord'
+	irc_topic_leftover = ( 'rdircd: read-only channel for any'
+		' discord messages in channels that IRC client is not connected to' )
+	irc_topic_leftover_guild = ( 'rdircd: [ {guild_name} ]'
+		' read-only msgs for non-joined channels of discord' )
+	irc_topic_voice = 'rdircd: read-only voice-chat notifications from all discords/channels'
+	irc_topic_voice_guild = 'rdircd: [ {guild_name} ] read-only voice-chat events for discord'
+	irc_topic_channel = '{guild_name}: {chan_tags}{chan_topic}'
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -3297,21 +3312,7 @@ class RDIRCDError(Exception): pass
 
 class RDIRCD:
 
-	class c:
-		chan_sys_types = 'control', 'debug'
-		chan_sys_control_topic = 'rdircd: control channel, type "help" for more info'
-		chan_sys_debug_topic = 'rdircd: debug logging channel, type "help" for more info'
-		chan_monitor_topic = (
-			'rdircd: read-only catch-all channel with messages from everywhere' )
-		chan_monitor_topic_guild_tpl = 'rdircd: read-only catch-all channel for discord [ {} ]'
-		chan_leftover_topic = ( 'rdircd: read-only channel for any'
-			' discord messages in channels that IRC client is not connected to' )
-		chan_leftover_topic_guild_tpl = (
-			'rdircd: read-only msgs for non-joined channels of discord [ {} ]' )
-		chan_voice_topic = (
-			'rdircd: read-only voice-chat notifications from all discords/channels' )
-		chan_voice_topic_guild_tpl = 'rdircd: read-only voice-chat events for discord [ {} ]'
-
+	c_chan_sys_types = 'control', 'debug'
 	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc vc proxy')
 
 	def __init__(self, conf):
@@ -3724,14 +3725,19 @@ class RDIRCD:
 			for gg in sorted(self.discord.st.guilds.values(), key=op.itemgetter('ts_joined')) )
 		sys_chan_ts = self.server_ts.timestamp()
 
+		def _topic_fmt(key, gi=None, tags='', topic=''):
+			tpl = adict(guild_id='', guild_name='', chan_tags=tags, chan_topic=topic)
+			if gi: tpl.update( guild_id=gi.gg.id,
+				guild_name=gi.gg.name.strip(), guild_prefix=gi.prefix )
+			return getattr(self.conf, f'irc_topic_{key}').format(**tpl).strip()
+
 		# System debug/control channels
 		self.irc_chans_sys.clear()
-		for sys_type in self.c.chan_sys_types:
+		for sys_type in self.c_chan_sys_types:
 			name = self.conf.irc_chan_sys.format(type=sys_type)
 			self.irc_chans_sys.update({name: sys_type, f'ø_{sys_type}': name})
 			yield (name, adict( bt=self.c_bc_type.sys,
-				name=name, ts_created=self.server_ts.timestamp(),
-				topic=getattr(self.c, f'chan_sys_{sys_type}_topic') ))
+				name=name, ts_created=self.server_ts.timestamp(), topic=_topic_fmt(sys_type) ))
 
 		# Order monitor/leftover channels at the top
 		def _agg_chan(k, gi=None, _kc=dict(mon='monitor', nc='leftover', vc='voice')):
@@ -3740,8 +3746,7 @@ class RDIRCD:
 				getattr(self.conf, f'irc_chan_{kc}_guild').format(prefix=gi.prefix) )
 			getattr(self.cache, f'gid_{k}_chan')[gi and gi.gg.id] = name
 			if not name: return
-			topic = ( getattr(self.c, f'chan_{kc}_topic') if not gi else
-				getattr(self.c, f'chan_{kc}_topic_guild_tpl').format(gi.gg.name) )
+			topic = _topic_fmt(kc) if not gi else _topic_fmt(f'{kc}_guild', gi)
 			yield (name, adict( name=name, topic=topic,
 				bt=getattr(self.c_bc_type, k), ts_created=sys_chan_ts ))
 		yield from _agg_chan('mon')
@@ -3767,7 +3772,7 @@ class RDIRCD:
 				elif cc.ct is cc.ct.media: tags += '[media] '
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
-				topic = f'{gi.gg.name.strip()}: {tags}{topic}'.strip()
+				topic = _topic_fmt('channel', gi, tags=tags, topic=topic)
 				self.cache.did_chan[cc.did] = name
 				yield (name, adict(
 					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
@@ -3775,7 +3780,7 @@ class RDIRCD:
 
 
 	def cmd_chan_sys(self, sys_type, conn, chan, line):
-		if sys_type not in self.c.chan_sys_types: return
+		if sys_type not in self.c_chan_sys_types: return
 		getattr(self, f'cmd_chan_sys_{sys_type}')(conn, chan, line)
 
 	def cmd_chan_sys_log_counts(self):
@@ -4605,7 +4610,8 @@ def parse_conf_code_comments(lines):
 				if (m := re.search(r'^\w+', comm)) and m[0].istitle():
 					word1, *comm = comm.split(None, 1)
 					comm = ' '.join([word1.lower(), *comm])
-				if not comm.startswith(var): comm = f'{var}: {comm}'
+				if not comm.startswith(var) and '*' not in comm.split()[0]:
+					comm = f'{var}: {comm}'
 			comms[var] = comm
 		if comm_buffer and (not comm or var):
 			if not comms: var = '_notes'; comms[var] = '\n'.join(comm_buffer)
