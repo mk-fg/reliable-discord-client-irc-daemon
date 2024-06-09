@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.1' # git-version: py-str
+	version = '24.06.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1092,6 +1092,7 @@ class IRCProtocol:
 	def connection_made(self, tr):
 		host, port = tr.get_extra_info('peername')[:2]
 		conn_id = tuple_hash([host, port], 3)
+		self.st.ts = time.monotonic()
 		self.log_proto = get_logger(f'proto.irc.{conn_id}')
 		self.log_proto.debug( '--- -conn- {} {} {}',
 			host, port, conn_id, extra=('---', f'conn {host} {port}') )
@@ -3801,7 +3802,7 @@ class RDIRCD:
 					else ('\n' + doc_control_chan_dev_cmds) )
 				+ '\n\nOnly immediate response to sent'
 					' commands is logged here - no noise over time.' ))
-		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status())
+		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status(conn.st.ts))
 		elif cmd in ['cache-stats', 'cs']: return send(self._cmd_chan_sys_cache())
 		try:
 			if cmd in ['connect', 'on']:
@@ -3836,22 +3837,22 @@ class RDIRCD:
 			send(f'ERROR: BUG - "{cmd}" command failed: {err_fmt(err)}')
 			raise
 
-	def _cmd_chan_sys_status(self):
+	def _cmd_chan_sys_status(self, conn_ts):
 		'Implementation for status display in control-channel'
 		st, ts = self.discord.st, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
-		sess_time, conn_time = (
-			(v and repr_duration(ts, v, ext=None))
-			for v in (st.get(k, '') for k in ('session_ts', 'connect_ts')) )
-		if sess_st != 'ready': conn_time = ''
+		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=None))
+			for v in [conn_ts, *(st.get(k, '') for k in ('session_ts', 'connect_ts'))] )
+		if sess_st != 'ready': conn_td = ''
 		up_td = repr_duration(self.discord.bridge.uptime_ts, time.monotonic())
 		up_dt = self.discord.bridge.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
 		return '\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
-			f'  session-id: {sess_id}',
-			f'  session-time: {sess_time}',
-			f'  connection-time: {conn_time}',
-			f'  connection-gateway: {self.conf.discord_gateway}',
+			f'  discord-session-id: {sess_id}',
+			f'  discord-session-time: {dsess_td}',
+			f'  discord-connection-time: {dconn_td}',
+			f'  discord-connection-gateway: {self.conf.discord_gateway}',
+			f'  irc-connection-time: {irc_td}',
 			f'  rdircd-uptime: since {up_dt} ({up_td})',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ])
 
