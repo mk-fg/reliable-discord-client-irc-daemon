@@ -487,8 +487,9 @@ Channel names matched by those filters will be dropped from monitor-channels,
 so this can be used to define a list of spammy things that you don't care about
 and don't want to see even there.
 
-"unmonitor" (or "um") command in #rdircd.control can add/remove
-such filters on-the-fly anytime.
+"unmonitor" (or "um") command in #rdircd.control can add/remove such filters
+on-the-fly anytime. See also `match-counters` config option to keep track of
+whether specific rule(s) are still needed/being-used.
 
 Messages in monitor-channels are limited to specific length/lines,
 to avoid excessive flooding by long and/or multi-line msgs.
@@ -939,6 +940,9 @@ Most channels here are not relevant = ^\S+ #myc\.
 Pretty much anything can be matched with clever regexps, so CNF-logic stuff
 like in last examples is seldom useful, but might still be simpler than
 expressing arbitrary ordering or negation in regexps.
+
+See also `match-counters` config option to keep track of whether specific
+rule(s) are still needed/being-used.
 
 [last example on regex101.com]: https://regex101.com/r/VMvyfS/2
 [here's a link to nice tutorial on those]: https://github.com/ziishaned/learn-regex

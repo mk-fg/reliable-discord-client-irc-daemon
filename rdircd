@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.7' # git-version: py-str
+	version = '24.06.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -243,6 +243,15 @@ class RDIRCDConfigBase:
 	discord_voice_notify_rate_limit_tbf = '300:5'
 	discord_voice_join_left_cache_expire = '7d' # used to cleanup user-joined/left tracking info
 
+	# Timespan-counters to keep for last per-pattern matches of [unmonitor],
+	#  [send-replacements], [recv-regexp-filters] and other rules in similar config sections.
+	# Value should be a space-separated list of intervals, or a special "runtime" span.
+	# Counters for rule hits within "last N" interval are printed in control-channel rule listings.
+	# Example counter values, with a setting like this: match-counters = 2h30m 1d 2w runtime
+	#   [ rule hits: 2h30m=505 1d=46,933 2w=679,853 runtime=10,184,461 ]
+	# ...where "2h30m=505" means "505 rule hits within last 2 hours 30 minutes" and so on.
+	discord_match_counters = ''
+
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50 # message part length in debug logs
@@ -274,7 +283,7 @@ class RDIRCDConfigBase:
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'] )
 	_conf_old_found = dict() # old -> new
 
-	# RDIRCDConfig.read_from_file also parses:
+	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
 	#   renames, send_repls, unmon_filters, recv_filters
 
 	def _re_chk(key, groups, v_def=''):
@@ -1052,6 +1061,31 @@ class adict(cs.UserDict):
 	def __delitem__(self, k):
 		super().__delitem__(k)
 		self._track_check(k)
+
+class TimeSeriesBuckets:
+	'''Counts events within intervals with up to "interval / buckets" time-precision.
+		Special "runtime" bucket can be used to count all-time events.'''
+	def __init__(self, intervals='', buckets=30):
+		self.spec, self.intervals = (intervals, buckets), dict(
+			( td, adict(n=0, td=0, counts=[0]) if td.lower() == 'runtime' else
+				adict(n=0, ts=0, td=parse_duration(td) / buckets, counts=[0]*buckets) )
+			for td in intervals.split() )
+	def event(self, ts=None, count=1, intervals=None, buckets=30):
+		if not ts: ts = time.monotonic()
+		if intervals is not None and self.spec != (intervals, buckets):
+			self.__init__(intervals, buckets)
+		for data in self.intervals.values():
+			if data.td:
+				if not data.ts: data.ts = ts
+				data.ts += (shift := int((ts - data.ts) / data.td)) * data.td
+				if shift >= (nc := len(data.counts)): shift, data.counts[:] = 0, [0]*nc
+				for n in range(shift): data.n = (data.n + 1) % nc; data.counts[data.n] = 0
+			data.counts[data.n] += count
+	def get_counts(self, ts=None, **event_kws):
+		self.event(ts, count=0, **event_kws) # to shift/clear buckets if necessary
+		return dict((td, sum(data.counts)) for td, data in self.intervals.items())
+	def get_counts_str(self, *args, **kws):
+		return ' '.join(f'{k}={v:,d}' for k,v in self.get_counts(*args, **kws).items())
 
 
 def irc_casefold_rfc1459(name, _irc_rfc1459_table=dict(zip(
@@ -3643,8 +3677,12 @@ class RDIRCD:
 		if repls := self.conf.send_repls: # apply [send-replacements]
 			for s in it.chain( repls.get('*', list()),
 					repls.get(self.uid('guild', info.gg.id, kh=info.gg.get('kh')), list()) ):
-				if s.sub is not None: line = s.re.sub(s.sub, line)
-				elif s.re.search(line): raise IRCBridgeSignal(f'blocked-by-rule[{s.pre}.{s.comm}]')
+				if s.sub is not None:
+					line, n = s.re.subn(s.sub, line)
+					if n: s.tsb.event(intervals=self.conf.discord_match_counters)
+				elif s.re.search(line):
+					s.tsb.event(intervals=self.conf.discord_match_counters)
+					raise IRCBridgeSignal(f'blocked-by-rule[{s.pre}.{s.comm}]')
 		return line
 
 	async def irc_msg_queue_proc(self):
@@ -4003,7 +4041,9 @@ class RDIRCD:
 			else: break
 		else:
 			send(f'Current [{sec}] filters ({len(conf)} in total):')
-			for k, mx in conf.items(): send(f'  {k} = {mx.pat}')
+			for k, mx in conf.items():
+				send(f'  {k} = {mx.pat}')
+				if tsb := mx.tsb.get_counts_str(): send(f'    [ rule hits: {tsb} ]')
 			return
 		line = line.split(None, n)[-1]
 		if rm: key = line
@@ -4048,7 +4088,9 @@ class RDIRCD:
 		if not key:
 			send('Current replacement/block regexps:')
 			for pre_repls in repls.values():
-				for repl in pre_repls: send(f'  {repl.key} = {repl.val}')
+				for repl in pre_repls:
+					send(f'  {repl.key} = {repl.val}')
+					if tsb := repl.tsb.get_counts_str(): send(f'    [ rule hits: {tsb} ]')
 			return
 		if not rm: repl = self.conf.make_send_repl(key, line)
 		for pre_repls in repls.values():
@@ -4170,7 +4212,9 @@ class RDIRCD:
 				if n and not m: continue # skip &&-tails after mismatch
 			elif m: break # standalone match found earlier
 			op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k[1:]))
-			if m := bool(mx.rx.search(recv_msg)) ^ op_not: m = k, recv_msg
+			if m := bool(mx.rx.search(recv_msg)) ^ op_not:
+				m = k, recv_msg
+				mx.tsb.event(intervals=self.conf.discord_match_counters)
 		if not m: return
 		return self.log.debug( 'recv-regexp-filter msg-drop at'
 			' [ {} ]: {}', m[0], str_cut(m[1], self.conf.debug_msg_cut) ) or True
@@ -4248,7 +4292,8 @@ class RDIRCD:
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
 		for mx in self.conf.unmon_filters.values():
-			if mx.rx.search(name): return
+			if not mx.rx.search(name): continue
+			return mx.tsb.event(intervals=self.conf.discord_match_counters)
 		if cc.tid:
 			if ( self.conf.discord_thread_msgs_in_parent_chan
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
@@ -4328,8 +4373,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is int or isinstance(v, int): return lambda *a: int(re.sub(r'[ _]', '', conf_get(*a)))
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
-	rx_pattern_t = cs.namedtuple('regexp', 'rx pat')
-	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm')
+	rx_pattern_t = cs.namedtuple('regexp', 'rx pat tsb')
+	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm tsb')
 
 	def make_unmon_pattern(self, pat):
 		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
@@ -4338,10 +4383,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		else:
 			if rx.startswith('#'): rx = rx[1:]
 			rx = re.compile(f'^{re.escape(rx)}$', re.I)
-		return self.rx_pattern_t(rx, pat)
+		return self.rx_pattern_t(rx, pat, TimeSeriesBuckets())
 
 	def make_recv_filter(self, pat):
-		return self.rx_pattern_t(re.compile(pat, re.DOTALL), pat)
+		return self.rx_pattern_t(re.compile(pat, re.DOTALL), pat, TimeSeriesBuckets())
 
 	def make_send_repl(self, key, val):
 		try:
@@ -4353,7 +4398,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			raise ValueError(
 				'[send-replacements] pattern parsing error'
 				f' [ {key!r} = {val!r} ]: {err_fmt(err)}' )
-		return self.send_repl_t(key, val, pre, sub_re, sub, comm)
+		return self.send_repl_t(key, val, pre, sub_re, sub, comm, TimeSeriesBuckets())
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
