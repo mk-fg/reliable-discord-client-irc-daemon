@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.2' # git-version: py-str
+	version = '24.06.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -109,8 +109,8 @@ class RDIRCDConfigBase:
 	irc_chan_voice_guild = ''
 
 	# topic-*: topic templates for all channels, using python str.format templating
-	# Following template-vars are available, where they make sense,
-	#  empty strings otherwise: guild_id, guild_name, guild_prefix, chan_tags, chan_topic
+	# Following template-vars are available, where they make sense, empty strings otherwise:
+	#  guild_id, guild_name, guild_prefix, chan_id, chan_tags, chan_topic
 	irc_topic_control = 'rdircd: control channel, type "help" for more info'
 	irc_topic_debug = 'rdircd: debug logging channel, type "help" for more info'
 	irc_topic_monitor = 'rdircd: read-only catch-all channel with messages from everywhere'
@@ -3726,8 +3726,8 @@ class RDIRCD:
 			for gg in sorted(self.discord.st.guilds.values(), key=op.itemgetter('ts_joined')) )
 		sys_chan_ts = self.server_ts.timestamp()
 
-		def _topic_fmt(key, gi=None, tags='', topic=''):
-			tpl = adict(guild_id='', guild_name='', chan_tags=tags, chan_topic=topic)
+		def _topic_fmt(key, gi=None, cid='', tags='', topic=''):
+			tpl = adict(guild_id='', guild_name='', chan_id=cid, chan_tags=tags, chan_topic=topic)
 			if gi: tpl.update( guild_id=gi.gg.id,
 				guild_name=gi.gg.name.strip(), guild_prefix=gi.prefix )
 			return getattr(self.conf, f'irc_topic_{key}').format(**tpl).strip()
@@ -3773,7 +3773,7 @@ class RDIRCD:
 				elif cc.ct is cc.ct.media: tags += '[media] '
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
-				topic = _topic_fmt('channel', gi, tags=tags, topic=topic)
+				topic = _topic_fmt('channel', gi, cid=cc.id, tags=tags, topic=topic)
 				self.cache.did_chan[cc.did] = name
 				yield (name, adict(
 					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
