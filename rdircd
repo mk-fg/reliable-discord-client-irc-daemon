@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.5' # git-version: py-str
+	version = '24.06.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -179,21 +179,21 @@ class RDIRCDConfigBase:
 	discord_msg_flag_silent_re = r'^@silent(\s|$)'
 
 	# Prefix for thread-id values, used in thread-chan names
-	#   and msg prefixes if propagation from these to parent channel is enabled.
+	#  and msg prefixes if propagation from these to parent channel is enabled.
 	discord_thread_id_prefix = '='
 	# Propagates messages from threads to a parent channel,
-	#   adding thread-id prefix, through which response can be redirected as well, if enabled.
+	#  adding thread-id prefix, through which response can be redirected as well, if enabled.
 	discord_thread_msgs_in_parent_chan = True
 	# Enable to see mirrored msgs
-	#   in #rdircd.monitor channel(s) too - e.g. to have it all there as-is.
+	#  in #rdircd.monitor channel(s) too - e.g. to have it all there as-is.
 	discord_thread_msgs_in_parent_chan_monitor = False
 	# Enable to use full
 	#  chan-name prefix instead of shorter thread-id, for IRC clients with easy click-to-join.
 	discord_thread_msgs_in_parent_chan_full_prefix = False
 	# discord_thread_redirect_prefixed_responses_from_parent_chan allows to send msgs
-	#   to threads from parent channel by prepending thread-id prefix to each one of these.
+	#  to threads from parent channel by prepending thread-id prefix to each one of these.
 	# For example "=vot5 hi!" will send "hi!" msg to =vot5 thread
-	#   sub-channel only, or print an error if such thread-id is not recognized.
+	#  sub-channel only, or print an error if such thread-id is not recognized.
 	discord_thread_redirect_prefixed_responses_from_parent_chan = True
 
 	# Print info for some embedded youtube, twitter, etc links, if/when discord provides it
@@ -218,12 +218,12 @@ class RDIRCDConfigBase:
 	discord_chan_dedup_hash_len = 4 # length of id_hash part in chan-dedup-fmt
 
 	# In-memory cache(s) to "remember" messages to provide context
-	#   for various interactions with those - reactions, some bot-annotations and deletions.
+	#  for various interactions with those - reactions, some bot-annotations and deletions.
 	# Disable this option to not use such caches, and flush them if done at runtime.
 	# These caches can hold/share ref to same msgs, any cache keeping the ref will be used.
 	# This does not affect edits or replies. See also "cache-stats" in the control channel.
 	# Large cache sizes with many joined discords can use significant amount of memory,
-	#   e.g. with rough estimate around 200B per cached msg, full default ~10K cache is ~2 MiB.
+	#  e.g. with rough estimate around 200B per cached msg, full default ~10K cache is ~2 MiB.
 	discord_msg_interact_cache = True
 	discord_msg_interact_cache_hot = 1_000 # for N last-interacted-with msgs
 	discord_msg_interact_cache_shared = 10_000 # last N msgs to keep in general
@@ -234,11 +234,11 @@ class RDIRCDConfigBase:
 	# Issue notices in *.vc chans for voice-chats after inactivity.
 	# Otherwise notices are only sent when voice chat toggles between empty/non-empty.
 	# Can be set to 0 to notify about every voice event (spammy), or to e.g. 1y
-	#   (any large timespan) to notify only when voice-chat changes between empty/non-empty.
+	#  (any large timespan) to notify only when voice-chat changes between empty/non-empty.
 	discord_voice_notify_after_inactivity = '20m'
 	# Token-bucket rate limit on all voice-chat notices in vc-channel.
 	# Can be used with after-inactivity=0 to send simple
-	#   rate-limited notifications instead of tracking active/inactive state.
+	#  rate-limited notifications instead of tracking active/inactive state.
 	# Value like 300:3 means "token-bucket algorithm with rate=1/300s burst=5".
 	discord_voice_notify_rate_limit_tbf = '300:5'
 	discord_voice_join_left_cache_expire = '7d' # used to cleanup user-joined/left tracking info
@@ -262,7 +262,7 @@ class RDIRCDConfigBase:
 	debug_asyncio_logs = False # debug= value in asyncio.run()
 	debug_dev_cmds = False # enables developer-aid state-save/load cmds in control-channel
 	# Randomly segfault-crash every 1<n<2*mmts
-	#   minutes, for backwards-compatibility with various legacy C daemons :)
+	#  minutes, for backwards-compatibility with various legacy C daemons :)
 	debug_mean_minutes_to_segfault = 0.0
 
 	_conf_path = '~/.rdircd.ini'
@@ -691,17 +691,20 @@ def tuple_hash(t, c=None, key='rdircd'):
 	s = '\0'.join(str(v).replace('\0', '\0\0') for v in t)
 	return str_hash(s, c=c, key=key)
 
-def _data_hash_clean(data):
-	if isinstance(data, adict): data = dict(data)
-	if isinstance(data, dict): return dict((k,_data_hash_clean(v)) for k,v in data.items())
-	if isinstance(data, list): return list(map(_data_hash_clean, data))
+def _data_clean(data):
+	if isinstance(data, cs.UserDict): data = dict(data)
+	if isinstance(data, dict): return dict((k,_data_clean(v)) for k,v in data.items())
+	if isinstance(data, list): return list(map(_data_clean, data))
 	return data
 
 def data_hash(data, **str_hash_kws):
-	data = _data_hash_clean(data)
+	data = _data_clean(data)
 	if not isinstance(data, bytes):
 		data = json.dumps(data, sort_keys=True).encode()
 	return str_hash(data)
+
+def data_json(data):
+	return json.dumps(_data_clean(data))
 
 def host_uid_seed():
 	seed = os.uname().nodename
@@ -965,7 +968,9 @@ def iter_gather(container):
 
 
 class TimedCacheDict(cs.UserDict):
+	'dict that has values expire and get removed on timeout'
 	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
+	timeout_cleanup_slack = 1.5
 	def __init__(self, timeout, *args, **kws):
 		super().__init__(*args, **kws)
 		self.ts, self.ts_min, self.timeout = dict(), None, timeout
@@ -974,7 +979,7 @@ class TimedCacheDict(cs.UserDict):
 	def cache(self, k):
 		ts = self.ts[k] = time.monotonic()
 		if not self.ts_min: self.ts_min = ts; return
-		elif ts - self.ts_min <= self.timeout: return
+		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return
 		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
 			if ts - ts0 > self.timeout:
 				self.pop(k, None); self.ts.pop(k, None); continue
@@ -1694,7 +1699,7 @@ class Discord:
 				self.conf._discord_name_preference_order = list(v for v in vs if v != k)
 		else: name = username or f'@{uid or fallback}'
 		if name.isdigit(): name += '´' # avoid digit-only names to not confuse with raw IDs
-		return name
+		return name.encode('utf-8', 'replace').decode() # remove surrogate junk, if any
 
 	online = False
 	def cmd_online_state(self, st):
@@ -3314,12 +3319,17 @@ class DiscordSession:
 
 	def op_voice_st_user(self, m):
 		if not (gg := self.st.guilds.get(m.get('guild_id', 1))): return
+
 		ev, vcs, user_id = set(), gg.get('vcs', dict()), gg.get('user_id')
 		if not (cc := gg.chans.get(m.get('channel_id'))): # "user left" event
 			if cc := gg.chans.get(vcs.pop(user_id, None)): ev.add('user-left')
 			else: return # can't tell where user was if wasn't cached
 		elif not vcs: vcs = gg.vcs = \
 			TimedCacheDict(self.conf._discord_voice_join_left_cache_expire)
+		cc_old, cc_old_id = None, vcs.get(user_id)
+		if cc_old_id and cc_old_id != cc.id: cc_old = gg.chans.get(cc_old_id)
+		if cc_old_id: ev.add('user-joined')
+		vcs[user_id] = cc.id
 
 		ts, td = time.monotonic(), self.conf._discord_voice_notify_after_inactivity
 		if cc.get('vc_active') and td and cc.get('vc_ts', -td) >= ts - td: return
@@ -3327,16 +3337,12 @@ class DiscordSession:
 		ev.update(k for k in 'mute deaf suppress'.split() if m.get(k))
 		ev.update(k for k in 'mute deaf video stream'.split() if m.get(f'self_{k}'))
 		if m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
-		nick = self.discord.user_name(m, fallback='') or None
-		cc.vc_active, cc.vc_ts = True, ts
-
-		msg_base, vcid = 'voice-chat activity: ', vcs.get(user_id)
-		if vcid and vcid != cc.id and (vcc := gg.chans.get(vcid)):
-			self.discord.cmd_msg_recv( vcc, nick,
-				msg_base + 'user-left', dict(_ev='vc'), notice=True )
-		if vcid: ev.add('user-joined')
-		vcs[user_id] = cc.id
 		if not ev: ev.add('voice')
+
+		nick = self.discord.user_name(m.get('member', m), fallback='') or None
+		cc.vc_active, cc.vc_ts, msg_base = True, ts, 'voice-chat activity: '
+		if cc_old: self.discord.cmd_msg_recv(
+			cc_old, nick, msg_base + 'user-left', dict(_ev='vc'), notice=True )
 		self.discord.cmd_msg_recv( cc, nick,
 			msg_base + ' '.join(sorted(ev)), dict(_ev='vc'), notice=True )
 

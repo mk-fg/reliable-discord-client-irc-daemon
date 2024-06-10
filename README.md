@@ -1046,13 +1046,23 @@ but limited to following events, to avoid being too spammy:
 - Someone "joins" an empty voice channel to talk there.
 - Voice channel becomes empty, i.e. last person leaves.
 - When some activity (e.g. join/leave/talk/etc) happens in voice channel
-  after configured `voice-notify-after-inactivity` timeout of inactivity,
-  default = 20 minutes.
+  after configured `voice-notify-after-inactivity` timeout of inactivity
+  (i.e. since previous voice-status notification there), default = 20 minutes.
 
 And with additional rate-limit set by `voice-notify-rate-limit-tbf` value,
 to notify about up to 5 events in a row, but otherwise no more often than
 once in 5 minutes (["token bucket algorithm"] is technically how this
 limit is implemented/works).
+
+If description above sounds confusing, here's config tweaks to remove all limits
+on voice-activity event notifications - try those, and maybe re-read this section
+later if they get too spammy (maybe never!):
+
+``` ini
+[discord]
+voice-notify-after-inactivity = 0
+voice-notify-rate-limit-tbf = 0
+```
 
 #rdircd.voice monitor-channel(s) can also be used to only track voice-chat
 notifications across discords/channels, potentially filtered via "um" command
