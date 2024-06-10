@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.3' # git-version: py-str
+	version = '24.06.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -241,6 +241,7 @@ class RDIRCDConfigBase:
 	#   rate-limited notifications instead of tracking active/inactive state.
 	# Value like 300:3 means "token-bucket algorithm with rate=1/300s burst=5".
 	discord_voice_notify_rate_limit_tbf = '300:5'
+	discord_voice_join_left_cache_expire = '7d' # used to cleanup user-joined/left tracking info
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
@@ -299,6 +300,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
 	_conv_discord_msg_interact_cache_expire = lambda s, v: parse_duration(v)
 	_conv_discord_voice_notify_after_inactivity = lambda s, v: parse_duration(v)
+	_conv_discord_voice_join_left_cache_expire = lambda s, v: parse_duration(v)
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -961,6 +963,23 @@ def iter_gather(container):
 		return ft.wraps(func)(_wrapper)
 	return _cls_wrapper
 
+
+class TimedCacheDict(cs.UserDict):
+	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
+	def __init__(self, timeout, *args, **kws):
+		super().__init__(*args, **kws)
+		self.ts, self.ts_min, self.timeout = dict(), None, timeout
+	def __getitem__(self, k): self.cache(k); return super().__getitem__(k)
+	def __setitem__(self, k, v): self.cache(k); super().__setitem__(k, v)
+	def cache(self, k):
+		ts = self.ts[k] = time.monotonic()
+		if not self.ts_min: self.ts_min = ts; return
+		elif ts - self.ts_min <= self.timeout: return
+		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
+			if ts - ts0 > self.timeout:
+				self.pop(k, None); self.ts.pop(k, None); continue
+			self.ts_min = ts0; break
+		else: self.ts_min = None
 
 class adict(cs.UserDict):
 	'dict with simpler access via attrs and update-tracking for cache invalidation.'
@@ -1662,7 +1681,8 @@ class Discord:
 		if (username := u.get('username')) and (
 			rename := self.conf.renames.get(('user', username)) ): return rename
 		for k in (vs := self.conf._discord_name_preference_order):
-			if k == 'login' and (name := username): break
+			if k == 'login':
+				if name := username: break
 			elif k == 'nick':
 				if name := (m.get('nick') or u.get('nick')): break
 			elif k == 'display':
@@ -3293,19 +3313,32 @@ class DiscordSession:
 			'voice-chat status: ' + str(st or 'empty'), dict(_ev='vc'), notice=True )
 
 	def op_voice_st_user(self, m):
-		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
-			and (cc := gg.chans.get(m.get('channel_id'))) ): return
+		if not (gg := self.st.guilds.get(m.get('guild_id', 1))): return
+		ev, vcs, user_id = set(), gg.get('vcs', dict()), gg.get('user_id')
+		if not (cc := gg.chans.get(m.get('channel_id'))): # "user left" event
+			if cc := gg.chans.get(vcs.pop(user_id, None)): ev.add('user-left')
+			else: return # can't tell where user was if wasn't cached
+		elif not vcs: vcs = gg.vcs = \
+			TimedCacheDict(self.conf._discord_voice_join_left_cache_expire)
+
 		ts, td = time.monotonic(), self.conf._discord_voice_notify_after_inactivity
 		if cc.get('vc_active') and td and cc.get('vc_ts', -td) >= ts - td: return
 		if not self.op_voice_st_tbf_check(cc): return
-		ev = set(k for k in 'mute deaf suppress'.split() if m.get(k))
+		ev.update(k for k in 'mute deaf suppress'.split() if m.get(k))
 		ev.update(k for k in 'mute deaf video stream'.split() if m.get(f'self_{k}'))
 		if m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
-		if not ev: ev.add('voice')
-		ev, nick = ' '.join(sorted(ev)), self.discord.user_name(m, fallback='') or None
+		nick = self.discord.user_name(m, fallback='') or None
 		cc.vc_active, cc.vc_ts = True, ts
+
+		msg_base, vcid = 'voice-chat activity: ', vcs.get(user_id)
+		if vcid and vcid != cc.id and (vcc := gg.chans.get(vcid)):
+			self.discord.cmd_msg_recv( vcc, nick,
+				msg_base + 'user-left', dict(_ev='vc'), notice=True )
+		if vcid: ev.add('user-joined')
+		vcs[user_id] = cc.id
+		if not ev: ev.add('voice')
 		self.discord.cmd_msg_recv( cc, nick,
-			f'voice-chat activity: {ev}', dict(_ev='vc'), notice=True )
+			msg_base + ' '.join(sorted(ev)), dict(_ev='vc'), notice=True )
 
 
 
@@ -3796,7 +3829,7 @@ class RDIRCD:
 		cmd, send = line[0], ft.partial(conn.cmd_msg_chan, self.conf.irc_nick_sys, chan)
 		if cmd in ['h', 'help']:
 			return send(doc_fmt_lines(
-				self._cmd_chan_sys_status() + '\n'
+				self._cmd_chan_sys_status(conn.st.ts) + '\n'
 				+ doc_control_chan_cmds
 				+ ( '' if not self.conf.debug_dev_cmds
 					else ('\n' + doc_control_chan_dev_cmds) )
