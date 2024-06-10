@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.6' # git-version: py-str
+	version = '24.06.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -970,7 +970,7 @@ def iter_gather(container):
 class TimedCacheDict(cs.UserDict):
 	'dict that has values expire and get removed on timeout'
 	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
-	timeout_cleanup_slack = 1.5
+	timeout_cleanup_slack = 1.5 # oldest-timeout multiplier to cache cleanup
 	def __init__(self, timeout, *args, **kws):
 		super().__init__(*args, **kws)
 		self.ts, self.ts_min, self.timeout = dict(), None, timeout
@@ -1663,18 +1663,20 @@ class Discord:
 		return IRCProtocol.chan_spec(
 			self.bridge.cache.did_chan.get(cc.did, '???') )
 
-	def user_name(self, u, mentions=None, fallback='???'):
+	_user_name_uid_fallback = object()
+	def user_name(self, u, mentions=None, fallback=_user_name_uid_fallback):
 		'''Pick appropriate discord name from user, member or message object(s).
 			"mentions" list, if provided, can be used to lookup "member" object.'''
 		# Discord has distinct "user" and "member" objects, sent in diff places
 		# (e.g. sometimes it's "author", sometimes "user", sometimes ".member.user")
 		# "user" object has "username" and "global_name", "member" has "nick"
 		if u:
-			if u.get('channel_id'):
+			if mu := u.get('user'): u, m = mu, u
+			elif u.get('guild_id'):
 				if not mentions: mentions = u.get('mentions')
-				u, m = u.get('author'), u.get('member') or dict()
-				if not u: u = m.get('user')
-			elif mu := u.get('user'): u, m = mu, u
+				m = u.get('member') or dict()
+				if au := u.get('author'): u = au
+				elif uu := m.get('user'): u = uu
 			else: m = dict()
 		if (uid := u.get('id')) and (
 			rename := self.conf.renames.get(('user', f'@{uid}')) ): return rename
@@ -1697,7 +1699,10 @@ class Discord:
 				self.log.warning( 'Ignoring unsupported name-type'
 					' in discord name-preference-order value: {!r}', k )
 				self.conf._discord_name_preference_order = list(v for v in vs if v != k)
-		else: name = username or f'@{uid or fallback}'
+		else:
+			if name := username: pass
+			elif fallback is not self._user_name_uid_fallback: name = fallback
+			else: name = f'@{uid}' if uid else '???'
 		if name.isdigit(): name += '´' # avoid digit-only names to not confuse with raw IDs
 		return name.encode('utf-8', 'replace').decode() # remove surrogate junk, if any
 
@@ -3339,7 +3344,7 @@ class DiscordSession:
 		if m.get('request_to_speak_timestamp'): ev.add('req-to-speak')
 		if not ev: ev.add('voice')
 
-		nick = self.discord.user_name(m.get('member', m), fallback='') or None
+		nick = self.discord.user_name(m, fallback='') or None
 		cc.vc_active, cc.vc_ts, msg_base = True, ts, 'voice-chat activity: '
 		if cc_old: self.discord.cmd_msg_recv(
 			cc_old, nick, msg_base + 'user-left', dict(_ev='vc'), notice=True )
