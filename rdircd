@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.8' # git-version: py-str
+	version = '24.06.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1065,11 +1065,16 @@ class adict(cs.UserDict):
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
 		Special "runtime" bucket can be used to count all-time events.'''
+
 	def __init__(self, intervals='', buckets=30):
-		self.spec, self.intervals = (intervals, buckets), dict(
-			( td, adict(n=0, td=0, counts=[0]) if td.lower() == 'runtime' else
-				adict(n=0, ts=0, td=parse_duration(td) / buckets, counts=[0]*buckets) )
-			for td in intervals.split() )
+		self.spec, td_list = (intervals, buckets), sorted(
+			(parse_duration(s) if s.lower() != 'runtime' else math.inf, s)
+			for s in intervals.split() )
+		self.intervals = dict(
+			( s, adict(n=0, td=0, counts=[0]) if td is math.inf else
+				adict(n=0, ts=0, td=td / buckets, counts=[0]*buckets) )
+			for td, s in td_list )
+
 	def event(self, ts=None, count=1, intervals=None, buckets=30):
 		if not ts: ts = time.monotonic()
 		if intervals is not None and self.spec != (intervals, buckets):
@@ -1081,11 +1086,22 @@ class TimeSeriesBuckets:
 				if shift >= (nc := len(data.counts)): shift, data.counts[:] = 0, [0]*nc
 				for n in range(shift): data.n = (data.n + 1) % nc; data.counts[data.n] = 0
 			data.counts[data.n] += count
+
 	def get_counts(self, ts=None, **event_kws):
 		self.event(ts, count=0, **event_kws) # to shift/clear buckets if necessary
 		return dict((td, sum(data.counts)) for td, data in self.intervals.items())
+
 	def get_counts_str(self, *args, **kws):
-		return ' '.join(f'{k}={v:,d}' for k,v in self.get_counts(*args, **kws).items())
+		out, v_last = list(), None
+		for k, v in self.get_counts(*args, **kws).items():
+			if v == v_last: out[-1][1] = k
+			else: out.append([k, '', v])
+			v_last = v
+		if not v_last: return ''
+		for n, (k, s, v) in enumerate(out):
+			if s: k = f'{k}-{s}'
+			out[n] = f'{k}={v:,d}'
+		return ' '.join(out)
 
 
 def irc_casefold_rfc1459(name, _irc_rfc1459_table=dict(zip(
