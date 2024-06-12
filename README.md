@@ -239,6 +239,7 @@ Simplest way might be to use package for/from your linux distribution, if it is 
 Currently known distro packages (as of 2020-05-17):
 
 - Arch Linux (AUR): <https://aur.archlinux.org/packages/rdircd-git/>
+- Termux (Android linux env): [termux/termux-packages/packages/rdircd]
 
 There's also a [Dockerfile] and [docker-compose.yml] for running this
 in a docker/podman or some other OCI-compatible containerized environment.\
@@ -309,6 +310,8 @@ or otherwise probably via init.d script, or maybe in "screen" session as a
 last resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
+[termux/termux-packages/packages/rdircd]:
+  https://github.com/termux/termux-packages/tree/master/packages/rdircd
 [Dockerfile]: Dockerfile
 [docker-compose.yml]: docker-compose.yml
 [README.docker-permissions.md]: README.docker-permissions.md

@@ -24,7 +24,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.9' # git-version: py-str
+	version = '24.06.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -976,25 +976,6 @@ def iter_gather(container):
 	return _cls_wrapper
 
 
-class TimedCacheDict(cs.UserDict):
-	'dict that has values expire and get removed on timeout'
-	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
-	timeout_cleanup_slack = 1.5 # oldest-timeout multiplier to cache cleanup
-	def __init__(self, timeout, *args, **kws):
-		super().__init__(*args, **kws)
-		self.ts, self.ts_min, self.timeout = dict(), None, timeout
-	def __getitem__(self, k): self.cache(k); return super().__getitem__(k)
-	def __setitem__(self, k, v): self.cache(k); super().__setitem__(k, v)
-	def cache(self, k):
-		ts = self.ts[k] = time.monotonic()
-		if not self.ts_min: self.ts_min = ts; return
-		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return
-		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
-			if ts - ts0 > self.timeout:
-				self.pop(k, None); self.ts.pop(k, None); continue
-			self.ts_min = ts0; break
-		else: self.ts_min = None
-
 class adict(cs.UserDict):
 	'dict with simpler access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
@@ -1061,6 +1042,25 @@ class adict(cs.UserDict):
 	def __delitem__(self, k):
 		super().__delitem__(k)
 		self._track_check(k)
+
+class TimedCacheDict(cs.UserDict):
+	'dict that has values expire and get removed on timeout'
+	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
+	timeout_cleanup_slack = 1.5 # oldest-timeout multiplier to cache cleanup
+	def __init__(self, timeout, *args, **kws):
+		super().__init__(*args, **kws)
+		self.ts, self.ts_min, self.timeout = dict(), None, timeout
+	def __getitem__(self, k): self.cache(k); return super().__getitem__(k)
+	def __setitem__(self, k, v): self.cache(k); super().__setitem__(k, v)
+	def cache(self, k):
+		ts = self.ts[k] = time.monotonic()
+		if not self.ts_min: self.ts_min = ts; return
+		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return
+		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
+			if ts - ts0 > self.timeout:
+				self.pop(k, None); self.ts.pop(k, None); continue
+			self.ts_min = ts0; break
+		else: self.ts_min = None
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -4992,7 +4992,7 @@ def main(args=None, conf=None):
 		conf.irc_tls.load_cert_chain(p_pem, p_pem)
 
 	if not conf.irc_uid_seed: # stored to keep it stable in e.g. docker containers
-		if any( re.search(r'^\s*[^\[;#]', line)
+		if any( re.search(r'^\s*[^\[;#]', line) # old config with non-commented-out values
 				for line in pl.Path(conf._conf_path).read_text().splitlines() ):
 			# Compatibility: pre-23.09.07 had a bug that always used hostname like this
 			# >32B hostname couldn't have started rdircd with legacy uid, use new one there
@@ -5001,10 +5001,10 @@ def main(args=None, conf=None):
 		if not conf.irc_uid_seed: conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
-	if len(conf.irc_uid_seed) > 32:
+	if len(self.conf.irc_uid_seed.encode()) > 32: # in case it was generated manually
 		conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
-		log.debug('Replaced bogus >32B irc-uid-seed value in config file: {}', conf._conf_path)
+		log.warning('Replaced bogus >32B irc-uid-seed value in config file: {}', conf._conf_path)
 
 	def _conf_sighup_reload():
 		try: conf_paths = conf.read_from_file()
