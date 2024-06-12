@@ -18,7 +18,7 @@ Table of Contents
     - [Channel Commands](#hdr-channel_commands)
     - [#rdircd.monitor and #rdircd.leftover channels](#hdr-_rdircd.monitor_and_rdircd.leftover_channels)
     - [People's names on discord]
-    - [Local Name Aliases](#hdr-local_name_aliases)
+    - [Local Name Aliases]
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
     - [Auto-joining channels](#hdr-auto-joining_channels)
@@ -41,12 +41,14 @@ Table of Contents
 
     - [Simpler DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
     - [Change message edit/embed/attachment prefixes to shorter emojis]
+    - [Cut down on various common noise](#hdr-cut_down_on_various_common_noise)
 
 - [Links]
 - [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
 [People's names on discord]: #hdr-people_s_names_on_discord
+[Local Name Aliases]: #hdr-local_name_aliases
 [Lookup Discord IDs]: #hdr-lookup_discord_ids
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
@@ -1281,7 +1283,7 @@ or maybe give an idea where to look at for fixing or working around these.
 <a name=hdr-random_tips_and_tricks></a>
 ## Random tips and tricks
 
-Some cool configurations mentioned in #rdircd on IRC and such.
+Some configuration tweaks that I use, or mentioned in #rdircd on IRC and such.
 
 <a name=hdr-simpler_dm_and_monitor_channel_names></a>
 ### Simpler DM and monitor channel names
@@ -1352,6 +1354,57 @@ file parser (which ignores any leading/trailing spaces, unless punctuated by bac
 
 Alternatively, set-command like `set irc-prefix-edit '✍️ '` can be used in #rdircd.control
 to configure and tweak this stuff on-the-fly (or `-s/--save` into config too).
+
+<a name=hdr-cut_down_on_various_common_noise></a>
+### Cut down on various common noise
+
+Using discord through IRC can be a bit noisy due to edits or spammy notifications
+ending up in various monitor/leftover channels or other un-irc-like features,
+which rdircd can help mitigate to some degree, but often doesn't by default,
+as it's hard to know what other people actually care about.
+
+Here are some random commands to try out in #rdircd.control channel:
+
+- `um Noise from any bot-channels = re:\.bots?(-.*)?$`
+- `um Ignore welcome chans = glob:*.welcomes`
+- `um Disregard all voice-chat events = glob:*.vc`
+- `um Memes belong in a circus = glob:*.memes`
+- `um Make food channels opt-in = glob:*.food`
+- `um Internet "politics" can get really spammy = glob:*.politic*`
+- `um There're probably better places for porn = glob:*.nsfw`
+
+- `rx MEE6 bot-noise anywhere = (?i)^<MEE6>`
+- `rx THX discord: people spamming edits = (?i)^<(person1|person2)> #THX\.\S+ :: \[edit\]`
+- `rx NSC discord: don't care about deletes = (?i)^\S+ #NSC\.\S+ :: --- message was deleted ::`
+
+- Enable rule-hit counters to check whether these rules are still relevant later:\
+    `set discord_match_counters '1d 2d 4d 1w 2w 1mo 2mo runtime'`
+
+    With these enabled, running `um` or `rx` should show `[ rule hits: ... ]`
+    under each rule, if there's anything to show (but reset on rdircd restarts!),
+    otherwise it's probably safe to drop unused rules to keep lists more tidy.
+
+- Remove long, confusing and silly nicknames full of unicode junk:\
+    `set discord-name-preference-order 'login'`
+
+    If even ascii logins of specific users get annoying, use `[renames]` in
+    config to change those locally (see [Local Name Aliases] section for more info):
+
+    ``` ini
+    [renames]
+    user.somereallylongandsillyloginbecausewhynot = bob
+    user.@374984273184829999 = andy
+    ```
+
+- Keep threads only as channels, and in #rdircd.leftover.\* and such:\
+    `set discord-thread-msgs-in-parent-chan no`
+
+All of these examples are not persistent, just to try them out and see, but all
+commands used there support `-s` flag to save changed values to last .ini config
+file, or it can be done manually as well, if any of these are useful to keep around.
+
+Feel free to suggest other lifehacks to keep things tidier in #rdircd on IRC,
+github/codeberg or wherever, to throw on this pile of thing to try.
 
 
 <a name=hdr-links></a>
