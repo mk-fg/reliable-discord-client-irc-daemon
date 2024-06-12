@@ -243,7 +243,7 @@ Currently known distro packages (as of 2020-05-17):
 
 There's also a [Dockerfile] and [docker-compose.yml] for running this
 in a docker/podman or some other OCI-compatible containerized environment.\
-(see also [README.docker-permissions.md] doc for common problem with those)
+(see also [README.docker-permissions.md] doc for info on common access issues with those)
 
 Should be easy to install one script and its few dependencies manually as well,
 as described in the rest of this section below.
@@ -277,6 +277,11 @@ rdircd % python3 -m ensurepip --user
 rdircd % python3 -m pip install --user aiohttp
 ```
 
+If you have/use [pipx] (e.g. from distro repos), it can be used to run python
+apps like this one and auto-maintain dependencies - just "pipx run" the main
+script: `pipx run rdircd --help` - without needing to touch venv or pip at all
+(pipx will do it "under the hood").
+
 After requirements above are installed, script itself can be fetched
 from this repository and run like this:
 
@@ -289,14 +294,17 @@ root # su - rdircd
 # Or alternatively run script via "./_venv/bin/python rdircd ..." command line
 rdircd % source ./_venv/bin/activate
 
-rdircd % curl https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd > rdircd
+rdircd % curl -o rdircd https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd
 rdircd % chmod +x rdircd
 
+## Use "pipx run rdircd ..." here and below, if using pipx instead of pip/venv/distro-pkgs
 rdircd % ./rdircd --help
 ...to test if it runs...
 
 rdircd % ./rdircd --conf-dump-defaults
 ...for a full list of all supported options with some comments...
+...alternatively, to create rdircd.ini template: ./rdircd -c rdircd.ini --conf-init
+
 rdircd % nano rdircd.ini
 ...see below for configuration file info/example...
 
@@ -310,11 +318,17 @@ or otherwise probably via init.d script, or maybe in "screen" session as a
 last resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
+To update the script later, if needed, replace it with a latest version,
+e.g. via re-downloading with a curl command above, git-pull on the repo clone,
+`docker-compose up --build`, updating os package, or in some other way,
+usually related to how it got installed in the first place.
+
 [termux/termux-packages/packages/rdircd]:
   https://github.com/termux/termux-packages/tree/master/packages/rdircd
 [Dockerfile]: Dockerfile
 [docker-compose.yml]: docker-compose.yml
 [README.docker-permissions.md]: README.docker-permissions.md
+[pipx]: https://pypa.github.io/pipx/
 [rdircd.service]: rdircd.service
 
 
