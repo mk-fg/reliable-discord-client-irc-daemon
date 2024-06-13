@@ -34,7 +34,6 @@ Table of Contents
     - [Highlight on incoming private messages](#hdr-highlight_on_incoming_private_messages)
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
-    - [Almost every message I see are reacts by people :(]
     - [Debugging anything strange, unknown or unexpected]
 
 - [Random tips and tricks](#hdr-random_tips_and_tricks)
@@ -54,8 +53,6 @@ Table of Contents
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Captcha-solving is required to login for some reason]:
   #hdr-captcha-solving_is_required_to_login_for.ls9P
-[Almost every message I see are reacts by people :(]:
-  #hdr-almost_every_message_i_see_are_reacts_by.0z4N
 [Debugging anything strange, unknown or unexpected]:
   #hdr-debugging_anything_strange_unknown_or_un.NQDm
 [Change message edit/embed/attachment prefixes to shorter emojis]:
@@ -1171,26 +1168,6 @@ Never encountered this problem myself so far.
 
 [issue-1]: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
 
-<a name=hdr-almost_every_message_i_see_are_reacts_by.0z4N></a>
-### Almost every message I see are reacts by people :(
-
-There is [an ini file option] for this:
-
-``` ini
-[irc]
-...
-; disable-reactions: disables all "--- reacts" messages
-disable-reactions = no
-```
-
-Flip that to "yes" in config to disable all those, or alternatively they can
-be blocked in a more fine-grained way in the IRC client, or regexp filters in
-#rdircd.control channel.
-
-There's a bunch of other similar tweaks that can be useful in there too.
-
-[an ini file option]: rdircd.defaults.ini
-
 <a name=hdr-debugging_anything_strange_unknown_or_un.NQDm></a>
 ### Debugging anything strange, unknown or unexpected
 
@@ -1283,7 +1260,8 @@ or maybe give an idea where to look at for fixing or working around these.
 <a name=hdr-random_tips_and_tricks></a>
 ## Random tips and tricks
 
-Some configuration tweaks that I use, or mentioned in #rdircd on IRC and such.
+Some configuration tweaks that I use, or mentioned in #rdircd on IRC and such.\
+Feel free to suggest any other lifehacks to add here.
 
 <a name=hdr-simpler_dm_and_monitor_channel_names></a>
 ### Simpler DM and monitor channel names
@@ -1375,14 +1353,17 @@ Here are some random commands to try out in #rdircd.control channel:
 
 - `rx MEE6 bot-noise anywhere = (?i)^<MEE6>`
 - `rx THX discord: people spamming edits = (?i)^<(person1|person2)> #THX\.\S+ :: \[edit\]`
-- `rx NSC discord: don't care about deletes = (?i)^\S+ #NSC\.\S+ :: --- message was deleted ::`
+- `rx NSC: don't care about deletes = (?i)^\S+ #NSC\.\S+ :: --- message was deleted ::`
+- `rx NSC/THX: disable reactions here = (?i)^\S+ #(NSC|THX)\.\S+ :: --- reacts:`
 
 - Enable rule-hit counters to check whether these rules are still relevant later:\
-    `set discord_match_counters '1d 2d 4d 1w 2w 1mo 2mo runtime'`
+    `set discord-match-counters '1d 2d 4d 1w 2w 1mo 2mo runtime'`
 
     With these enabled, running `um` or `rx` should show `[ rule hits: ... ]`
     under each rule, if there's anything to show (but reset on rdircd restarts!),
     otherwise it's probably safe to drop unused rules to keep lists more tidy.
+
+- Disable "reacts" noise everywhere: `set discord-disable-reactions yes`
 
 - Remove long, confusing and silly nicknames full of unicode junk:\
     `set discord-name-preference-order 'login'`
@@ -1399,12 +1380,12 @@ Here are some random commands to try out in #rdircd.control channel:
 - Keep threads only as channels, and in #rdircd.leftover.\* and such:\
     `set discord-thread-msgs-in-parent-chan no`
 
+- Don't show voice-chats or "monitor" channels on the `/list`:\
+    `set irc-chan-voice ''` `set irc-chan-monitor ''`
+
 All of these examples are not persistent, just to try them out and see, but all
 commands used there support `-s` flag to save changed values to last .ini config
 file, or it can be done manually as well, if any of these are useful to keep around.
-
-Feel free to suggest other lifehacks to keep things tidier in #rdircd on IRC,
-github/codeberg or wherever, to throw on this pile of thing to try.
 
 
 <a name=hdr-links></a>
