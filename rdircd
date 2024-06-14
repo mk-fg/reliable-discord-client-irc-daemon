@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.11' # git-version: py-str
+	version = '24.06.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5005,7 +5005,7 @@ def main(args=None, conf=None):
 		if not conf.irc_uid_seed: conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
-	if len(self.conf.irc_uid_seed.encode()) > 32: # in case it was generated manually
+	if len(conf.irc_uid_seed.encode()) > 32: # in case it was generated manually
 		conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.warning('Replaced bogus >32B irc-uid-seed value in config file: {}', conf._conf_path)
