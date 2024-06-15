@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.12' # git-version: py-str
+	version = '24.06.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -301,6 +301,7 @@ class RDIRCDConfigBase:
 		return _conv
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
+	_conv_irc_uid_seed = lambda s, v: v if len(v.encode()) <= 32 else str_hash(v, 32)
 	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
@@ -3437,7 +3438,7 @@ class RDIRCD:
 			# None is used as an id for global monitor/leftover/voice channels
 			gid_mon_chan=dict(), gid_nc_chan=dict(), gid_vc_chan=dict(), did_chan=dict(),
 			d2i=irc_name_dict(), i2d=irc_name_dict() ) # for all irc <-> discord names
-		self.uid_len, self.uid_seed = (self.conf.get(f'irc_uid_{k}') for k in ['len', 'seed'])
+		self.uid_len, self.uid_seed = self.conf.irc_uid_len, self.conf._irc_uid_seed
 		try: boot_id = str_hash(pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 3)
 		except OSError: boot_id = '---' # can be inaccessible due to sandboxing
 		self.uid_start = f'{str_hash(self.uid_seed, 3)}.{boot_id}.{str_hash(os.urandom(6), 6)}'
@@ -5005,10 +5006,6 @@ def main(args=None, conf=None):
 		if not conf.irc_uid_seed: conf.irc_uid_seed = host_uid_seed()
 		conf.update_file_section('irc', 'uid_seed')
 		log.debug('Stored irc-uid-seed value in config file: {}', conf._conf_path)
-	if len(conf.irc_uid_seed.encode()) > 32: # in case it was generated manually
-		conf.irc_uid_seed = host_uid_seed()
-		conf.update_file_section('irc', 'uid_seed')
-		log.warning('Replaced bogus >32B irc-uid-seed value in config file: {}', conf._conf_path)
 
 	def _conf_sighup_reload():
 		try: conf_paths = conf.read_from_file()
