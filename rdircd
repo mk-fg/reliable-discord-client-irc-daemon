@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.13' # git-version: py-str
+	version = '24.06.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -56,6 +56,7 @@ class RDIRCDConfigBase:
 
 	irc_motd_file_path = '' # file path to read for motd command
 	irc_names_timeout = '1d' # time since last activity to "forget" channel /names
+	irc_names_join = True # send irc-join msgs, for new channel users within names-timeout
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
 
@@ -303,6 +304,7 @@ class RDIRCDConfigBase:
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s, v: v if len(v.encode()) <= 32 else str_hash(v, 32)
 	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_irc_names_timeout = lambda s, v: parse_duration(v)
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
 	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
@@ -1050,22 +1052,25 @@ class adict(cs.UserDict):
 
 class TimedCacheDict(cs.UserDict):
 	'dict that has values expire and get removed on timeout'
-	__slots__ = 'data', 'ts', 'ts_min', 'timeout'
+	__slots__, _no_value = ('data', 'ts', 'ts_min', 'timeout', 'bump_on_get'), object()
 	timeout_cleanup_slack = 1.5 # oldest-timeout multiplier to cache cleanup
-	def __init__(self, timeout, *args, **kws):
-		super().__init__(*args, **kws)
-		self.ts, self.ts_min, self.timeout = dict(), None, timeout
-	def __getitem__(self, k): self.cache(k); return super().__getitem__(k)
-	def __setitem__(self, k, v): self.cache(k); super().__setitem__(k, v)
-	def cache(self, k):
-		ts = self.ts[k] = time.monotonic()
-		if not self.ts_min: self.ts_min = ts; return
-		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return
+	def __init__(self, timeout, bump_on_get=True):
+		self.ts, self.ts_min = dict(), None
+		self.timeout, self.bump_on_get = timeout, bump_on_get
+		super().__init__()
+	def __getitem__(self, k): return self.cache(k)
+	def __setitem__(self, k, v): return self.cache(k, v)
+	def cache(self, k, v=_no_value):
+		ts = time.monotonic()
+		if self.bump_on_get or v is not self._no_value: self.ts[k] = ts
+		v = super().__getitem__(k) if v is self._no_value else super().__setitem__(k, v)
+		if not self.ts_min: self.ts_min = ts; return v
+		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return v
 		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
-			if ts - ts0 > self.timeout:
-				self.pop(k, None); self.ts.pop(k, None); continue
+			if ts - ts0 > self.timeout: self.pop(k, None); self.ts.pop(k, None); continue
 			self.ts_min = ts0; break
 		else: self.ts_min = None
+		return v
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -1605,7 +1610,7 @@ class IRCProtocol:
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
 		self.send(f':{src} {msg_type} {self.st.nick} :{text}')
 
-	def cmd_msg_chan(self, src, chan, text, notice=False):
+	def cmd_msg_chan(self, src, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
 			Message is never filtered/dropped here for reliability/sanity reasons.'''
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
@@ -1613,6 +1618,8 @@ class IRCProtocol:
 		if ( name not in self.st.chans and
 				self.conf._irc_chan_auto_join_re.search(name) ):
 			self.cmd_join(chan)
+		if self.conf.irc_names_join and src and joined and not notice:
+			self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
 
 	# Some of following user/server/channel-info cmds
@@ -2796,8 +2803,9 @@ class DiscordSession:
 		ct, chans_updated, new_threads = self.c_chan_type, dict(), list()
 		for c in force_list(chans):
 			name, topic = c.get('name'), c.get('topic') or ''
-			cc = gg.chans.get( c.id,
-				adict(tid=None, names=adict(), users=adict(), threads=adict(), last_msg_sent=adict()) )
+			cc = gg.chans.get(c.id, adict(
+				tid=None, names=adict(), threads=adict(), last_msg_sent=adict(),
+				users=TimedCacheDict(self.conf._irc_names_timeout, bump_on_get=False) ))
 			cc.names.update(raw=name or '', old=cc.get('name', '')) # for various renames
 
 			if c.type in [ct.group, ct.store]: continue
@@ -2827,12 +2835,11 @@ class DiscordSession:
 				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
 				if not cc.names.old: new_threads.append(cc)
 			elif cc_private:
-				ts, users = time.time(), c.get('recipients') or list()
-				for n, u in enumerate(users):
+				cc.users.timeout = 2**32 # persistent list of users here
+				for n, u in enumerate(users := c.get('recipients') or list()):
 					self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(u))
-					users[n] = nick, adict(name=nick, ts=ts)
+					users[n] = nick, None # gets resolved to irc nick on first use
 				dict_update(cc.users, users, sync=True)
-				user_names = list(u.name for u in cc.users.values())
 				name_kws = dict(
 					id=(name_hash := str_hash(c.id, 8)),
 					chat_name=(chat_name := (c.get('name') or '').strip()) )
@@ -2841,14 +2848,14 @@ class DiscordSession:
 					# Caveat: channel names are case-insensitive, even if hash is not
 					name_kws['names_or_id'] = name_kws['id']
 					if '{names}' in self.conf.irc_chan_private or (
-							len(user_names) < self.conf.irc_private_chat_min_others_to_use_id_name ):
-						name_kws['names'] = self.op_ev_chans_priv_name(user_names)
+							len(cc.users) < self.conf.irc_private_chat_min_others_to_use_id_name ):
+						name_kws['names'] = self.op_ev_chans_priv_name(cc.users)
 						name_kws['names_or_id'] = name_kws['names']
 				name = self.conf.irc_chan_private.format(**name_kws)
 				if not topic:
 					topic = chat_name and f' :: {chat_name} ::'
 					topic = ( f'private chat <{name_hash}>'
-						f'{topic} [{len(user_names)}] ' + ', '.join(user_names) )
+						f'{topic} [{len(cc.users)}] ' + ', '.join(cc.users) )
 
 			if not (rename := self.conf.renames.get(('chan', f'@{c.id}'))):
 				rename = self.conf.renames.get(('chan', self.discord.bridge.irc_name(name)))
@@ -3429,7 +3436,6 @@ class RDIRCD:
 		self.server_host = os.uname().nodename
 		self.irc_conns, self.irc_conns_max = adict(), 0
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
-		self.irc_names_timeout = parse_duration(self.conf.irc_names_timeout)
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
@@ -3776,25 +3782,15 @@ class RDIRCD:
 				if not conn.st.auth: continue
 			yield conn
 
-	@iter_gather(list)
-	def cmd_chan_names_discord(self, name):
-		'''List nicks from discord, in most recently
-			active first order, doing auto-cleanup on these.'''
-		if not (info := self.irc_discord_info(name)): return
-		users, ts_cutoff = info.cc.get('users', dict()), time.time() - self.irc_names_timeout
-		for u in sorted(users.values(), key=op.itemgetter('ts'), reverse=True):
-			if u.ts < ts_cutoff: users.pop(u.name, None)
-			else: yield u.name, self.irc_name(u.name)
-
-	@iter_gather(list)
 	def cmd_chan_names(self, name):
-		'Returns persistent mutable list of users (/names) for specified channel.'
-		conn_nicks = irc_name_dict.value_map(
+		'Returns list of irc-unique nicks for specified channel, for /names and such'
+		if not (info := self.irc_discord_info(name)): return list()
+		chan_nicks = irc_name_dict.value_map(
 			conn.st.nick for conn in self.cmd_chan_conns(name) if conn.st.nick )
-		yield from sorted(conn_nicks.values())
-		for nick_discord, nick_irc in self.cmd_chan_names_discord(name):
-			if nick_irc not in conn_nicks: yield nick_irc
-
+		for nick_discord, nick in (users := info.cc.get('users', dict()).items()):
+			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
+			chan_nicks.add(nick)
+		return sorted(chan_nicks.values())
 
 	def cmd_chan_map(self):
 		'''Returns cached adict of {chan-name: {name, topic, did, ts_created}},
@@ -4272,11 +4268,7 @@ class RDIRCD:
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
 		prefix, ev, name = '', '', name_irc or self.cache.did_chan.get(cc.did)
-		if nick:
-			if nick not in cc.users: cc.users[nick] = adict(name=nick)
-			cc.users[nick].ts = ts or time.time()
-		if conn: # e.g. log-replay request for this one irc client
-			skip_monitor, conns_joined = True, [conn]
+		if conn: skip_monitor, conns_joined = True, [conn] # e.g. log-replay for this irc client
 		else:
 			conns_joined = self.cmd_chan_conns(name) if name else list()
 			if not conns_joined and not self.cmd_conn(): return # no irc clients
@@ -4289,9 +4281,9 @@ class RDIRCD:
 				elif tt == mt.chan:
 					v = IRCProtocol.chan_spec(self.cache.did_chan.get(v, v))
 				line = line.replace(k, v)
-		if nick: nick = self.irc_name(nick)
+		if nick: nick_discord, nick = nick, self.irc_name(nick)
 		else:
-			nick = self.conf.irc_nick_sys
+			nick_discord = nick = self.conf.irc_nick_sys
 			if notice is None: notice = True
 		if not notice:
 			if self.conf.irc_prefix_all_private and cc.private:
@@ -4307,8 +4299,11 @@ class RDIRCD:
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
-			for conn, line in it.product(conns_joined, line.splitlines()):
-				conn.cmd_msg_chan(nick, name, f'{prefix}{line}', notice=notice)
+			joined, cc.users[nick_discord] = not cc.users.get(nick_discord), nick
+			for conn in conns_joined:
+				for n, line in enumerate(line.splitlines()):
+					conn.cmd_msg_chan( nick, name,
+						f'{prefix}{line}', notice=notice, joined=joined and not n )
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
