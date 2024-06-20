@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.15' # git-version: py-str
+	version = '24.06.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1734,7 +1734,7 @@ class Discord:
 		# "user" object has "username" and "global_name", "member" has "nick"
 		if u:
 			if mu := u.get('user'): u, m = mu, u
-			elif u.get('guild_id'):
+			elif u.get('guild_id') or u.get('channel_id'): # no guild_id in private chats
 				if not mentions: mentions = u.get('mentions')
 				m = u.get('member') or dict()
 				if au := u.get('author'): u = au
