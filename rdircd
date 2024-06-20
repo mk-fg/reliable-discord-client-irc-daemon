@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.14' # git-version: py-str
+	version = '24.06.15' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3787,7 +3787,7 @@ class RDIRCD:
 		if not (info := self.irc_discord_info(name)): return list()
 		chan_nicks = irc_name_dict.value_map(
 			conn.st.nick for conn in self.cmd_chan_conns(name) if conn.st.nick )
-		for nick_discord, nick in (users := info.cc.get('users', dict()).items()):
+		for nick_discord, nick in (users := info.cc.get('users', dict())).items():
 			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
 			chan_nicks.add(nick)
 		return sorted(chan_nicks.values())
