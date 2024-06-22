@@ -451,8 +451,75 @@ defaults, only apply stuff explicitly set there on top of the current config.
 <a name=hdr-channel_commands></a>
 ### Channel Commands
 
-In special channels like #rdircd.control and #rdircd.debug: send "h" or "help".\
-All discord channels - send "/t" or "/topic".
+In all IRC channels representing a discord channel - send `/topic`
+(or `/t` - shorthand for it often supported in IRC clients) - which
+should print up-to-date info on all channel-specific commands, like those:
+
+- `/t info` - show some internal guild/channel information, like IDs and such for renames.
+
+    Should print exact channel name on discord (without any [local renames] or
+    discord-to-irc translation that rdircd does), its topic, type, etc, among
+    other things.
+
+- `/t info {user-name...}` - query info on user name (or part of it) in this discord.
+
+    For example, `/t info joe137` will lookup `joe137` user on a discord server that
+    channel belongs to, printing info about them, like their [various discord names].
+
+- `/t log [state]` - replay history since "state" point (last rdircd stop by default).
+
+    `/t log` (same as `/t log 1`) can be used e.g. after rdircd restart
+    to query discord for any messages that might've been posted after it was stopped,
+    and before it was started back again (plus any others since then).\
+    Or `/t log 0` to check history since last msg that rdircd has seen,
+    for cases when discord/network is flakey and something might've been lost that way.\
+    (where these `1` and `0` numbers refer to saved timestamps from `/t log list`
+    output, stored/updated under `[state]` in the ini file)
+
+    It can also be used with an absolute or relative time, e.g. `/t log 15m`
+    to request/replay channel history within last 15 minutes, or `/t log
+    2019-01-08 12:30` to replay history since that specific rdircd-local time
+    (unless timezone is specified there too).
+
+Just `/t` or `/topic` in any discord proxy channel will list more such commands
+and more info on how to use them.
+
+Last message sent to a discord channel can be [edited using sed-replacement command]
+like `s/hoogle/google/` to fix a typo or quickly amend/reword/clarify that last line.\
+Or `//del` command can be used to delete it - see ["quick edits/deletes"] section below.
+
+`@silent` prefix-command in messages can suppress user notifications about it
+(also [explained below somewhere]).
+
+In special channels like #rdircd.control and #rdircd.debug: send `h` or `help`.\
+They can have somewhat long list of supported commands,
+e.g. here are some of the commands for #rdircd.control:
+
+- `status` (or `st`) can be used to check on discord and irc connection infos.
+
+- `connect` / `disconnect` (or `on` / `off`) commands can be used to manually
+  control discord connection, e.g. for a more one-off usage, or to temporarily
+  suppress failed conn warnings while local network is down that way.
+
+- `set irc-disable-reactions yes` - temp-disable discord
+  reaction notifications (using `set` command).\
+  Or `set -s irc-disable-reactions yes` to make it permanent (`-s/--save`
+  flag for saving value to ini config file), or simple `set` without parameters
+  to see all general configuration options and their values.
+
+- `rx Block mee6 bot-noise = (?i)^<MEE6>` - temp-block all messages from MEE6 bot.\
+  (see [section about this filtering] below, or [more examples of such stuff under tips-and-tricks])
+
+...and there are more of those - type `help` there for full up-to-date info.
+
+[local renames]: #hdr-local_name_aliases
+[various discord names]: #hdr-people_s_names_on_discord
+[edited using sed-replacement command]: #hdr-quick_edits_deletes_for_just-sent_messages
+["quick edits/deletes"]: #hdr-quick_edits_deletes_for_just-sent_messages
+[explained below somewhere]: #hdr-_silent_messages_and_other_such_flags
+[section about this filtering]: #hdr-custom_filtering_for_all_received_messages
+[more examples of such stuff under tips-and-tricks]: #hdr-cut_down_on_various_common_noise
+
 
 <a name=hdr-_rdircd.monitor_and_rdircd.leftover_channels></a>
 ### #rdircd.monitor and #rdircd.leftover channels
