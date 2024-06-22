@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.18' # git-version: py-str
+	version = '24.06.19' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1062,7 +1062,7 @@ class TimedCacheDict(cs.UserDict):
 	def __setitem__(self, k, v): return self.cache(k, v)
 	def cache(self, k, v=_no_value):
 		ts = time.monotonic()
-		if self.bump_on_get or (set_op := v is not self._no_value): self.ts[k] = ts
+		if (set_op := v is not self._no_value) or self.bump_on_get: self.ts[k] = ts
 		v = super().__getitem__(k) if not set_op else super().__setitem__(k, v)
 		if not self.ts_min: self.ts_min = ts; return v
 		elif ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return v
