@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.20' # git-version: py-str
+	version = '24.06.21' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3483,8 +3483,9 @@ class RDIRCD:
 
 	async def run(self):
 		ircd = await (loop := asyncio.get_running_loop()).create_server(
-			IRCProtocol.factory_for_bridge(self), self.conf.irc_host, self.conf.irc_port,
-			family=self.conf.irc_host_af, start_serving=False, ssl=self.conf.irc_tls )
+			IRCProtocol.factory_for_bridge(self),
+			self.conf.irc_host, self.conf.irc_port, family=self.conf.irc_host_af,
+			start_serving=False, reuse_port=True, ssl=self.conf.irc_tls )
 
 		if self.conf.debug_mean_minutes_to_segfault > 0:
 			mins_to_segfault = int( 1 + random.random()
