@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.06.21' # git-version: py-str
+	version = '24.07.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -397,6 +397,8 @@ This channel is for logging output, with level=warning by default,
   unless --debug is specified on command line, or [debug] verbose=yes in ini.
 
 Status:
+  rdircd version: {ver}
+  rdircd uptime: {uptime}
   log level: {level}
   log msg counts: {log_msg_counts}
   protocol log: {proto_log_info}
@@ -3884,6 +3886,11 @@ class RDIRCD:
 		if sys_type not in self.c_chan_sys_types: return
 		getattr(self, f'cmd_chan_sys_{sys_type}')(conn, chan, line)
 
+	def cmd_chan_sys_uptime(self):
+		up_td = repr_duration(self.discord.bridge.uptime_ts, time.monotonic())
+		up_dt = self.discord.bridge.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+		return f'since {up_dt} ({up_td})'
+
 	def cmd_chan_sys_log_counts(self):
 		counts = self.conf._debug_counts
 		counts = (' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
@@ -3953,7 +3960,8 @@ class RDIRCD:
 			f'  discord-connection-time: {dconn_td}',
 			f'  discord-connection-gateway: {self.conf.discord_gateway}',
 			f'  irc-connection-time: {irc_td}',
-			f'  rdircd-uptime: since {up_dt} ({up_td})',
+			f'  rdircd-version: {self.conf.version}',
+			f'  rdircd-uptime: {self.cmd_chan_sys_uptime()}',
 			f'  log-msg-counts: {self.cmd_chan_sys_log_counts()}' ])
 
 	def _cmd_chan_sys_cache(self):
@@ -4172,6 +4180,7 @@ class RDIRCD:
 				proto_log_info = ( 'disabled' if proto_log_info == 'warning'
 					else f'enabled, file={self.conf._debug_proto.get_file()}' )
 			return send(doc_fmt_lines( doc_debug_chan_cmds,
+				ver=self.conf.version, uptime=self.cmd_chan_sys_uptime(),
 				level=level, pt_n=pt_n, pt_cut=pt_cut,
 				log_msg_counts=self.cmd_chan_sys_log_counts(),
 				proto_log_info=proto_log_info, proto_log_shared=proto_log_shared ))
