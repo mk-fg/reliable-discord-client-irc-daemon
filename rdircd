@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.1' # git-version: py-str
+	version = '24.07.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -67,6 +67,7 @@ class RDIRCDConfigBase:
 	irc_prefix_uis = '[UIs] '
 	irc_prefix_interact = '[cmd] '
 	irc_prefix_poll = '[poll.{}] '
+	irc_prefix_pinned = '[pin] '
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
@@ -3247,6 +3248,9 @@ class DiscordSession:
 					ext += str(ans.get('text', ans)).strip()
 				else: ext += str(qa or '')
 				line += f'\n{pre}{ext.rstrip()}'
+
+		if m.get('pinned'):
+			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_pinned
 
 		if mt is not None and not line: # represent some non-text/embed events
 			if mt == mtc.recipient_add: line = '[+recipient]'
