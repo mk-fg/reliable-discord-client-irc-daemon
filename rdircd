@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.2' # git-version: py-str
+	version = '24.07.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1118,7 +1118,7 @@ class TimeSeriesBuckets:
 
 
 def irc_casefold_rfc1459(name, _irc_rfc1459_table=dict(zip(
-		map(ord, string.ascii_uppercase + '\\[]'), string.ascii_lowercase + '|{}' ))):
+		map(ord, string.ascii_uppercase + '\\[]^'), string.ascii_lowercase + '|{}~' ))):
 	return name.translate(_irc_rfc1459_table)
 irc_name_eq = lambda a, b: irc_casefold_rfc1459(a) == irc_casefold_rfc1459(b)
 
