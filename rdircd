@@ -1153,6 +1153,8 @@ class IRCProtocol:
 	nx_chan_warn = ( 'WARNING :: Discord has no channel'
 		' linked to this one, nothing will happen here :: WARNING' )
 
+	server_caps = set()
+
 	@classmethod
 	def factory_for_bridge(cls, rdircd):
 		def _wrapper():
@@ -1170,7 +1172,7 @@ class IRCProtocol:
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None,
-			host=None, auth=False, cap_neg=False, away=None,
+			host=None, auth=False, cap_neg=False, caps=set(), away=None,
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
@@ -1350,10 +1352,6 @@ class IRCProtocol:
 		elif cmd in ['user', 'pass']:
 			self.send(462, ':You may not reregister')
 			return False
-		if self.st.cap_neg:
-			# No commands other than auth allowed until capability negotiation ends
-			# Note that negotiation can be skipped entirely too
-			return cmd in ['cap', 'quit', 'ping']
 		return True # any commands allowed outside of phases above
 
 	# chan_spec=#casemap(some-channel), chan_name=casemap(some-channel)
@@ -1370,17 +1368,36 @@ class IRCProtocol:
 		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
 	def recv_cmd_cap(self, sub, caps=''):
-		sub = sub.lower()
-		if sub == 'ls':
-			self.send(0, 'CAP * LS :')
-			if caps == '302': self.st.cap_neg = True
-		elif sub == 'list': self.send(0, f'CAP * LIST :')
-		elif sub == 'req':
+		sub_low = sub.lower()
+		if sub_low == 'ls':
 			self.st.cap_neg = True
-			reject = set(c for c in caps.split() if not c.startswith('-'))
-			if reject: self.send(0, f'CAP * NAK :{caps}')
-			else: self.send(0, f'CAP * ACK :{caps}')
-		elif sub == 'end': self.st.cap_neg = False
+			self.send(0, f'CAP * LS :{' '.join(self.server_caps)}')
+		elif sub_low == 'list':
+			self.send(0, f'CAP * LIST :{' '.join(self.st.caps)}')
+		elif sub_low == 'req':
+			self.st.cap_neg = True
+			to_enable = set()
+			to_disable = set()
+			for c in caps.split():
+				if c.startswith('-'):
+					to_disable.add(c[1:])
+					to_enable.discard(c[1:])
+				else:
+					to_enable.add(c)
+					to_disable.discard(c)
+
+			reject = to_enable - self.server_caps
+			if reject:
+				self.send(0, f'CAP * NAK :{caps}')
+				return
+
+			self.st.caps |= to_enable
+			self.st.caps -= to_disable
+			self.send(0, f'CAP * ACK :{caps}')
+		elif sub_low == 'end':
+			self.st.cap_neg = False
+			self.check_auth_done()
+		else: self.send(410, sub, ':Invalid CAP command')
 
 	def recv_cmd_pass(self, pw):
 		self.st.pw = pw
@@ -1403,6 +1420,7 @@ class IRCProtocol:
 		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
 	def check_auth_done_delayed(self):
 		if self.st.auth: return
+		if self.st.cap_neg: return
 		if not (self.st.nick and self.st.user): return
 		if self.conf.irc_password_hash:
 			if not pw_hash(self.st.pw or '', self.conf.irc_password_hash):
