@@ -1153,7 +1153,7 @@ class IRCProtocol:
 	nx_chan_warn = ( 'WARNING :: Discord has no channel'
 		' linked to this one, nothing will happen here :: WARNING' )
 
-	server_caps = set()
+	server_caps = {'message-tags'}
 
 	@classmethod
 	def factory_for_bridge(cls, rdircd):
@@ -1232,15 +1232,22 @@ class IRCProtocol:
 
 	def _parse(self, line):
 		if isinstance(line, bytes): line = line.decode()
-		m = adict(line=line, params=list())
-		for k in '@tags', ':src':
-			pre, k = k[0], k[1:]
-			if line.startswith(pre):
-				try: m[k], line = line.split(' ', 1)
-				except ValueError:
-					raise IRCProtocolLineError(line) from None
-				line = line.lstrip(' ')
-			else: m[k] = None
+		m = adict(line=line, tags=None, src=None, params=list())
+		if line.startswith('@'):
+			try: tags, line = line.split(' ', 1)
+			except ValueError:
+				raise IRCProtocolLineError(line) from None
+			line = line.lstrip(' ')
+
+			m.tags = {}
+			for tag in tags.split(';'):
+				s = tag.split('=', 1)
+				m.tags[s[0]] = s[1] if len(s) == 2 else None
+		if line.startswith(':'):
+			try: m.src, line = line.split(' ', 1)
+			except ValueError:
+				raise IRCProtocolLineError(line) from None
+			line = line.lstrip(' ')
 		while True:
 			if line.startswith(':'):
 				m.params.append(line[1:])
@@ -1668,6 +1675,8 @@ class IRCProtocol:
 				self.send( 352, '*', conn.st.user, conn.st.host,
 					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
 		self.send(315, name, ':End of /WHO list.')
+
+	def recv_cmd_tagmsg(self, target): pass
 
 	# recv_cmd_whois
 	# recv_cmd_whowas
