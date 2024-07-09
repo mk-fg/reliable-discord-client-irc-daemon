@@ -4493,7 +4493,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if self.update_from_file_section(
 					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
 				# Warnings will be issued for existing keys after logging is configured later
-				self._conf_old_found.add(k)
+				self._conf_old_found[k] = k_new
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 		self.read(conf_file.getboolean, 'state', 'tracked')
