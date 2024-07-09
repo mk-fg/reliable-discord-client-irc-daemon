@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.3' # git-version: py-str
+	version = '24.07.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1689,7 +1689,7 @@ class Discord:
 	async def __aenter__(self):
 		if not ( self.conf.get('auth_email')
 				and self.conf.get('auth_password') ):
-			self.log.error('Disabling discord due to missing access credentials')
+			self.log.error('Disabling discord due to missing access credentials in config')
 			self.session = None
 		else:
 			s = self.session = DiscordSession(self)
@@ -4954,15 +4954,15 @@ def main(args=None, conf=None):
 		if conf.irc_password_hash:
 			parser.error( 'Both password= and password-hash= config-file'
 				' options cannot be used at the same time, use latter one only.' )
-		log.warning( 'Plaintext password= option is used in'
+		log.warning( 'Plaintext [irc] password= option is used in'
 			' configuration file(s) - use password-hash= instead, if possible' )
 		conf.irc_password_hash = pw_hash(conf.irc_password)
 		conf.irc_password = ''
 	if conf.irc_password_hash:
 		try:
 			if pw_hash('hunter2', conf.irc_password_hash):
-				parser.error('Using "hunter2" as password is explicitly prohibited, sorry.')
-		except ValueError as err: parser.error(f'Invalid password-hash value - {err}')
+				parser.error('Using "hunter2" as [irc] password is explicitly prohibited, sorry.')
+		except ValueError as err: parser.error(f'Invalid [irc] password-hash value - {err}')
 
 	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
