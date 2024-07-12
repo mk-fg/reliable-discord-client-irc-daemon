@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.7' # git-version: py-str
+	version = '24.07.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3501,31 +3501,34 @@ class RDIRCD:
 		return self.cache.uid[ck]
 
 	async def run(self):
-		ircd = await (loop := asyncio.get_running_loop()).create_server(
-			IRCProtocol.factory_for_bridge(self),
-			self.conf.irc_host, self.conf.irc_port, family=self.conf.irc_host_af,
-			start_serving=False, reuse_port=True, ssl=self.conf.irc_tls )
-
 		if self.conf.debug_mean_minutes_to_segfault > 0:
 			mins_to_segfault = int( 1 + random.random()
 				* self.conf.debug_mean_minutes_to_segfault * 2 )
 			self.log.debug('Priming segfault timer ({:,d} min)...', mins_to_segfault)
 			self.tasks.add(self.segfault_after_delay(mins_to_segfault * 60))
 
-		self.log.debug('Initializing discord...')
-		try:
-			async with Discord(self) as discord:
-				self.discord = discord
-				self.log.debug('Starting ircd...')
-				ircd_task = self.tasks.add(ircd.serve_forever())
-				if self.conf.discord_auto_connect:
-					self.log.debug('Auto-connecting discord...')
-					loop.call_soon(discord.connect)
-				else: self.log.debug('Note: discord session auto-connect disabled')
-				await ircd_task
-		except DiscordAbort as err:
-			self.log.error('Discord init failure - {}', err_fmt(err))
-		self.log.debug('Finished')
+		ircd = await (loop := asyncio.get_running_loop()).create_server(
+			IRCProtocol.factory_for_bridge(self),
+			self.conf.irc_host, self.conf.irc_port, family=self.conf.irc_host_af,
+			start_serving=False, reuse_port=True, ssl=self.conf.irc_tls )
+		async with cl.AsyncExitStack() as ctx:
+			self.log.debug('Initializing discord...')
+			try: self.discord = await ctx.enter_async_context(Discord(self))
+			except DiscordAbort as err:
+				return self.log.error('Discord init failure - {}', err_fmt(err))
+			if self.conf.discord_auto_connect:
+				self.log.debug('Auto-connecting discord...')
+				loop.call_soon(self.discord.connect)
+			else: self.log.debug('Note: discord session auto-connect disabled')
+
+			self.log.debug('Starting ircd...')
+			await ctx.enter_async_context(ircd)
+			await ircd.start_serving()
+			try: await asyncio.Future() # run forever
+			except asyncio.CancelledError:
+				ircd.close()
+				for conn in self.irc_conns.values(): conn.transport.close()
+			self.log.debug('Finished')
 
 	async def run_async(self):
 		async with self: await self.run()
