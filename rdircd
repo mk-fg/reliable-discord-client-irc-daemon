@@ -3033,11 +3033,23 @@ class DiscordSession:
 						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
+		snapshots = m.get('message_reference') and m.get('message_snapshots') or list()
 
 		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
 		# But normally all embeds should be parsed according to discord_embed_info below
 		line, tags = self.op_msg_parse( m, gg,
-			is_update=msg_is_update, has_media_info=media_info )
+			is_update=msg_is_update, has_media_info=media_info or snapshots )
+
+		if not media_info: media_info = list()
+		for n, msg_ref in enumerate(snapshots):
+			msg = msg_ref.pop('message', None)
+			if msg_ref: self.log.warning('Extra keys in msg-ref [{}]: {}', n, self._repr(m))
+			if not msg: continue
+			msg_line, msg_tags = self.op_msg_parse(msg, gg)
+			tags.update(msg_tags)
+			if msg_line: media_info.extend(msg_line.split('\n'))
+			if lines := self.op_msg_media_info(msg): media_info.extend(lines)
+
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
 		if msg_ev: tags.update(_ev=msg_ev)
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
@@ -3259,9 +3271,10 @@ class DiscordSession:
 				if name := m.get('content'): line = f'[channel renamed to] {name}'
 				else: line = '[channel renamed]'
 			elif mt == mtc.context_menu_command: pass # "Loading..." placeholder
-			elif mt == mtc.default and not (m.get('activity') and m.get('timestamp')):
-				# discord embedded-app activities don't seem to display channel msgs anyway
-				self.log.warning( 'Discarded basic text-msg'
+			elif mt == mtc.default:
+				if m.get('activity') and m.get('timestamp'):
+					pass # discord embedded-app activities don't display channel msgs anyway
+				else: self.log.warning( 'Discarded basic text-msg'
 					' without contents (processing bug?): {}', self._repr(m) )
 		return line.strip(), tags
 
