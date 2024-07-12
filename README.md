@@ -3,7 +3,7 @@
 Table of Contents
 
 - [Description](#hdr-description)
-- [WARNING](#hdr-warning)
+- [WARNING]
 - [Features](#hdr-features)
 - [Limitations](#hdr-limitations)
 - [Usage](#hdr-usage)
@@ -46,6 +46,7 @@ Table of Contents
 - [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
+[WARNING]: #hdr-warning
 [People's names on discord]: #hdr-people_s_names_on_discord
 [Local Name Aliases]: #hdr-local_name_aliases
 [Lookup Discord IDs]: #hdr-lookup_discord_ids
@@ -1598,15 +1599,16 @@ without explicit indication.
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2023-05-23
+Last updated: 2024-07-12
 
--   Discord API docs don't seem to cover "full-featured client" use-case,
-    because such use of its API is explicitly not supported, against their
-    rules/guidelines, and presumably has repercussions if discovered.
+-   [Discord API docs] don't seem to cover "full-featured client" use-case,
+    likely because such use of its API is explicitly not supported, and is
+    against their rules/guidelines (see [WARNING] section above for details).
 
-    See WARNING section above for more details.
+    It's possible that more recent official OpenAPI spec in
+    [discord/discord-api-spec repo] has a more complete documentation though.
 
--   Discord API protocol changes between version, which are documented on
+-   Discord API protocol changes between versions, which are documented on
     [Change Log page of the API docs].
 
     Code has API number hardcoded as DiscordSession.api_ver, which has to be
@@ -1632,12 +1634,16 @@ Last updated: 2023-05-23
 -   Sent message delivery confirmation is done by matching unique "nonce" value in
     MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
 
-    All messages are sent out in strict sequence (via one queue), with synchronous
-    waiting on confirmation, aborting whole queue if first one fails to be delivered,
-    with notices for each failed/discarded msg.
+    All messages are sent out in strict sequence (via one queue), waiting on
+    confirmation for each one in order, aborting rest of the queue if first one
+    fails/times-out to be delivered, with notices for each failed/discarded msg.
 
     This is done to ensure that all messages either arrive in the same strict
     order they've been sent or not posted at all.
+
+    Discord message-posting API has `enforce_nonce` parameter (since 2024-02-12),
+    which allows to retry posting messages safely from duplication, but at the
+    moment retries are only performed here on API rate-limiting.
 
 -   Fetching list of users for discord channel or even guild does not seem to be
     well-supported or intended by the API design.
@@ -1657,19 +1663,21 @@ Last updated: 2023-05-23
 -   Some events on gateway websocket are undocumented, maybe due to lag of docs
     behind implementation, or due to them not being deemed that useful to bots, idk.
 
--   Discord allows channels (and probably users) to have exactly same name, which is not
-    a big deal for users (due to one-way translation), but have to be disambiguated for channels.
+-   Discord allows channels and users to have exactly same visible name, which is not
+    a big deal for users (due to one-way translation), but still disambiguated irc-side.
 
 -   Gateway websocket [can use zlib compression], which makes inspecting protocol in
     browser devtools a bit inconvenient. [gw-ws-har-decode.py] helper script
     in this repo can be used to decompress/decode websocket messages saved from
-    chromium-engine browser devtools (pass -h/--help option for info on how to do it).
+    chromium-engine browser devtools (pass `-h/--help` option for info on how to do it).
 
 -   Adding support for initiating private chats might be a bad idea, as [Cordless]
-    dev apparently got banned for that, as these seem to be main spam vector,
+    dev apparently got banned for that, and since these seem to be main spam vector,
     so more monitoring and anomaly detection is likely done there, leading to
-    higher risk for users.
+    potentially higher risk for users.
 
+[Discord API docs]: https://discord.com/developers/docs/reference
+[discord/discord-api-spec repo]: https://github.com/discord/discord-api-spec/
 [Change Log page of the API docs]: https://discord.com/developers/docs/change-log
 [litecord]: https://gitlab.com/litecord/litecord
 [Abaddon]: https://github.com/uowuo/abaddon
