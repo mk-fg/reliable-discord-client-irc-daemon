@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.6' # git-version: py-str
+	version = '24.07.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3017,13 +3017,14 @@ class DiscordSession:
 		if not m.get('content') and m.get('call'):
 			msg_ev, m.content = 'vc', 'voice-chat: incoming audio/video call notification'
 
-		ref = line_cache = media_info = None
+		ref, line_cache, media_info = None, None, list()
+		snapshots = m.get('message_reference') and m.get('message_snapshots') or list()
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
 			nick = self.st.embed_info.get(m.id)
 			media_info = ( msg_is_update and
-				self.conf.discord_embed_info and self.op_msg_media_info(m) )
+				self.conf.discord_embed_info and self.op_msg_media_info(m) or list() )
 			if media_info: act = 'media' # will be processed/added to msg below
 			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
@@ -3033,14 +3034,12 @@ class DiscordSession:
 						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
-		snapshots = m.get('message_reference') and m.get('message_snapshots') or list()
 
-		# op_msg_parse can add embeds for bot messages, to avoid skipping those entirely
-		# But normally all embeds should be parsed according to discord_embed_info below
+		# "line" here can be multiline, and have attachments/stickers/buttons and such
+		# Link/media info ("embeds") is parsed/cached/added to it separately, if enabled
 		line, tags = self.op_msg_parse( m, gg,
 			is_update=msg_is_update, has_media_info=media_info or snapshots )
 
-		if not media_info: media_info = list()
 		for n, msg_ref in enumerate(snapshots):
 			msg = msg_ref.pop('message', None)
 			if msg_ref: self.log.warning('Extra keys in msg-ref [{}]: {}', n, self._repr(m))
@@ -3164,7 +3163,8 @@ class DiscordSession:
 	def op_msg_parse(self, m, gg, is_update=None, has_media_info=False):
 		# Must produce non-empty message for any relevant msg type
 		# Most message types are protocol notifications that have their "content" discarded
-		# Also used for parsing history query responses, not just events
+		# "embeds" (info for links/media/etc) are handled separately, if enabled in config
+		# Also used for parsing history query responses, not just live events
 		tags, mt, mtc = dict(), m.get('type', ''), self.c_msg_type
 		line, author = (m.get('content') or '').strip(), m.get('author', dict())
 		line = line.replace('\u200b', '') # unicode zero-width-space junk
