@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.07.9' # git-version: py-str
+	version = '24.08.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2359,14 +2359,14 @@ class DiscordSession:
 			ws_url = up.urlunsplit(tuple(parts.values()))
 			self.log_ws.debug('--- -conn- {}', ws_url, extra=('---', f'conn {ws_url}'))
 			self.state('connecting.ws')
-			try:
-				self.ws = await ctx.enter_async_context(self.http.ws_connect(
-					ws_url, heartbeat=self.conf.discord_ws_heartbeat,
-					headers={'User-Agent': self.conf.discord_api_user_agent},
-					timeout=self.conf.discord_ws_conn_timeout, max_msg_size=20 * 2**20 ))
-			except aiohttp.ClientError as err:
-				err_str = err_fmt(err)
-				self.log_ws.debug('--- -conn-fail- {}', err_str, extra=('---', f'conn-fail {err_str}'))
+			try: # ws_connect(timeout=...) is NOT a connection timeout!
+				async with aio_timeout(self.conf.discord_ws_conn_timeout):
+					self.ws = await ctx.enter_async_context(self.http.ws_connect(
+						ws_url, headers={'User-Agent': self.conf.discord_api_user_agent},
+						heartbeat=self.conf.discord_ws_heartbeat, max_msg_size=20 * 2**20 ))
+			except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+				self.log_ws.debug( '--- -conn-fail- {}',
+					err_str := err_fmt(err), extra=('---', f'conn-fail {err_str}') )
 				self.state('connecting.ws.error')
 				self.log.info('Gateway connection error: {}', err_str)
 				if cache: continue # try fetching new gw url
