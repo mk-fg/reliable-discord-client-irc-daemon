@@ -1153,6 +1153,8 @@ class IRCProtocol:
 	nx_chan_warn = ( 'WARNING :: Discord has no channel'
 		' linked to this one, nothing will happen here :: WARNING' )
 
+	server_caps = {'message-tags'}
+
 	@classmethod
 	def factory_for_bridge(cls, rdircd):
 		def _wrapper():
@@ -1170,7 +1172,7 @@ class IRCProtocol:
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None,
-			host=None, auth=False, cap_neg=False, away=None,
+			host=None, auth=False, cap_neg=False, caps=set(), away=None,
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
@@ -1230,15 +1232,22 @@ class IRCProtocol:
 
 	def _parse(self, line):
 		if isinstance(line, bytes): line = line.decode()
-		m = adict(line=line, params=list())
-		for k in '@tags', ':src':
-			pre, k = k[0], k[1:]
-			if line.startswith(pre):
-				try: m[k], line = line.split(' ', 1)
-				except ValueError:
-					raise IRCProtocolLineError(line) from None
-				line = line.lstrip(' ')
-			else: m[k] = None
+		m = adict(line=line, tags=None, src=None, params=list())
+		if line.startswith('@'):
+			try: tags, line = line.split(' ', 1)
+			except ValueError:
+				raise IRCProtocolLineError(line) from None
+			line = line.lstrip(' ')
+
+			m.tags = {}
+			for tag in tags.split(';'):
+				s = tag.split('=', 1)
+				m.tags[s[0]] = s[1] if len(s) == 2 else None
+		if line.startswith(':'):
+			try: m.src, line = line.split(' ', 1)
+			except ValueError:
+				raise IRCProtocolLineError(line) from None
+			line = line.lstrip(' ')
 		while True:
 			if line.startswith(':'):
 				m.params.append(line[1:])
@@ -1350,10 +1359,6 @@ class IRCProtocol:
 		elif cmd in ['user', 'pass']:
 			self.send(462, ':You may not reregister')
 			return False
-		if self.st.cap_neg:
-			# No commands other than auth allowed until capability negotiation ends
-			# Note that negotiation can be skipped entirely too
-			return cmd in ['cap', 'quit', 'ping']
 		return True # any commands allowed outside of phases above
 
 	# chan_spec=#casemap(some-channel), chan_name=casemap(some-channel)
@@ -1370,17 +1375,36 @@ class IRCProtocol:
 		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
 	def recv_cmd_cap(self, sub, caps=''):
-		sub = sub.lower()
-		if sub == 'ls':
-			self.send(0, 'CAP * LS :')
-			if caps == '302': self.st.cap_neg = True
-		elif sub == 'list': self.send(0, f'CAP * LIST :')
-		elif sub == 'req':
+		sub_low = sub.lower()
+		if sub_low == 'ls':
 			self.st.cap_neg = True
-			reject = set(c for c in caps.split() if not c.startswith('-'))
-			if reject: self.send(0, f'CAP * NAK :{caps}')
-			else: self.send(0, f'CAP * ACK :{caps}')
-		elif sub == 'end': self.st.cap_neg = False
+			self.send(0, f'CAP * LS :{' '.join(self.server_caps)}')
+		elif sub_low == 'list':
+			self.send(0, f'CAP * LIST :{' '.join(self.st.caps)}')
+		elif sub_low == 'req':
+			self.st.cap_neg = True
+			to_enable = set()
+			to_disable = set()
+			for c in caps.split():
+				if c.startswith('-'):
+					to_disable.add(c[1:])
+					to_enable.discard(c[1:])
+				else:
+					to_enable.add(c)
+					to_disable.discard(c)
+
+			reject = to_enable - self.server_caps
+			if reject:
+				self.send(0, f'CAP * NAK :{caps}')
+				return
+
+			self.st.caps |= to_enable
+			self.st.caps -= to_disable
+			self.send(0, f'CAP * ACK :{caps}')
+		elif sub_low == 'end':
+			self.st.cap_neg = False
+			self.check_auth_done()
+		else: self.send(410, sub, ':Invalid CAP command')
 
 	def recv_cmd_pass(self, pw):
 		self.st.pw = pw
@@ -1403,6 +1427,7 @@ class IRCProtocol:
 		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
 	def check_auth_done_delayed(self):
 		if self.st.auth: return
+		if self.st.cap_neg: return
 		if not (self.st.nick and self.st.user): return
 		if self.conf.irc_password_hash:
 			if not pw_hash(self.st.pw or '', self.conf.irc_password_hash):
@@ -1625,6 +1650,11 @@ class IRCProtocol:
 			if not irc_name_eq(src, self.st.nick): self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
 
+	def cmd_typing(self, src, chan):
+		if 'message-tags' not in self.st.caps: return
+		chan = self.chan_spec(chan)
+		self.send(f'@+typing=active :{src} TAGMSG {chan}')
+
 	# Some of following user/server/channel-info cmds
 	#  can be (ab)used to provide discord user/channel info.
 	# Currently this isn't stored or queried anywhere,
@@ -1650,6 +1680,8 @@ class IRCProtocol:
 				self.send( 352, '*', conn.st.user, conn.st.host,
 					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
 		self.send(315, name, ':End of /WHO list.')
+
+	def recv_cmd_tagmsg(self, target): pass
 
 	# recv_cmd_whois
 	# recv_cmd_whowas
@@ -2003,6 +2035,9 @@ class Discord:
 		if ev_hash: prefix += f'ev.{ev_hash} ' # to tie multiline stuff and updates together
 		if self.bridge.cmd_msg_recv_filter(nick := self.conf.irc_nick_sys, prefix + msg): return
 		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
+
+	def cmd_typing(self, cc, nick):
+		self.bridge.cmd_typing(cc, nick)
 
 
 
@@ -2696,9 +2731,10 @@ class DiscordSession:
 			elif mt == 'voice_channel_status_update': return self.op_voice_st_chan(m.d)
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
+		elif o == 'typing': return self.op_typing(m.d)
 
 		# Known-ignored events
-		elif o in { 'typing', 'integration', 'channel_pins', 'webhooks', 'call',
+		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
 			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers',
 			'guild_audit_log_entry', 'burst_credit_balance', 'message_poll_vote' }: return
@@ -3432,6 +3468,17 @@ class DiscordSession:
 			cc_old, nick, msg_base + 'user-left', dict(_ev='vc'), notice=True )
 		self.discord.cmd_msg_recv( cc, nick,
 			msg_base + ' '.join(sorted(ev)), dict(_ev='vc'), notice=True )
+
+	def op_typing(self, m):
+		gg = self.st.guilds.get(m.get('guild_id', 1))
+		if gg: cc = gg.chans.get(m.channel_id)
+		if not cc:
+			return self.log.warning( 'Dropped typing event with unknown guild/channel'
+						 ' id: guild_id={} channel_id={}', gg, m.channel_id )
+		nick = self.discord.user_name(m)
+
+		self.discord.cmd_typing(cc, nick)
+
 
 
 
@@ -4348,6 +4395,16 @@ class RDIRCD:
 				conns_joined += self.cmd_chan_conns(cc.parent)
 		self.cmd_msg_monitor( nick, line, prefix_mon,
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
+
+	def cmd_typing(self, cc, nick):
+		nick_discord, nick = nick, self.irc_name(nick)
+
+		name = self.cache.did_chan.get(cc.did)
+		conns_joined = self.cmd_chan_conns(name) if name else list()
+		if not conns_joined and not self.cmd_conn(): return # no irc clients
+
+		for conn in conns_joined:
+			conn.cmd_typing(nick, name)
 
 	def cmd_msg_rename_func(self, cc):
 		'''Returns cmd_msg_discord func to send rename-notice to old channel.
