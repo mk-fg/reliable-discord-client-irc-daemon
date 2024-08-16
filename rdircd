@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.0' # git-version: py-str
+	version = '24.08.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3469,11 +3469,12 @@ class DiscordSession:
 		gg = self.st.guilds.get(m.get('guild_id', 1))
 		if gg: cc = gg.chans.get(m.channel_id)
 		if not cc:
-			return self.log.warning( 'Dropped typing event with unknown guild/channel'
-						 ' id: guild_id={} channel_id={}', gg, m.channel_id )
-		nick = self.discord.user_name(m)
-
-		self.discord.cmd_typing(cc, nick)
+			return self.log.warning( 'Dropped typing event with unknown'
+				' guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
+		# Afaik there is never a user object in these events,
+		#  but maybe discord can be asked to relay these somehow.
+		# E.g. same as ws_req_guild_sync() fixes sending msgs for large discords.
+		self.discord.cmd_typing(cc, self.discord.user_name(m))
 
 
 
@@ -4393,14 +4394,10 @@ class RDIRCD:
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 
 	def cmd_typing(self, cc, nick):
-		nick_discord, nick = nick, self.irc_name(nick)
-
 		name = self.cache.did_chan.get(cc.did)
 		conns_joined = self.cmd_chan_conns(name) if name else list()
 		if not conns_joined and not self.cmd_conn(): return # no irc clients
-
-		for conn in conns_joined:
-			conn.cmd_typing(nick, name)
+		for conn in conns_joined: conn.cmd_typing(self.irc_name(nick), name)
 
 	def cmd_msg_rename_func(self, cc):
 		'''Returns cmd_msg_discord func to send rename-notice to old channel.
