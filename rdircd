@@ -1352,6 +1352,10 @@ class IRCProtocol:
 				self.log.exception('Error processing message: {}', m)
 
 	def check_access(self, cmd):
+		# Blocks IRC commands before st.auth, except for auth, cap-negotiation and pings.
+		# "Registration" (auth) does not finish until cap-neg finishes, as per spec.
+		# After each potentially-auth-finishing command, irc_auth timer is (re-)started.
+		# check_auth_done_delayed() tests all auth requirements, sets st.auth, sends hello.
 		if not self.st.auth:
 			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
 			if not res: self.send(451, ':You have not registered')
@@ -1374,37 +1378,27 @@ class IRCProtocol:
 		# See https://gitlab.com/gitterHQ/irc-bridge/-/issues/34#note_190986152
 		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
-	def recv_cmd_cap(self, sub, caps=''):
-		sub_low = sub.lower()
-		if sub_low == 'ls':
+	def recv_cmd_cap(self, sub_raw, caps=''):
+		if (sub := sub_raw.lower()) == 'ls':
 			self.st.cap_neg = True
-			self.send(0, f'CAP * LS :{' '.join(self.server_caps)}')
-		elif sub_low == 'list':
-			self.send(0, f'CAP * LIST :{' '.join(self.st.caps)}')
-		elif sub_low == 'req':
+			self.send(0, f'CAP * LS :{" ".join(self.server_caps)}')
+		elif sub == 'list':
+			self.send(0, f'CAP * LIST :{" ".join(self.st.caps)}')
+		elif sub == 'req':
 			self.st.cap_neg = True
-			to_enable = set()
-			to_disable = set()
+			cap_set = self.st.caps.copy()
 			for c in caps.split():
-				if c.startswith('-'):
-					to_disable.add(c[1:])
-					to_enable.discard(c[1:])
-				else:
-					to_enable.add(c)
-					to_disable.discard(c)
-
-			reject = to_enable - self.server_caps
-			if reject:
+				if c.startswith('-'): cap_set.discard(c[1:])
+				else: cap_set.add(c)
+			if cap_set.difference(self.st.caps).difference(self.server_caps):
 				self.send(0, f'CAP * NAK :{caps}')
 				return
-
-			self.st.caps |= to_enable
-			self.st.caps -= to_disable
+			self.st.caps = cap_set
 			self.send(0, f'CAP * ACK :{caps}')
-		elif sub_low == 'end':
+		elif sub == 'end':
 			self.st.cap_neg = False
 			self.check_auth_done()
-		else: self.send(410, sub, ':Invalid CAP command')
+		else: self.send(410, sub_raw, ':Invalid CAP command')
 
 	def recv_cmd_pass(self, pw):
 		self.st.pw = pw
@@ -1423,11 +1417,11 @@ class IRCProtocol:
 		self.check_auth_done()
 
 	def check_auth_done(self):
-		# Delay is to avoid trivial bruteforcing
+		# Token-bucket delay is added here is to avoid trivial bruteforcing
 		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
 	def check_auth_done_delayed(self):
 		if self.st.auth: return
-		if self.st.cap_neg: return
+		if self.st.cap_neg: return # delayed until the end of cap-negotiation
 		if not (self.st.nick and self.st.user): return
 		if self.conf.irc_password_hash:
 			if not pw_hash(self.st.pw or '', self.conf.irc_password_hash):
