@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.6' # git-version: py-str
+	version = '24.08.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1821,8 +1821,8 @@ class Discord:
 				line, tags = self.session.op_msg_parse(m, gg)
 				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
-				self.cmd_user_cache( gg.id, m.author.id,
-					nick := self.user_name(m.author), replace=False )
+				self.cmd_user_cache(
+					gg.id, m.author.id, nick := self.user_name(m.author) )
 				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 				if int(m.id) > int(flake): flake = m.id
@@ -1967,8 +1967,7 @@ class Discord:
 			#  and fix matching e.g. discord names with spaces for default regexp.
 			nick = self.bridge.irc_name_revert(nick) or nick
 		if uid := self.user_mention_cache[gid].get(nick): # exact match
-			nick = f'<@{uid}>'
-			self.cmd_user_cache(gid, uid, replace=False)
+			nick = f'<@{uid}>'; self.cmd_user_cache(gid, uid) # bump cache timeout
 		else:
 			users = await self.session.ws_req_users_query(
 				gid, nick, 1 + (n := self.conf.discord_user_query_limit) )
@@ -1978,29 +1977,26 @@ class Discord:
 				nicks = ' '.join(map(repr, nicks[:n])) + (' +' if len(nicks) > n else '')
 				raise IRCBridgeSignal(f'{nick}=[{nicks}]')
 			else: # successful server-lookup with unique result
-				uid = next(iter(users))
-				self.cmd_user_cache(gid, uid, nick, replace=False, query=True)
-				nick = f'<@{uid}>'
+				uid = next(iter(users)); nick = f'<@{uid}>'
+				self.cmd_user_cache(gid, uid, nick, query=True)
 		tag = [tag]
 		for sa, sb, s in sorted(subs + [(na-a, nb-a, nick)], reverse=True):
 			part = tag.pop()
 			tag.extend([part[sb:], s, part[:sa]])
 		return tag
 
-	def cmd_user_cache(self, gid, uid, name=None, replace=True, query=False):
+	def cmd_user_cache(self, gid, uid, name=None, delete=None, query=False):
 		'''Updates user_mention_cache for discord-user-id, as nick_or_query=uid mapping.
-			name is auto-translated to irc nick, unless query=True.
-			name=None replace=True deletes the entry.
-			name=None replace=False resets entry timestamp, so it stays for timeout from now.'''
+			Cache/get IRC nick: cache(gid, uid, nick); nick = cache(gid, uid) # bumps timeout
+			To cache/get user for an @somenick query, e.g. partial match, set query=True
+			To drop cached entry: cache(gid, uid, delete=True, ...)'''
 		users, ts = self.user_mention_cache[gid], time.monotonic()
-		uid_key = f'\0{uid}' if not query else f'\t{uid}' # so that queries can co-exist with users
-		if not replace and uid_key in users:
-			if not name: users[uid_key] = users[uid_key][0], ts
-			return
+		uid_key = f'\0{uid}' if not query else f'\t{uid}'
+		if not name: return (ut := users.get(uid_key)) and ut[0]
 		name_old, ts_old = users.pop(uid_key, (None, 0))
 		# There can be two users with exactly same username, esp. with bridge-bots
 		if name_old: users.pop(name_old, None)
-		if not name: return
+		if delete: return
 		if not query: name = self.bridge.irc_name(name)
 		users[name], users[uid_key] = uid, (name, ts)
 		if ( (ts - self.user_mention_cache_ts_cleanup)
@@ -2008,7 +2004,7 @@ class Discord:
 			ts -= self.conf._discord_user_mention_cache_timeout
 			for uid_key in list(users.keys()):
 				if uid_key[0] not in '\0\t' or uid_key not in users: continue
-				if users[uid_key][1] < ts: self.cmd_user_cache(gid, uid_key[1:])
+				if users[uid_key][1] < ts: users.pop(users.pop(uid_key)[0], None)
 
 	def cmd_chan_rename_func(self, cc, name_old):
 		name_old = self.bridge.irc_name(name_old)
@@ -2771,7 +2767,7 @@ class DiscordSession:
 
 	def op_ev_member(self, m, gid=None, delete=False):
 		if not gid: gid = m.guild_id
-		if delete: return self.discord.cmd_user_cache(gid, m.user.id)
+		if delete: return self.discord.cmd_user_cache(gid, m.user.id, delete=True)
 		self.discord.cmd_user_cache(gid, m.user.id, self.discord.user_name(m.user))
 
 	def op_ev_delete(self, gid=None, chan=...):
@@ -3466,15 +3462,15 @@ class DiscordSession:
 			msg_base + ' '.join(sorted(ev)), dict(_ev='vc'), notice=True )
 
 	def op_typing(self, m):
-		gg = self.st.guilds.get(m.get('guild_id', 1))
-		if gg: cc = gg.chans.get(m.channel_id)
-		if not cc:
-			return self.log.warning( 'Dropped typing event with unknown'
-				' guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
-		# Afaik there is never a user object in these events,
-		#  but maybe discord can be asked to relay these somehow.
-		# E.g. same as ws_req_guild_sync() fixes sending msgs for large discords.
-		self.discord.cmd_typing(cc, self.discord.user_name(m))
+		if gg := self.st.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
+		if not cc: return self.log.warning( 'Dropped typing event with'
+				' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
+		# These messages can have user_id in them, e.g. in private chats
+		# But not always, and maybe discord can be asked to always add these somehow
+		# E.g. same as hack in ws_req_guild_sync() fixes sending msgs for large discords
+		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
+		if nick := m.get('user_id'): nick = self.discord.cmd_user_cache(gg.id, nick)
+		self.discord.cmd_typing(cc, nick or '???')
 
 
 
