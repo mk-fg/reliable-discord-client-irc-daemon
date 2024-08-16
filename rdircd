@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.7' # git-version: py-str
+	version = '24.08.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1648,6 +1648,8 @@ class IRCProtocol:
 		self.send(f':{src} {msg_type} {chan} :{text}')
 
 	def cmd_typing(self, src, chan):
+		# IRC needs these every 3s, while discord sends them every 10s,
+		#  so starting some task repeating IRC notifications every 3s might be useful here.
 		if 'message-tags' not in self.st.caps: return
 		self.send(f'@+typing=active :{src} TAGMSG {self.chan_spec(chan)}')
 
@@ -1821,8 +1823,7 @@ class Discord:
 				line, tags = self.session.op_msg_parse(m, gg)
 				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
-				self.cmd_user_cache(
-					gg.id, m.author.id, nick := self.user_name(m.author) )
+				self.cmd_user_cache(gg.id, m.author.id, nick := self.user_name(m.author))
 				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 				if int(m.id) > int(flake): flake = m.id
@@ -3465,11 +3466,12 @@ class DiscordSession:
 		if gg := self.st.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
 		if not cc: return self.log.warning( 'Dropped typing event with'
 				' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
-		# These messages can have user_id in them, e.g. in private chats
-		# But not always, and maybe discord can be asked to always add these somehow
-		# E.g. same as hack in ws_req_guild_sync() fixes sending msgs for large discords
-		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
-		if nick := m.get('user_id'): nick = self.discord.cmd_user_cache(gg.id, nick)
+		# These messages can have "member" or "user_id" in them (latter in private chats).
+		# But not always, and maybe discord can be asked to always add user info somehow.
+		# E.g. same as hack in ws_req_guild_sync() fixes sending msgs for large discords.
+		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary.
+		if nick := m.get('member'): nick = self.discord.user_name(nick)
+		elif nick := m.get('user_id'): nick = self.discord.cmd_user_cache(gg.id, nick)
 		self.discord.cmd_typing(cc, nick or '???')
 
 
