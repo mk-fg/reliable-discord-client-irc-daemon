@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.12' # git-version: py-str
+	version = '24.08.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -86,6 +86,7 @@ class RDIRCDConfigBase:
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
 	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
 	irc_typing_interval = 4.5 # seconds to repeat ircv3 "user is typing", if supported, 0 = disabled
+	irc_typing_timeout = 10.0 # timeout for ircv3 repeats, after which discord sends its notification
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -1184,9 +1185,8 @@ class IRCProtocol:
 			host=None, auth=False, cap_neg=False, caps=set(), away=None,
 			# Discord sends typing notifications every 10s, ircv3 needs <6s,
 			#  so these get cached here, and task repeats them on irc_typing_interval.
-			typing_repeat=adict(
-				task=None, wakeup=asyncio.Event(),
-				repeat=TimedCacheDict(10, bump_on_get=False) ),
+			typing_repeat=adict( task=None, wakeup=asyncio.Event(),
+				active=TimedCacheDict(self.conf.irc_typing_timeout, bump_on_get=False) ),
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
@@ -1662,24 +1662,31 @@ class IRCProtocol:
 		if self.conf.irc_names_join and src and joined and not notice:
 			if not irc_name_eq(src, self.st.nick): self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
+		self.st.typing_repeat.active.pop((src, chan), None)
 
 	def cmd_typing(self, src, chan, repeated=False):
 		if 'message-tags' not in self.st.caps or self.conf.irc_typing_interval <= 0: return
-		self.send(f'@+typing=active :{src} TAGMSG {self.chan_spec(chan)}')
+		chan = self.chan_spec(chan)
+		self.send(f'@+typing=active :{src} TAGMSG {chan}')
 		if repeated: return
 		if not (task := (st := self.st.typing_repeat).task) or task.done():
 			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
 		else: st.wakeup.set()
-		st.repeat[chan] = src
+		st.active[src, chan] = True
 
 	async def cmd_typing_repeat_task(self):
 		st, last_delay = self.st.typing_repeat, False
+		repeat_last = TimedCacheDict(timeout := self.conf.irc_typing_timeout)
 		while (delay := self.conf.irc_typing_interval) > 0:
-			chan = td_next = 0
-			for td, chan, src in st.repeat.iter_oldest():
-				if td < delay: td_next= td; break
-				self.cmd_typing(src, chan, repeated=True)
-			if not chan: # no repeats left to run
+			td, td_next, ts = None, 0, time.monotonic()
+			for td, repeat, _ in st.active.iter_oldest():
+				if td < delay: td_next = td; break
+				if (td := ts - repeat_last.get(repeat, 0)) < delay:
+					if not td_next or td < td_next: td_next = td
+					continue
+				repeat_last[repeat] = ts
+				self.cmd_typing(*repeat, repeated=True)
+			if td is None: # no repeats left to run
 				if last_delay: break
 				last_delay, td_next = True, -delay * 20 # longer wait before stopping
 			else: last_delay = False
