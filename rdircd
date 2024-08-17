@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.11' # git-version: py-str
+	version = '24.08.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1082,9 +1082,7 @@ class TimedCacheDict(cs.UserDict):
 		ts = time.monotonic()
 		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
 			if (td := ts - ts0) >= self.timeout: continue
-			try: v = self.cache(k)
-			except KeyError: continue
-			yield td, k, v
+			with cl.suppress(KeyError): yield td, k, self.cache(k)
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -1184,9 +1182,9 @@ class IRCProtocol:
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None,
 			host=None, auth=False, cap_neg=False, caps=set(), away=None,
-			# Discord sends typing notifications every 10s, ircv3 needs 3s ones,
-			#  so these get cached in typing_repeats and a task repeats them.
-			typing_repeats=adict(
+			# Discord sends typing notifications every 10s, ircv3 needs <6s,
+			#  so these get cached here, and task repeats them on irc_typing_interval.
+			typing_repeat=adict(
 				task=None, wakeup=asyncio.Event(),
 				repeat=TimedCacheDict(10, bump_on_get=False) ),
 			# Channels here get initialized on joins and removed on parts
@@ -1665,31 +1663,29 @@ class IRCProtocol:
 			if not irc_name_eq(src, self.st.nick): self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
 
-	def cmd_typing(self, src, chan, repeat=False):
-		# IRC needs these every 3s, while discord sends them every 10s,
-		#  so starting some task repeating IRC notifications every 3s might be useful here.
+	def cmd_typing(self, src, chan, repeated=False):
 		if 'message-tags' not in self.st.caps or self.conf.irc_typing_interval <= 0: return
 		self.send(f'@+typing=active :{src} TAGMSG {self.chan_spec(chan)}')
-		if repeat: return
-		if not (task := (st := self.st.typing_repeats).task) or task.done():
+		if repeated: return
+		if not (task := (st := self.st.typing_repeat).task) or task.done():
 			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
 		else: st.wakeup.set()
 		st.repeat[chan] = src
 
 	async def cmd_typing_repeat_task(self):
-		st, last_delay = self.st.typing_repeats, False
-		while True:
-			td, td_next, delay = 0, 0, self.conf.irc_typing_interval
+		st, last_delay = self.st.typing_repeat, False
+		while (delay := self.conf.irc_typing_interval) > 0:
+			chan = td_next = 0
 			for td, chan, src in st.repeat.iter_oldest():
 				if td < delay: td_next= td; break
-				self.cmd_typing(src, chan, repeat=True)
-			if not td:
+				self.cmd_typing(src, chan, repeated=True)
+			if not chan: # no repeats left to run
 				if last_delay: break
 				last_delay, td_next = True, -delay * 20 # longer wait before stopping
 			else: last_delay = False
 			st.wakeup.clear()
-			try: await asyncio.wait_for(st.wakeup.wait(), delay - td_next)
-			except asyncio.TimeoutError: pass
+			with cl.suppress(asyncio.TimeoutError):
+				await asyncio.wait_for(st.wakeup.wait(), delay - td_next)
 
 	def recv_cmd_tagmsg(self, target): pass # typing from irc not relayed to discord
 
