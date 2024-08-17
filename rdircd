@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.9' # git-version: py-str
+	version = '24.08.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1237,14 +1237,14 @@ class IRCProtocol:
 		if line.startswith('@'): # tags
 			try: tags, line = line.split(' ', 1)
 			except ValueError: raise IRCProtocolLineError(line)
-			line = line.lstrip(' ')
 			for tag in tags.split(';'):
 				try:
 					tag, val = tag.split('=', 1)
 					if not val: raise ValueError
+					for a, b in it.batched(_tag_esc, 2): val = val.replace(a, b)
 				except ValueError: val = ''
-				for a, b in it.batched(_tag_esc, 2): val = val.replace(a, b)
 				m.tags[tag] = val
+			line = line.lstrip(' ')
 
 		if line.startswith(':'): # source
 			try: m.src, line = line.split(' ', 1)
@@ -1381,23 +1381,25 @@ class IRCProtocol:
 		# See https://gitlab.com/gitterHQ/irc-bridge/-/issues/34#note_190986152
 		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
-	def recv_cmd_cap(self, sub_raw, caps=''):
+	def recv_cmd_cap(self, sub_raw, caps_str=''):
 		if (sub := sub_raw.lower()) == 'ls':
+			try: ver = caps_str and int(caps_str) or 0 # unused, to filter sent caps
+			except ValueError:
+				return self.send(410, sub_raw, ':Invalid CAP command')
 			self.st.cap_neg = True
 			self.send(0, f'CAP * LS :{" ".join(self.server_caps)}')
 		elif sub == 'list':
 			self.send(0, f'CAP * LIST :{" ".join(self.st.caps)}')
 		elif sub == 'req':
-			self.st.cap_neg = True
-			cap_set = self.st.caps.copy()
-			for c in caps.split():
-				if c.startswith('-'): cap_set.discard(c[1:])
-				else: cap_set.add(c)
-			if cap_set.difference(self.st.caps).difference(self.server_caps):
-				self.send(0, f'CAP * NAK :{caps}')
-				return
-			self.st.caps = cap_set
-			self.send(0, f'CAP * ACK :{caps}')
+			self.st.cap_neg, caps = True, self.st.caps.copy()
+			for c in caps_str.split():
+				if c.startswith('-'): caps.discard(c[1:])
+				else: caps.add(c)
+			if caps.difference(self.server_caps):
+				return self.send(0, f'CAP * NAK :{caps_str}')
+			self.st.caps = caps
+			self.send(0, f'CAP * ACK :{caps_str}')
+			self.log.debug('Negotiated IRCv3 caps: {}', ' '.join(self.st.caps))
 		elif sub == 'end':
 			self.st.cap_neg = False
 			self.check_auth_done()
@@ -4392,10 +4394,8 @@ class RDIRCD:
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 
 	def cmd_typing(self, cc, nick):
-		name = self.cache.did_chan.get(cc.did)
-		conns_joined = self.cmd_chan_conns(name) if name else list()
-		if not conns_joined and not self.cmd_conn(): return # no irc clients
-		for conn in conns_joined: conn.cmd_typing(self.irc_name(nick), name)
+		if not (name := self.cache.did_chan.get(cc.did)): return
+		for conn in self.cmd_chan_conns(name): conn.cmd_typing(self.irc_name(nick), name)
 
 	def cmd_msg_rename_func(self, cc):
 		'''Returns cmd_msg_discord func to send rename-notice to old channel.
