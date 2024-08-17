@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.10' # git-version: py-str
+	version = '24.08.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -85,6 +85,7 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
 	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
+	irc_typing_interval = 4.5 # seconds to repeat ircv3 "user is typing", if supported, 0 = disabled
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -1061,11 +1062,10 @@ class TimedCacheDict(cs.UserDict):
 		self.ts, self.ts_min = dict(), None
 		self.timeout, self.bump_on_get = timeout, bump_on_get
 		super().__init__()
-	def __getitem__(self, k): return self.cache(k)
-	def __setitem__(self, k, v): return self.cache(k, v)
+
 	def cache(self, k, v=_no_value):
 		ts = time.monotonic()
-		if (get_op := v is self._no_value) or self.bump_on_get: self.ts[k] = ts
+		if not (get_op := v is self._no_value) or self.bump_on_get: self.ts[k] = ts
 		v = super().__getitem__(k) if get_op else super().__setitem__(k, v)
 		if not self.ts_min: self.ts_min = ts; return v
 		elif get_op or ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return v
@@ -1074,6 +1074,17 @@ class TimedCacheDict(cs.UserDict):
 			self.ts_min = ts0; break
 		else: self.ts_min = None
 		return v
+
+	def __getitem__(self, k): return self.cache(k)
+	def __setitem__(self, k, v): return self.cache(k, v)
+	def iter_oldest(self):
+		'Iterator for all cached (time-delta, key, val) in oldest-first order'
+		ts = time.monotonic()
+		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
+			if (td := ts - ts0) >= self.timeout: continue
+			try: v = self.cache(k)
+			except KeyError: continue
+			yield td, k, v
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -1173,6 +1184,11 @@ class IRCProtocol:
 		self._cmd_cache, self.st = dict(), adict(
 			nick=None, user=None, pw=None,
 			host=None, auth=False, cap_neg=False, caps=set(), away=None,
+			# Discord sends typing notifications every 10s, ircv3 needs 3s ones,
+			#  so these get cached in typing_repeats and a task repeats them.
+			typing_repeats=adict(
+				task=None, wakeup=asyncio.Event(),
+				repeat=TimedCacheDict(10, bump_on_get=False) ),
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
@@ -1649,11 +1665,31 @@ class IRCProtocol:
 			if not irc_name_eq(src, self.st.nick): self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
 
-	def cmd_typing(self, src, chan):
+	def cmd_typing(self, src, chan, repeat=False):
 		# IRC needs these every 3s, while discord sends them every 10s,
 		#  so starting some task repeating IRC notifications every 3s might be useful here.
-		if 'message-tags' not in self.st.caps: return
+		if 'message-tags' not in self.st.caps or self.conf.irc_typing_interval <= 0: return
 		self.send(f'@+typing=active :{src} TAGMSG {self.chan_spec(chan)}')
+		if repeat: return
+		if not (task := (st := self.st.typing_repeats).task) or task.done():
+			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
+		else: st.wakeup.set()
+		st.repeat[chan] = src
+
+	async def cmd_typing_repeat_task(self):
+		st, last_delay = self.st.typing_repeats, False
+		while True:
+			td, td_next, delay = 0, 0, self.conf.irc_typing_interval
+			for td, chan, src in st.repeat.iter_oldest():
+				if td < delay: td_next= td; break
+				self.cmd_typing(src, chan, repeat=True)
+			if not td:
+				if last_delay: break
+				last_delay, td_next = True, -delay * 20 # longer wait before stopping
+			else: last_delay = False
+			st.wakeup.clear()
+			try: await asyncio.wait_for(st.wakeup.wait(), delay - td_next)
+			except asyncio.TimeoutError: pass
 
 	def recv_cmd_tagmsg(self, target): pass # typing from irc not relayed to discord
 
@@ -3819,12 +3855,13 @@ class RDIRCD:
 
 
 	def cmd_delay(self, delay, func=None):
+		'Runs asyncio task after an optional delay, waiting/monitoring it for errors'
 		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			else: raise ValueError(delay)
-		if delay: self.tasks.add(asyncio.sleep(delay), func)
-		else: self.tasks.add(aio_await_wrap(func))
+		if delay: return self.tasks.add(asyncio.sleep(delay), func)
+		else: return self.tasks.add(aio_await_wrap(func))
 
 	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
