@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.13' # git-version: py-str
+	version = '24.08.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -85,8 +85,6 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
 	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
-	irc_typing_interval = 4.5 # seconds to repeat ircv3 "user is typing", if supported, 0 = disabled
-	irc_typing_timeout = 10.0 # timeout for ircv3 repeats, after which discord sends its notification
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -115,6 +113,15 @@ class RDIRCDConfigBase:
 	irc_chan_voice = 'rdircd.voice'
 	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
 	irc_chan_voice_guild = ''
+
+	# Interval (seconds) to repeat discord typing notifications, if client supports them.
+	# Discord sends typing notifications every ~10s, ircv3 requires these to be every 3-6s.
+	# Default is "repeat +1 notification 4.5s after one from discord", so that in
+	#  ~10s irc client either assumes that typing stopped or gets new one from discord.
+	# Setting interval to 0 hard-disables all typing notifications entirely.
+	# Setting timeout to 0 will only proxy notifications from discord as-is.
+	irc_typing_interval = 4.5
+	irc_typing_timeout = 6.0 # timeout after which typing-notification repeats stop
 
 	# topic-*: topic templates for all channels, using python str.format templating
 	# Following template-vars are available, where they make sense, empty strings otherwise:
@@ -1665,11 +1672,13 @@ class IRCProtocol:
 		self.st.typing_repeat.active.pop((src, chan), None)
 
 	def cmd_typing(self, src, chan, repeated=False):
-		if 'message-tags' not in self.st.caps or self.conf.irc_typing_interval <= 0: return
+		interval, timeout = self.conf.irc_typing_interval, self.conf.irc_typing_timeout
+		if 'message-tags' not in self.st.caps or interval <= 0: return
 		chan = self.chan_spec(chan)
 		self.send(f'@+typing=active :{src} TAGMSG {chan}')
 		if repeated: return
-		if not (task := (st := self.st.typing_repeat).task) or task.done():
+		if timeout and timeout > interval and (
+				not (task := (st := self.st.typing_repeat).task) or task.done() ):
 			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
 		else: st.wakeup.set()
 		st.active[src, chan] = True
