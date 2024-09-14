@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.0' # git-version: py-str
+	version = '24.09.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -114,14 +114,17 @@ class RDIRCDConfigBase:
 	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
 	irc_chan_voice_guild = ''
 
-	# Interval (seconds) to repeat discord typing notifications, if client supports them.
+	# Interval (seconds) to repeat typing notifications from discord to irc client (if supported).
 	# Discord sends typing notifications every ~10s, ircv3 requires these to be every 3-6s.
 	# Default is "repeat +1 notification 4.5s after one from discord", so that in
 	#  ~10s irc client either assumes that typing stopped or gets new one from discord.
-	# Setting interval to 0 hard-disables all typing notifications entirely.
+	# Setting interval to 0 hard-disables receiving typing notifications from discord users.
 	# Setting timeout to 0 will only proxy notifications from discord as-is.
 	irc_typing_interval = 4.5
 	irc_typing_timeout = 6.0 # timeout after which typing-notification repeats stop
+	# Send typing events from irc client (if it generates them) to a discord channel.
+	# Default-disabled for privacy reasons.
+	irc_typing_send_enabled = False
 
 	# topic-*: topic templates for all channels, using python str.format templating
 	# Following template-vars are available, where they make sense, empty strings otherwise:
@@ -1077,8 +1080,9 @@ class TimedCacheDict(cs.UserDict):
 		super().__init__()
 
 	def cache(self, k, v=_no_value):
-		ts = time.monotonic()
-		if not (get_op := v is self._no_value) or self.bump_on_get: self.ts[k] = ts
+		ts, get_op = time.monotonic(), v is self._no_value
+		if get_op and (ts - self.ts.get(k, 0)) > self.timeout: raise KeyError(k)
+		if not get_op or self.bump_on_get: self.ts[k] = ts
 		v = super().__getitem__(k) if get_op else super().__setitem__(k, v)
 		if not self.ts_min: self.ts_min = ts; return v
 		elif get_op or ts - self.ts_min <= self.timeout * self.timeout_cleanup_slack: return v
@@ -1088,6 +1092,9 @@ class TimedCacheDict(cs.UserDict):
 		else: self.ts_min = None
 		return v
 
+	def get(self, k, default=None):
+		try: return self.cache(k)
+		except KeyError: return default
 	def __getitem__(self, k): return self.cache(k)
 	def __setitem__(self, k, v): return self.cache(k, v)
 	def iter_oldest(self):
@@ -1261,7 +1268,7 @@ class IRCProtocol:
 		m = adict(line=line, tags=dict(), src=None, params=list())
 
 		if line.startswith('@'): # tags
-			try: tags, line = line.split(' ', 1)
+			try: tags, line = line[1:].split(' ', 1)
 			except ValueError: raise IRCProtocolLineError(line)
 			for tag in tags.split(';'):
 				try:
@@ -1360,7 +1367,7 @@ class IRCProtocol:
 			if cmd_func:
 				args = list(inspect.signature(cmd_func).parameters.values())
 				cmd_ps_n = len(args)
-				if cmd_ps_n == 1 and args[0].annotation == 'msg': cmd_ps_n = None
+				if cmd_ps_n == 1 and args[0].annotation is adict: cmd_ps_n = None
 				else: cmd_ps_n = cmd_ps_n - sum(1 for p in args if p.default is not p.empty), cmd_ps_n
 			self._cmd_cache[m.cmd] = cmd_func, cmd_ps_n
 		if not cmd_func:
@@ -1638,9 +1645,8 @@ class IRCProtocol:
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		if self.chan_spec_check(target):
 			chan, name = target, self.chan_name(target)
-			if not notice: c = self.req_chan_info(chan)
-			else: c = self.bridge.cmd_chan_map().get(name) # avoids error-notices
-			if c is False:
+			if (c := self.req_chan_info(chan, check=not notice)) is False:
+				if notice: return # not supposed to generate responses
 				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
 					' there is no corresponding discord channel, msgs here are discarded' )
 			if not c: return
@@ -1708,7 +1714,14 @@ class IRCProtocol:
 			with cl.suppress(asyncio.TimeoutError):
 				await asyncio.wait_for(st.wakeup.wait(), delay - td_next)
 
-	def recv_cmd_tagmsg(self, target): pass # typing from irc not relayed to discord
+	def recv_cmd_tagmsg(self, m: adict): # should probably be a dispatcher
+		if self.conf.irc_typing_send_enabled and (tag := m.tags.get('+typing')):
+			typing_stop, chans = False, list(m.params)
+			if tag in ['paused', 'done']: typing_stop = True
+			elif tag != 'active': chans.clear() # unsupported typing event
+			for chan in chans:
+				if not (self.chan_spec_check(chan) and self.req_chan_info(chan, check=False)): continue
+				self.bridge.irc_typing(self, chan, stop=typing_stop)
 
 	# Some of following user/server/channel-info cmds
 	#  can be (ab)used to provide discord user/channel info.
@@ -1781,6 +1794,7 @@ class Discord:
 			s.task = asyncio.create_task(s.run_async())
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
+		self.typing_delays = TimedCacheDict(timeout=6.8, bump_on_get=False)
 		self.user_mention_cache = cs.defaultdict(irc_name_dict)
 		self.user_mention_cache_ts_cleanup = 0
 		return self
@@ -2088,6 +2102,11 @@ class Discord:
 	def cmd_typing(self, cc, nick):
 		self.bridge.cmd_typing(cc, nick)
 
+	def cmd_typing_from_irc(self, cc):
+		if (delays := self.typing_delays).get(cc.id): return
+		delays[cc.id] = True
+		self.session.req_sync(f'channels/{cc.id}/typing', m='post', raw=True)
+
 
 
 class DiscordSession:
@@ -2365,6 +2384,9 @@ class DiscordSession:
 		if '\n' in res_repr: res_repr = (res_repr.strip() + ' ').splitlines()[0]
 		self.log_http.debug('<<  {}', self._repr(res_repr), extra=('<< ', res_repr))
 		return res
+
+	def req_sync(self, *req_args, **req_kws):
+		self.tasks.add(self.req(*req_args, **req_kws))
 
 
 	### Gateway Websocket wrappers
@@ -3878,6 +3900,11 @@ class RDIRCD:
 
 		finally: self.irc_msg_queue = None
 
+	def irc_typing(self, conn, chan, stop=False):
+		'Typing event from an IRC client, to rate-limit and send to discord'
+		if stop or not (info := self.irc_discord_info(name := conn.chan_name(chan))): return
+		self.discord.cmd_typing_from_irc(info.cc)
+
 
 	def cmd_delay(self, delay, func=None):
 		'Runs asyncio task after an optional delay, waiting/monitoring it for errors'
@@ -4101,7 +4128,7 @@ class RDIRCD:
 			sz = f'{sz / u1:.1f}'.removesuffix('.0')
 			return f'{sz} {u}'
 		med = lambda v, n: v / n if n > 0 else 0
-		c, stats = self.discord.st.icache, list()
+		c, stats = self.discord.st.get('icache', dict()), list()
 		for name, ck, cx, cxn in (
 				('Shared', None, 'shared', 'shared'),
 				('Interacted-with "hot"', None, 'hot', 'hot'),
@@ -4456,6 +4483,7 @@ class RDIRCD:
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 
 	def cmd_typing(self, cc, nick):
+		'Incoming typing event from some user in a discord channel'
 		if not (name := self.cache.did_chan.get(cc.did)): return
 		for conn in self.cmd_chan_conns(name): conn.cmd_typing(self.irc_name(nick), name)
 
