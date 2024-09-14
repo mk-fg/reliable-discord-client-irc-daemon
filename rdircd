@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.08.14' # git-version: py-str
+	version = '24.09.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -181,6 +181,9 @@ class RDIRCDConfigBase:
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
 	discord_media_info_timeout = '30m' # ignore no-author attachment updates for old msgs
 
+	discord_msg_old_upd_timestamp = '1d' # add date/time to msg edits older than this, 0 - disable
+	discord_msg_old_upd_ignore = '4d' # completely ignore msg edits older than this, 0 - disable
+
 	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
 	# "aaa" group is used as a python regexp to match what to replace, "bbb" - replacement.
 	# Any msg matched by this regexp is treated as edit for re.sub(), never sent to channel.
@@ -321,9 +324,11 @@ class RDIRCDConfigBase:
 	_conv_discord_media_info_timeout = lambda s, v: parse_duration(v)
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
+	_conv_discord_msg_old_upd_timestamp = lambda s, v: parse_duration(v)
+	_conv_discord_msg_old_upd_ignore = lambda s, v: parse_duration(v)
+	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x'))
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
-	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x') )
 	_conv_discord_msg_interact_cache_expire = lambda s, v: parse_duration(v)
 	_conv_discord_voice_notify_after_inactivity = lambda s, v: parse_duration(v)
 	_conv_discord_voice_join_left_cache_expire = lambda s, v: parse_duration(v)
@@ -1888,18 +1893,19 @@ class Discord:
 			return f'No info for {info_url}: {err}'
 		return data_repr(info)
 
-	def cmd_msg_recv( self, cc, nick, line,
-			tags=None, flake=None, nonce=None, notice=None, skip_monitor=False ):
+	def cmd_msg_recv( self, cc, nick, line, tags=None,
+			new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
 		'Relay message from Discord to IRC.'
+		# new_msg_flake is only passed to update channel ts or confirm own msg
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gg.id, cc.name, nick, line, tags or '')
-		if nonce and flake and not ( self.conf.discord_thread_msgs_in_parent_chan
+		if nonce and new_msg_flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
 			# Thread-prefixed msgs can be mirrored to two chans, hence the check/skip here
 			if fut := self.msg_confirms.pop(nonce, None):
-				self.log.debug('MSG: confirm nonce={} flake={}', nonce, flake)
-				return fut.set_result(flake)
-		self.bridge.cmd_msg_discord( cc, nick, line,
-			tags=tags, notice=notice, ts=self.flake_parse(flake), skip_monitor=skip_monitor )
+				self.log.debug('MSG: confirm nonce={} flake={}', nonce, new_msg_flake)
+				return fut.set_result(new_msg_flake)
+		self.bridge.cmd_msg_discord( cc, nick, line, tags=tags,
+			notice=notice, ts=self.flake_parse(new_msg_flake), skip_monitor=skip_monitor )
 
 	def _cmd_msg_err_wrap(func):
 		@ft.wraps(func)
@@ -3081,17 +3087,22 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
-		flake, nick, msg_ev, msg_is_update = None, m.get('author'), None, act == 'update'
+		new_msg_flake, nick, ts = None, m.get('author'), time.time()
+		msg_ev, msg_ts, msg_is_update = None, self.discord.flake_parse(m.id), act == 'update'
 
-		if ( msg_is_update # sometimes discord sends completely empty msg-updates
-			and not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']) ): return
+		if msg_is_update:
+			# Sometimes discord sends completely empty msg-updates
+			if not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']): return
+			if (td := self.conf._discord_msg_old_upd_ignore) and ts - msg_ts > td:
+				return self.log.debug( 'Ignoring too-old msg update'
+					' [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 
 		if cc.tid and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
-			ext = f'[{ts_iso8601(self.discord.flake_parse(m.id), human=True)}]'
+			ext = f'[{ts_iso8601(msg_ts, human=True)}]'
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
 			return self.discord.cmd_msg_recv(cc, None, f'message was deleted {ext}', dict(_ev=True))
 		if not m.get('content') and m.get('call'):
@@ -3108,10 +3119,9 @@ class DiscordSession:
 			if media_info: act = 'media' # will be processed/added to msg below
 			elif not nick: # some bots-changes msgs have no author - try ref-cache
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
-				elif msg_is_update and (ts := self.discord.flake_parse(m.id)) < (
-						time.time() - self.conf._discord_media_info_timeout ):
-					return self.log.debug( 'Ignoring no-author update'
-						' (media/embeds) of an old msg [{}]: id={}', ts_iso8601(ts, short=True), m.id )
+				elif msg_is_update and ts - msg_ts > self.conf._discord_media_info_timeout:
+					return self.log.debug( 'Ignoring no-author update (media/embeds)'
+						' of an old msg [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 
@@ -3134,9 +3144,12 @@ class DiscordSession:
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
 		self.op_msg_ref(m.id, cc, nick, line, ref=ref)
-		if msg_is_update: tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
+		if msg_is_update:
+			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
+			if (td := self.conf._discord_msg_old_upd_timestamp) and ts - msg_ts > td:
+				tags['_prefix'] += f'[old-msg {ts_iso8601(msg_ts, human=True, short=True)}] '
 		else:
-			flake, ref = m.id, m.get('referenced_message')
+			new_msg_flake, ref = m.id, m.get('referenced_message')
 			if self.conf.irc_inline_reply_quote_len > 0 and ref:
 				ref_user = '' if not ( (u := ref.get('author'))
 					and (u := self.discord.bridge.irc_name(
@@ -3169,7 +3182,7 @@ class DiscordSession:
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
 		self.discord.cmd_msg_recv( cc, nick, line.strip(), tags,
-			flake=flake, nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
+			new_msg_flake, nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m, force_meta=False):
 		'Parse and return "embeds" objects as text lines to prefix and append to msg'
