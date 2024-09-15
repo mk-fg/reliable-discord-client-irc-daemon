@@ -15,41 +15,59 @@ Table of Contents
 - [Misc Feature Info](#hdr-misc_feature_info)
 
     - [Multiple Config Files](#hdr-multiple_config_files)
+    - [Private Chats](#hdr-private_chats)
     - [Channel Commands](#hdr-channel_commands)
-    - [#rdircd.monitor and #rdircd.leftover channels](#hdr-_rdircd.monitor_and_rdircd.leftover_channels)
+    - [#rdircd.monitor and #rdircd.leftover channels]
     - [People's names on discord]
     - [Local Name Aliases]
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
-    - [Auto-joining channels](#hdr-auto-joining_channels)
+    - [Auto-joining channels]
     - [Discord user mentions](#hdr-discord_user_mentions)
-    - [Quick edits/deletes for just-sent messages](#hdr-quick_edits_deletes_for_just-sent_messages)
-    - [@silent messages and other such flags](#hdr-_silent_messages_and_other_such_flags)
-    - [Custom replacements/blocks in outgoing messages](#hdr-custom_replacements_blocks_in_outgoing_m.NzCf)
-    - [Custom filtering for all received messages](#hdr-custom_filtering_for_all_received_messages)
+    - [Quick edits/deletes for just-sent messages]
+    - [@silent messages and other such flags]
+    - [Custom replacements/blocks in outgoing messages]
+    - [Custom filtering for all received messages]
     - [Lookup Discord IDs]
-    - [Channel name disambiguation](#hdr-channel_name_disambiguation)
-    - [OSC 8 hyperlinks for terminal IRC clients](#hdr-osc_8_hyperlinks_for_terminal_irc_clients)
-    - [Voice chat activity notifications](#hdr-voice_chat_activity_notifications)
-    - [Highlight on incoming private messages](#hdr-highlight_on_incoming_private_messages)
+    - [Channel name disambiguation]
+    - [OSC 8 hyperlinks for terminal IRC clients]
+    - [Voice chat activity notifications]
+    - [Highlight on incoming private messages]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Debugging anything strange, unknown or unexpected]
 
 - [Random tips and tricks](#hdr-random_tips_and_tricks)
 
-    - [Simpler DM and monitor channel names](#hdr-simpler_dm_and_monitor_channel_names)
+    - [Simpler DM and monitor channel names]
     - [Change message edit/embed/attachment prefixes to shorter emojis]
-    - [Cut down on various common noise](#hdr-cut_down_on_various_common_noise)
+    - [Cut down on various common noise]
 
 - [Links]
-- [More info on third-party client blocking](#hdr-more_info_on_third-party_client_blocking)
+- [More info on third-party client blocking]
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
 [WARNING]: #hdr-warning
+[#rdircd.monitor and #rdircd.leftover channels]:
+  #hdr-_rdircd.monitor_and_rdircd.leftover_channels
 [People's names on discord]: #hdr-people_s_names_on_discord
 [Local Name Aliases]: #hdr-local_name_aliases
+[Auto-joining channels]: #hdr-auto-joining_channels
+[Quick edits/deletes for just-sent messages]:
+  #hdr-quick_edits_deletes_for_just-sent_messages
+[@silent messages and other such flags]:
+  #hdr-_silent_messages_and_other_such_flags
+[Custom replacements/blocks in outgoing messages]:
+  #hdr-custom_replacements_blocks_in_outgoing_m.NzCf
+[Custom filtering for all received messages]:
+  #hdr-custom_filtering_for_all_received_messages
 [Lookup Discord IDs]: #hdr-lookup_discord_ids
+[Channel name disambiguation]: #hdr-channel_name_disambiguation
+[OSC 8 hyperlinks for terminal IRC clients]:
+  #hdr-osc_8_hyperlinks_for_terminal_irc_clients
+[Voice chat activity notifications]: #hdr-voice_chat_activity_notifications
+[Highlight on incoming private messages]:
+  #hdr-highlight_on_incoming_private_messages
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Captcha-solving is required to login for some reason]:
@@ -58,6 +76,12 @@ Table of Contents
   #hdr-debugging_anything_strange_unknown_or_un.NQDm
 [Change message edit/embed/attachment prefixes to shorter emojis]:
   #hdr-change_message_edit_embed_attachment_pre.xxnp
+[Simpler DM and monitor channel names]:
+  #hdr-simpler_dm_and_monitor_channel_names
+[Cut down on various common noise]: #hdr-cut_down_on_various_common_noise
+[Links]: #hdr-links
+[More info on third-party client blocking]:
+  #hdr-more_info_on_third-party_client_blocking
 
 
 
@@ -90,7 +114,6 @@ Last one has git-notes with todo list and such at the default ref for those.
 [Discord]: http://discord.gg/
 [IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 [#rdircd at libera.chat]: https://web.libera.chat/?channels=#rdircd
-[Links]: #hdr-links
 
 
 <a name=hdr-warning></a>
@@ -112,7 +135,6 @@ You have been warned! :)
 
 [Bot vs User Accounts]:
   https://discord.com/developers/docs/topics/oauth2#bot-vs-user-accounts
-[More info on third-party client blocking]: #hdr-more_info_on_third-party_client_blocking
 
 
 <a name=hdr-features></a>
@@ -449,6 +471,24 @@ load and apply values from all config files in the same order.
 Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
 
+<a name=hdr-private_chats></a>
+### Private Chats
+
+ALL chats in rdircd (and discord) are **a channel**.\
+IRC's /q, /query and /msg **cannot be used** in an IRC-typical way.\
+To talk in any private chat, **join a channel** like #me.chat.\<username\>,
+which behaves like any other discord/rdircd channels.
+
+There is currently no way to create new private chats from rdircd,
+use other clients or WebUI for that (or ask someone to contact you first),
+but once private chat channel is created, it can be used in rdircd as well.
+
+See also [Auto-joining channels] and/or [/join e.g. #rdircd.leftover.me channel]
+to monitor private messages reliably, if needed.
+
+[/join e.g. #rdircd.leftover.me channel]:
+  #hdr-_rdircd.monitor_and_rdircd.leftover_channels
+
 <a name=hdr-channel_commands></a>
 ### Channel Commands
 
@@ -521,7 +561,6 @@ e.g. here are some of the commands for #rdircd.control:
 [section about this filtering]: #hdr-custom_filtering_for_all_received_messages
 [more examples of such stuff under tips-and-tricks]: #hdr-cut_down_on_various_common_noise
 
-
 <a name=hdr-_rdircd.monitor_and_rdircd.leftover_channels></a>
 ### #rdircd.monitor and #rdircd.leftover channels
 
@@ -582,7 +621,6 @@ section can be used to control these limits,
 see ["./rdircd --conf-dump-defaults" output] for their default values.
 There are also options to change name format of monitor channels.
 
-[Auto-joining channels]: #hdr-auto-joining_channels
 [shell-like globs]: https://docs.python.org/3/library/fnmatch.html
 [python regexps]: https://docs.python.org/3/library/re.html
 ["./rdircd --conf-dump-defaults" output]: rdircd.defaults.ini
