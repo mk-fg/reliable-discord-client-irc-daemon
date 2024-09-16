@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.2' # git-version: py-str
+	version = '24.09.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3551,12 +3551,12 @@ class DiscordSession:
 		if gg := self.st.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
 		if not cc: return self.log.warning( 'Dropped typing event with'
 				' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
-		# These messages can have "member" or "user_id" in them (latter in private chats).
-		# But not always, and maybe discord can be asked to always add user info somehow.
-		# E.g. same as hack in ws_req_guild_sync() fixes sending msgs for large discords.
-		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary.
-		if nick := m.get('member'): nick = self.discord.user_name(nick)
-		elif nick := m.get('user_id'): nick = self.discord.cmd_user_cache(gg.id, nick)
+		# These messages can have "user_id" and "member" in them (not in private chats)
+		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
+		if uid := m.get('member'):
+			nick, uid = self.discord.user_name(uid), uid.get('user', dict()).get('id')
+		elif uid := m.get('user_id'): nick = self.discord.cmd_user_cache(gg.id, uid)
+		if uid == self.st.user_id: return # echo of own typing msgs
 		self.discord.cmd_typing(cc, nick or '???')
 
 
