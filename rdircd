@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.4' # git-version: py-str
+	version = '24.09.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1749,7 +1749,10 @@ class IRCProtocol:
 					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
 		self.send(315, name, ':End of /WHO list.')
 
-	# recv_cmd_whois
+	def recv_cmd_whois(self, *args):
+		self.send( 421, ':IRC /WHOIS command is'
+			' NOT SUPPORTED, use "/t info ..." in channels, see README for details' )
+
 	# recv_cmd_whowas
 	# recv_cmd_admin
 	# recv_cmd_time
