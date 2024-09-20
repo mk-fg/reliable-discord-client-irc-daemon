@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.5' # git-version: py-str
+	version = '24.09.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2854,8 +2854,14 @@ class DiscordSession:
 
 	def op_ev_delete(self, gid=None, chan=...):
 		if not (gg := self.st.guilds.get(gid)): return
-		if chan is not ...: gg.chans.pop(chan, None)
-		else: self.st.guilds.pop(gid, None)
+		if chan is not ...:
+			self.log.debug('Channel delete event: guild={} chan={}', gid, chan)
+			if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
+				gid, f'Discord channel deleted: {self.discord.irc_chan_name(cc)}' )
+		else:
+			self.log.debug('Guild delete event: guild={}', gid)
+			self.discord.cmd_guild_event(gid, 'Discord was DELETED')
+			self.st.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guilds, sync=False):
 		gs_new, gs_chans, gs_vcs = {1: self.st.me}, dict(), cs.defaultdict(set)
@@ -3069,7 +3075,7 @@ class DiscordSession:
 
 	def op_ev_ban(self, m, act):
 		name = self.discord.user_name(m)
-		self.discord.cmd_guild_event(m.guild_id, f'Guild user ban: {act} {name}')
+		self.discord.cmd_guild_event(m.guild_id, f'Discord user ban: {act} {name}')
 
 	def op_ev_rel(self, m, act):
 		t, name = m.get('type'), m.get('user')
