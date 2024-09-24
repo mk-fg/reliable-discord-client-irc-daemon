@@ -1237,7 +1237,7 @@ Messages blocked by e.g. \[recv-regexp-filters\] or received when there are
 no IRC clients connected don't count.
 
 If IRC client supports [IRCv3 typing notifications] and has these enabled,
-rdircd will send it those from discord users/channels by default, which can be
+rdircd will forward those from discord users/channels by default, which can be
 disabled by setting `typing-interval = 0` in \[irc\] configuration section,
 or interval/timeout values can be adjusted there to work better for IRC app.
 

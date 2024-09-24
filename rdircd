@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.11' # git-version: py-str
+	version = '24.09.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1797,6 +1797,11 @@ class Discord:
 		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.discord')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
+		self.st_eris = adict(
+			enabled=False, online=False,
+			msg_confirms=dict(), msg_acks=adict(queue=dict(), task=None),
+			typing_delays=TimedCacheDict(timeout=6.8, bump_on_get=False),
+			user_mentions=adict(cache=cs.defaultdict(irc_name_dict), ts=0) )
 
 	async def __aenter__(self):
 		if not ( self.conf.get('auth_email')
@@ -1806,13 +1811,7 @@ class Discord:
 		else:
 			s = self.session = DiscordSession(self)
 			s.task = asyncio.create_task(s.run_async())
-		self.connected = self.online = False
-		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
-		self.flake_n, self.msg_confirms = 0, dict()
-		self.typing_delays = TimedCacheDict(timeout=6.8, bump_on_get=False)
-		self.msg_acks = adict(queue=dict(), task=None)
-		self.user_mention_cache = cs.defaultdict(irc_name_dict)
-		self.user_mention_cache_ts_cleanup = 0
+		self.flake_n, self.flake_id = 0, (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		return self
 
 	async def __aexit__(self, *err):
@@ -1820,14 +1819,14 @@ class Discord:
 
 	def connect(self):
 		if not self.session: return
-		self.session.connect(); self.connected = True
+		self.session.connect(); self.st_eris.enabled = True
 	def disconnect(self):
 		if not self.session: return
-		self.session.disconnect(); self.connected = False
+		self.session.disconnect(); self.st_eris.enabled = False
 
 	def conn_req(self, *req_args, nc=None, **req_kws):
 		'Proxy to return REST-API request awaitable when session is connected, nc otherwise'
-		if not self.connected: (fut := asyncio.Future()).set_result(nc); return fut
+		if not self.st_eris.enabled: (fut := asyncio.Future()).set_result(nc); return fut
 		return self.session.req(*req_args, **req_kws)
 	def conn_req_oneway(self, *req_args, **req_kws):
 		'Send conn_req one-way without waiting for result or reply'
@@ -1850,8 +1849,7 @@ class Discord:
 		except KeyError: return adict(guilds=dict())
 
 	def irc_chan_name(self, cc):
-		return IRCProtocol.chan_spec(
-			self.bridge.st_br.did_chan.get(cc.did, '???') )
+		return IRCProtocol.chan_spec(self.bridge.st_br.did_chan.get(cc.did, '???'))
 
 	_user_name_uid_fallback = object()
 	def user_name(self, u, mentions=None, fallback=_user_name_uid_fallback):
@@ -1897,39 +1895,39 @@ class Discord:
 		return name.encode('utf-8', 'replace').decode() # remove surrogate junk, if any
 
 	def msg_ack(self, cid, flake=None):
-		'Schedule/cancel ACK for new received message from a discord channel'
-		if not flake: return self.msg_acks.queue.pop(cid, None)
-		self.msg_acks.queue[cid] = flake
-		if not self.msg_acks.task or self.msg_acks.task.done():
-			self.msg_acks.task = self.session.tasks.add(self.msg_ack_task_run())
+		'Schedule/cancel ACK for newly-received message from a discord channel'
+		if not flake: return self.st_eris.msg_acks.queue.pop(cid, None)
+		if cid not in (queue := self.st_eris.msg_acks.queue): queue[cid] = flake
+		if not self.st_eris.msg_acks.task or self.st_eris.msg_acks.task.done():
+			self.st_eris.msg_acks.task = self.session.tasks.add(self.msg_ack_task_run())
 
 	async def msg_ack_task_run(self):
 		while True:
 			delay, ts, td = None, time.time(), self.conf._discord_msg_ack_delay
-			if not (flakes := sorted(( self.flake_parse(flake) + td,
-				cid, flake ) for cid, flake in self.msg_acks.queue.items())): return
-			for ts_ack, cid, flake in flakes:
+			if not (queue := sorted( (self.flake_parse(flake) + td, cid, flake)
+				for cid, flake in self.st_eris.msg_acks.queue.items() )): return
+			for ts_ack, cid, flake in queue:
 				if ts >= ts_ack:
 					try: await self.conn_req(
 						f'channels/{cid}/messages/{flake}/ack', m='post',
 						json=dict(token=None, last_viewed=self.st_da.read_state_last) )
 					except DiscordHTTPError as err:
 						if err.code != 404: raise # chan/msg might not exist by the time of ACK
-					self.msg_acks.queue.pop(cid, None)
+					self.st_eris.msg_acks.queue.pop(cid, None)
 				elif delay is None: delay = ts_ack - ts + 1
 			if delay: await asyncio.sleep(delay)
 
 	def cmd_online_state(self, st):
-		if st == self.online: return
-		self.online = st
-		if self.online: self.bridge.cmd_chan_map_sync()
+		if st == self.st_eris.online: return
+		self.st_eris.online = st
+		if self.st_eris.online: self.bridge.cmd_chan_map_sync()
 
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
 		return list(self.bridge.cmd_chan_map()) # to trigger re-caching, if needed
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
-		if not self.connected: return list()
+		if not self.st_eris.enabled: return list()
 		msg_list, flake = list(), self.flake_build(ts)
 		while True:
 			msg_batch = await self.conn_req(
@@ -1948,7 +1946,7 @@ class Discord:
 		return sorted(msg_list, key=op.itemgetter('ts'))
 
 	async def cmd_info_dump(self, info_url):
-		if not self.connected: return f'No info for {info_url}: no discord session'
+		if not self.st_eris.enabled: return f'No info for {info_url}: no discord session'
 		try: info = await self.conn_req(info_url)
 		except DiscordHTTPError as err:
 			err = str_cut(err, self.conf.debug_err_cut, repr_fmt=True)
@@ -1963,7 +1961,7 @@ class Discord:
 		if nonce and new_msg_flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
 			# Thread-prefixed msgs can be mirrored to two chans, hence the check/skip here
-			if fut := self.msg_confirms.pop(nonce, None):
+			if fut := self.st_eris.msg_confirms.pop(nonce, None):
 				self.log.debug('MSG: confirm nonce={} flake={}', nonce, new_msg_flake)
 				self.msg_ack(cc.id) # cancels unnecessary ACK to the channel, if any
 				return fut.set_result(new_msg_flake)
@@ -1971,7 +1969,6 @@ class Discord:
 			notice=notice, ts=self.flake_parse(new_msg_flake), skip_monitor=skip_monitor )
 		if self.conf.discord_msg_ack and new_msg_flake and cc.private:
 			if ack or self.conf.discord_msg_ack_always: self.msg_ack(cc.id, new_msg_flake)
-
 
 	def _cmd_msg_err_wrap(func):
 		@ft.wraps(func)
@@ -2010,7 +2007,7 @@ class Discord:
 	@_cmd_msg_err_wrap
 	async def cmd_msg_send(self, cc, line):
 		'Relay message from IRC to Discord.'
-		if not self.connected: raise IRCBridgeSignal('no-discord-conn')
+		if not self.st_eris.enabled: raise IRCBridgeSignal('no-discord-conn')
 
 		if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
 				and (ls := line.split(None, 1))[0].startswith(self.conf.discord_thread_id_prefix) ):
@@ -2028,13 +2025,13 @@ class Discord:
 				res = asyncio.create_task(self.conn_req(
 					f'channels/{cc.id}/messages', m='post',
 					json=dict(content=line_tagged, nonce=nonce, flags=flags) ))
-				fut = self.msg_confirms[nonce] = asyncio.Future()
+				fut = self.st_eris.msg_confirms[nonce] = asyncio.Future()
 				res = asyncio.gather(fut, res)
 				flake_gw, res = await res
 		except asyncio.TimeoutError:
 			if res: await aio_task_cancel(res)
 			raise IRCBridgeSignal('msg-confirm-timed-out')
-		finally: self.msg_confirms.pop(nonce, None)
+		finally: self.st_eris.msg_confirms.pop(nonce, None)
 
 		try: flake_res = res['id']
 		except: raise DiscordError(f'Invalid response: {res}')
@@ -2089,7 +2086,7 @@ class Discord:
 			# This should make irc nicks usable for mention-tags as-is,
 			#  and fix matching e.g. discord names with spaces for default regexp.
 			nick = self.bridge.irc_name_revert(nick) or nick
-		if uid := self.user_mention_cache[gid].get(nick): # exact match
+		if uid := self.st_eris.user_mentions.cache[gid].get(nick): # exact match
 			nick = f'<@{uid}>'; self.cmd_user_cache(gid, uid) # bump cache timeout
 		else:
 			users = await self.session.ws_req_users_query(
@@ -2109,11 +2106,11 @@ class Discord:
 		return tag
 
 	def cmd_user_cache(self, gid, uid, name=None, delete=None, query=False):
-		'''Updates user_mention_cache for discord-user-id, as nick_or_query=uid mapping.
+		'''Updates user_mentions cache for discord-user-id, as nick_or_query=uid mapping.
 			Cache/get IRC nick: cache(gid, uid, nick); nick = cache(gid, uid) # bumps timeout
 			To cache/get user for an @somenick query, e.g. partial match, set query=True
 			To drop cached entry: cache(gid, uid, delete=True, ...)'''
-		users, ts = self.user_mention_cache[gid], time.monotonic()
+		users, ts = self.st_eris.user_mentions.cache[gid], time.monotonic()
 		uid_key = f'\0{uid}' if not query else f'\t{uid}'
 		if not name: return (ut := users.get(uid_key)) and ut[0]
 		name_old, ts_old = users.pop(uid_key, (None, 0))
@@ -2122,9 +2119,9 @@ class Discord:
 		if delete: return
 		if not query: name = self.bridge.irc_name(name)
 		users[name], users[uid_key] = uid, (name, ts)
-		if ( (ts - self.user_mention_cache_ts_cleanup)
-				> self.conf._discord_user_mention_cache_timeout / 2 ):
-			ts -= self.conf._discord_user_mention_cache_timeout
+		if ( (ts - self.st_eris.user_mentions.ts)
+				> (td := self.conf._discord_user_mention_cache_timeout) / 2 ):
+			ts -= td
 			for uid_key in list(users.keys()):
 				if uid_key[0] not in '\0\t' or uid_key not in users: continue
 				if users[uid_key][1] < ts: users.pop(users.pop(uid_key)[0], None)
@@ -2155,7 +2152,7 @@ class Discord:
 		self.bridge.cmd_typing(cc, nick)
 
 	def cmd_typing_from_irc(self, cc):
-		if (delays := self.typing_delays).get(cc.id): return
+		if cc.id in (delays := self.st_eris.typing_delays): return
 		delays[cc.id] = True
 		self.conn_req_oneway(f'channels/{cc.id}/typing', m='post', raw=True)
 
@@ -3768,7 +3765,7 @@ class RDIRCD:
 		return adict(cc=cc, gg=cc.gg)
 
 	async def _irc_cmd_query_username(self, nick, gid):
-		# Getting user-id from user_mention_cache isn't
+		# Getting user-id from user_mentions cache isn't
 		#  useful here - need to query nick on all guilds anyway
 		info = await self.discord.session.ws_req_users_query(gid, nick, 5)
 		guilds = cs.defaultdict(list)
@@ -4022,7 +4019,7 @@ class RDIRCD:
 					cs.Counter(k for k, v in cm_list).items() if n > 1 )
 				raise RDIRCDError( 'Duplicate channel-name(s) produced'
 					f' by guild/channel naming (mis-)configuration: {cm_repeats}' )
-		cm.ø_online = self.discord.online
+		cm.ø_online = self.discord.st_eris.online
 		if not cm0 and cm.ø_online: self.cmd_chan_map_sync(cm)
 		return cm
 
