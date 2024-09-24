@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.7' # git-version: py-str
+	version = '24.09.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -113,6 +113,10 @@ class RDIRCDConfigBase:
 	irc_chan_voice = 'rdircd.voice'
 	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
 	irc_chan_voice_guild = ''
+
+	# Space-separated list of IRCv3 capabilities to hide/NAK, even if supported by rdircd/client.
+	# Example: message-tags draft/read-marker
+	irc_v3_caps_nak = ''
 
 	# Interval (seconds) to repeat typing notifications from discord to irc client (if supported).
 	# Discord sends typing notifications every ~10s, ircv3 requires these to be every 3-6s.
@@ -1211,6 +1215,8 @@ class IRCProtocol:
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
+		if caps_nak := self.conf.irc_v3_caps_nak:
+			self.server_caps = self.server_caps.difference(caps_nak.split())
 
 
 	def connection_made(self, tr):
