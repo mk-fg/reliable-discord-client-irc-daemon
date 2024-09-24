@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.8' # git-version: py-str
+	version = '24.09.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -188,6 +188,10 @@ class RDIRCDConfigBase:
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
 	discord_media_info_timeout = '30m' # ignore no-author attachment updates for old msgs
 
+	discord_msg_ack = True # send ACKs for received (and not filtered-out) msgs in private chans
+	discord_msg_ack_delay = '45m' # delay ACKing last-seen msg, can be lowered for short-lived rdircd
+	discord_msg_ack_always = False # also ACK blocked msgs or when no IRC clients connected
+
 	discord_msg_old_upd_timestamp = '1d' # add date/time to msg edits older than this, 0 - disable
 	discord_msg_old_upd_ignore = '4d' # completely ignore msg edits older than this, 0 - disable
 
@@ -320,25 +324,27 @@ class RDIRCDConfigBase:
 					f' group(s) in regexp for {key} [ {" ".join(missing)} ] {v!r}' )
 			return rx
 		return _conv
+	_parse_td_str = lambda s, v: parse_duration(v)
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s, v: v if len(v.encode()) <= 32 else str_hash(v, 32)
 	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
-	_conv_irc_names_timeout = lambda s, v: parse_duration(v)
+	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
-	_conv_discord_user_mention_cache_timeout = lambda s, v: parse_duration(v)
-	_conv_discord_media_info_timeout = lambda s, v: parse_duration(v)
+	_conv_discord_user_mention_cache_timeout = _parse_td_str
+	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
-	_conv_discord_msg_old_upd_timestamp = lambda s, v: parse_duration(v)
-	_conv_discord_msg_old_upd_ignore = lambda s, v: parse_duration(v)
+	_conv_discord_msg_ack_delay = _parse_td_str
+	_conv_discord_msg_old_upd_timestamp = _parse_td_str
+	_conv_discord_msg_old_upd_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x'))
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
-	_conv_discord_msg_interact_cache_expire = lambda s, v: parse_duration(v)
-	_conv_discord_voice_notify_after_inactivity = lambda s, v: parse_duration(v)
-	_conv_discord_voice_join_left_cache_expire = lambda s, v: parse_duration(v)
+	_conv_discord_msg_interact_cache_expire = _parse_td_str
+	_conv_discord_voice_notify_after_inactivity = _parse_td_str
+	_conv_discord_voice_join_left_cache_expire = _parse_td_str
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 
@@ -1771,8 +1777,9 @@ class IRCProtocol:
 
 class DiscordError(Exception): pass
 class DiscordAbort(DiscordError): pass
-class DiscordHTTPError(DiscordError): pass
 class DiscordSessionError(Exception): pass
+class DiscordHTTPError(DiscordError):
+	def __init__(self, code, msg): self.code = code; super().__init__(msg)
 
 
 class Discord:
@@ -1803,9 +1810,11 @@ class Discord:
 		else:
 			s = self.session = DiscordSession(self)
 			s.task = asyncio.create_task(s.run_async())
+		self.connected = self.online = False
 		self.flake_id = (int.from_bytes(os.urandom(2), 'big') & 0x3ff) << 12
 		self.flake_n, self.msg_confirms = 0, dict()
 		self.typing_delays = TimedCacheDict(timeout=6.8, bump_on_get=False)
+		self.msg_acks = adict(queue=dict(), task=None)
 		self.user_mention_cache = cs.defaultdict(irc_name_dict)
 		self.user_mention_cache_ts_cleanup = 0
 		return self
@@ -1814,9 +1823,19 @@ class Discord:
 		if self.session: await aio_task_cancel(self.session.task)
 
 	def connect(self):
-		if self.session: self.session.connect()
+		if not self.session: return
+		self.session.connect(); self.connected = True
 	def disconnect(self):
-		if self.session: self.session.disconnect()
+		if not self.session: return
+		self.session.disconnect(); self.connected = False
+
+	def conn_req(self, *req_args, nc=None, **req_kws):
+		'Proxy to return REST-API request awaitable when session is connected, nc otherwise'
+		if not self.connected: (fut := asyncio.Future()).set_result(nc); return fut
+		return self.session.req(*req_args, **req_kws)
+	def conn_req_oneway(self, *req_args, **req_kws):
+		'Send conn_req one-way without waiting for result or reply'
+		self.session.tasks.add(self.conn_req(*req_args, **req_kws))
 
 	def flake_parse(self, flake):
 		if not flake: return None
@@ -1881,7 +1900,29 @@ class Discord:
 		if name.isdigit(): name += '´' # avoid digit-only names to not confuse with raw IDs
 		return name.encode('utf-8', 'replace').decode() # remove surrogate junk, if any
 
-	online = False
+	def msg_ack(self, cid, flake=None):
+		'Schedule/cancel ACK for new received message from a discord channel'
+		if not flake: return self.msg_acks.queue.pop(cid, None)
+		self.msg_acks.queue[cid] = flake
+		if not self.msg_acks.task or self.msg_acks.task.done():
+			self.msg_acks.task = self.session.tasks.add(self.msg_ack_task_run())
+
+	async def msg_ack_task_run(self):
+		while True:
+			delay, ts, td = None, time.time(), self.conf._discord_msg_ack_delay
+			if not (flakes := sorted(( self.flake_parse(flake) + td,
+				cid, flake ) for cid, flake in self.msg_acks.queue.items())): return
+			for ts_ack, cid, flake in flakes:
+				if ts >= ts_ack:
+					try: await self.conn_req(
+						f'channels/{cid}/messages/{flake}/ack', m='post',
+						json=dict(token=None, last_viewed=self.st.read_state_last) )
+					except DiscordHTTPError as err:
+						if err.code != 404: raise # chan/msg might not exist by the time of ACK
+					self.msg_acks.queue.pop(cid, None)
+				elif delay is None: delay = ts_ack - ts + 1
+			if delay: await asyncio.sleep(delay)
+
 	def cmd_online_state(self, st):
 		if st == self.online: return
 		self.online = st
@@ -1892,12 +1933,12 @@ class Discord:
 		return list(self.bridge.cmd_chan_map()) # to trigger re-caching, if needed
 
 	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
-		if not self.session: return list()
+		if not self.connected: return list()
 		msg_list, flake = list(), self.flake_build(ts)
 		while True:
-			msg_batch = await self.session.req(
+			msg_batch = await self.conn_req(
 				f'channels/{cc.id}/messages',
-				params=dict(after=flake, limit=hwm) )
+				params=dict(after=flake, limit=hwm), nc=list() )
 			flake_last = flake
 			for m in map(adict, msg_batch or list()):
 				line, tags = self.session.op_msg_parse(m, gg)
@@ -1911,8 +1952,8 @@ class Discord:
 		return sorted(msg_list, key=op.itemgetter('ts'))
 
 	async def cmd_info_dump(self, info_url):
-		if not self.session: return f'No info for {info_url}: no discord session'
-		try: info = await self.session.req(info_url)
+		if not self.connected: return f'No info for {info_url}: no discord session'
+		try: info = await self.conn_req(info_url)
 		except DiscordHTTPError as err:
 			err = str_cut(err, self.conf.debug_err_cut, repr_fmt=True)
 			return f'No info for {info_url}: {err}'
@@ -1921,16 +1962,20 @@ class Discord:
 	def cmd_msg_recv( self, cc, nick, line, tags=None,
 			new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
 		'Relay message from Discord to IRC.'
-		# new_msg_flake is only passed to update channel ts or confirm own msg
+		# new_msg_flake is only passed to update channel ts/acks or confirm own msg
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gg.id, cc.name, nick, line, tags or '')
 		if nonce and new_msg_flake and not ( self.conf.discord_thread_msgs_in_parent_chan
 				and tags.get('_prefix', '').startswith(self.conf.discord_thread_id_prefix) ):
 			# Thread-prefixed msgs can be mirrored to two chans, hence the check/skip here
 			if fut := self.msg_confirms.pop(nonce, None):
 				self.log.debug('MSG: confirm nonce={} flake={}', nonce, new_msg_flake)
+				self.msg_ack(cc.id) # cancels unnecessary ACK to the channel, if any
 				return fut.set_result(new_msg_flake)
-		self.bridge.cmd_msg_discord( cc, nick, line, tags=tags,
+		ack = self.bridge.cmd_msg_discord( cc, nick, line, tags=tags,
 			notice=notice, ts=self.flake_parse(new_msg_flake), skip_monitor=skip_monitor )
+		if self.conf.discord_msg_ack and new_msg_flake and cc.private:
+			if ack or self.conf.discord_msg_ack_always: self.msg_ack(cc.id, new_msg_flake)
+
 
 	def _cmd_msg_err_wrap(func):
 		@ft.wraps(func)
@@ -1951,7 +1996,7 @@ class Discord:
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gg.id, cc.name, flake, self._repr(line) )
 		line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
-		await self.session.req(
+		await self.conn_req(
 			f'channels/{cc.id}/messages/{flake}',
 			m='patch', json=dict(content=line_tagged) )
 		if cc.last_msg_sent.get('flake') == flake: cc.last_msg_sent.line = line
@@ -1962,14 +2007,14 @@ class Discord:
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
 		self.log.debug(
 			'MSG:  D> :: {} {} {} :: {}', cc.gg.id, cc.name, flake, self._repr(line_old) )
-		await self.session.req(
+		await self.conn_req(
 			f'channels/{cc.id}/messages/{flake}', m='delete', raw=True )
 		if cc.last_msg_sent.get('flake') == flake: cc.last_msg_sent.clear()
 
 	@_cmd_msg_err_wrap
 	async def cmd_msg_send(self, cc, line):
 		'Relay message from IRC to Discord.'
-		if not self.session: raise IRCBridgeSignal('no-discord-conn')
+		if not self.connected: raise IRCBridgeSignal('no-discord-conn')
 
 		if ( self.conf.discord_thread_redirect_prefixed_responses_from_parent_chan
 				and (ls := line.split(None, 1))[0].startswith(self.conf.discord_thread_id_prefix) ):
@@ -1984,7 +2029,7 @@ class Discord:
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
 				line, flags = self.cmd_msg_parse_flags(line)
 				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
-				res = asyncio.create_task(self.session.req(
+				res = asyncio.create_task(self.conn_req(
 					f'channels/{cc.id}/messages', m='post',
 					json=dict(content=line_tagged, nonce=nonce, flags=flags) ))
 				fut = self.msg_confirms[nonce] = asyncio.Future()
@@ -2116,7 +2161,7 @@ class Discord:
 	def cmd_typing_from_irc(self, cc):
 		if (delays := self.typing_delays).get(cc.id): return
 		delays[cc.id] = True
-		self.session.req_sync(f'channels/{cc.id}/typing', m='post', raw=True)
+		self.conn_req_oneway(f'channels/{cc.id}/typing', m='post', raw=True)
 
 
 
@@ -2382,22 +2427,19 @@ class DiscordSession:
 			break
 		if res.status >= 400:
 			err = str_cut(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
-			raise DiscordHTTPError(f'[{res.status}] {res.reason} - {err}')
+			raise DiscordHTTPError(res.status, f'[{res.status}] {res.reason} - {err}')
 		if not raw:
 			res_raw = res
 			try: res = await res.json()
 			except aiohttp.ContentTypeError:
 				err = str_cut(await res.text(), self.conf.debug_err_cut, repr_fmt=True)
-				raise DiscordHTTPError(
+				raise DiscordHTTPError( res.status,
 					f'[{res.status}] non-JSON data ({res.content_type}) - {err}' ) from None
 			finally: res_raw.release()
 		res_repr = str(res)
 		if '\n' in res_repr: res_repr = (res_repr.strip() + ' ').splitlines()[0]
 		self.log_http.debug('<<  {}', self._repr(res_repr), extra=('<< ', res_repr))
 		return res
-
-	def req_sync(self, *req_args, **req_kws):
-		self.tasks.add(self.req(*req_args, **req_kws))
 
 
 	### Gateway Websocket wrappers
@@ -2730,12 +2772,17 @@ class DiscordSession:
 				session_ts=ts,
 				user_id=md.user.id,
 				user_name=md.user.username,
-				user_n=md.user.discriminator )
+				user_n=md.user.discriminator,
+				read_state_last=1 )
 			self.op_ev_guilds(md.get('guilds'), sync=True)
 			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
 			self.ws_req_guild_sync()
 			self.log.debug( 'New session id: {} gw=[ {} ]',
 				self.st.session_id, md.get('resume_gateway_url') )
+			if isinstance(rs := md.get('read_state'), dict): rs = rs.get('entries')
+			for rs in rs or list():
+				if not (n := rs.get('last_viewed')): continue
+				self.st.read_state_last = max(n, self.st.read_state_last)
 		else: resume = True
 		if resume_url := md.get('resume_gateway_url'):
 			self.conf.discord_gateway = resume_url
@@ -3567,7 +3614,7 @@ class DiscordSession:
 	def op_typing(self, m):
 		if gg := self.st.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
 		if not cc: return self.log.warning( 'Dropped typing event with'
-				' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
+			' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
 		# These messages always have "user_id", but "member" only in non-private chats
 		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
 		if nick := m.get('member'): nick = self.discord.user_name(nick)
@@ -4440,10 +4487,11 @@ class RDIRCD:
 					for line in lines: conn.cmd_msg_chan(nick, name, line, notice=notice)
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
-			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ):
+			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ) -> bool:
 		'''Sends annotated Discord message to all proxy/monitor IRC channels.
 			conn= limits sending to proxy-chan of one irc conn, e.g. for history-replay.
-			name_irc= is used to set destination irc proxy-channel to use instead of cc.'''
+			name_irc= is used to set destination irc proxy-channel to use instead of cc.
+			Returns True if message can be ACKed to discord, if needed/enabled.'''
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
@@ -4497,6 +4545,7 @@ class RDIRCD:
 				conns_joined += self.cmd_chan_conns(cc.parent)
 		self.cmd_msg_monitor( nick, line, prefix_mon,
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
+		return not skip_chan # ack result for discord
 
 	def cmd_typing(self, cc, nick):
 		'Incoming typing event from some user in a discord channel'

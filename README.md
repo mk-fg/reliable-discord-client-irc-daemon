@@ -33,6 +33,7 @@ Table of Contents
     - [OSC 8 hyperlinks for terminal IRC clients]
     - [Voice chat activity notifications]
     - [Highlight on incoming private messages]
+    - [Message ACKs, typing notifications and other events from IRC]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Debugging anything strange, unknown or unexpected]
@@ -68,6 +69,8 @@ Table of Contents
 [Voice chat activity notifications]: #hdr-voice_chat_activity_notifications
 [Highlight on incoming private messages]:
   #hdr-highlight_on_incoming_private_messages
+[Message ACKs, typing notifications and other events from IRC]:
+  #hdr-message_acks_typing_notifications_and_ot.9aX7
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Captcha-solving is required to login for some reason]:
@@ -1223,6 +1226,29 @@ if `prefix-all-private` doesn't go far enough.
 
 [monitor/leftover channels]: #hdr-_rdircd.monitor_and_rdircd.leftover_channels
 [auto-joining channels]: #hdr-auto-joining_channels
+
+<a name=hdr-message_acks_typing_notifications_and_ot.9aX7></a>
+### Message ACKs, typing notifications and other events from IRC
+
+By default, \[discord\] `msg-ack=yes` enables sending (delayed) ACKs for received
+messages in private chats, so that discord counts those as read and doesn't send
+an email notification about them. This can be disabled or adjusted in config file.\
+Messages blocked by e.g. \[recv-regexp-filters\] or received when there are
+no IRC clients connected don't count.
+
+If IRC client supports [IRCv3 typing notifications] and has these enabled,
+rdircd will send it those from discord users/channels by default, which can be
+disabled by setting `typing-interval = 0` in \[irc\] configuration section,
+or interval/timeout values can be adjusted there to work better for IRC app.
+
+Separate `typing-send-enabled` option controls whether typing notifications
+from IRC are sent to a discord channel. It is disabled by default for privacy
+reasons, and likely needs to be explicitly enabled in IRC client as well.
+
+Any IRCv3 features like that typing stuff can also be disabled via `ircv3-caps`
+option, e.g. if there're problems with them in rdircd or client.
+
+[IRCv3 typing notifications]: https://ircv3.net/specs/client-tags/typing
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection
