@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.12' # git-version: py-str
+	version = '24.09.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4945,6 +4945,7 @@ def parse_conf_code_comments(lines):
 					comm = ' '.join([word1.lower(), *comm])
 				if not comm.startswith(var) and '*' not in comm.split()[0]:
 					comm = f'{var}: {comm}'
+					if '\n' not in comm and comm[-1] != '.': comm += '.'
 			comms[var] = comm
 		if comm_buffer and (not comm or var):
 			if not comms: var = '_notes'; comms[var] = '\n'.join(comm_buffer)
