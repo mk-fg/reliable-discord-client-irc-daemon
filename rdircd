@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.10' # git-version: py-str
+	version = '24.09.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1208,7 +1208,7 @@ class IRCProtocol:
 		self.bridge, self.conf = rdircd, rdircd.conf
 		self.log = get_logger('rdircd.irc.init')
 		self.transport, self.buff, self.recv_queue = None, b'', asyncio.Queue()
-		self._cmd_cache, self.st = dict(), adict(
+		self._cmd_cache, self.st_irc = dict(), adict(
 			nick=None, user=None, pw=None,
 			host=None, auth=False, cap_neg=False, caps=set(), away=None,
 			# Discord sends typing notifications every 10s, ircv3 needs <6s,
@@ -1223,13 +1223,13 @@ class IRCProtocol:
 	def connection_made(self, tr):
 		host, port = tr.get_extra_info('peername')[:2]
 		conn_id = tuple_hash([host, port], 3)
-		self.st.ts = time.monotonic()
+		self.st_irc.ts = time.monotonic()
 		self.log_proto = get_logger(f'proto.irc.{conn_id}')
 		self.log_proto.debug( '--- -conn- {} {} {}',
 			host, port, conn_id, extra=('---', f'conn {host} {port}') )
 		self.log = get_logger(f'rdircd.irc.{conn_id}')
 		self.log.debug('Connection from {} {} [{}]', host, port, conn_id)
-		self.transport, self.st.host = tr, host
+		self.transport, self.st_irc.host = tr, host
 		self.send(0, 'NOTICE * :*** rdircd ready')
 		self.bridge.irc_conn_new(self)
 		self.bridge.cmd_delay(self.recv_queue_proc)
@@ -1241,7 +1241,7 @@ class IRCProtocol:
 			if not line.strip(): continue
 			line_len, line_repr = self._repr_bin(line, True)
 			self.log_proto.debug( '<<  [{} {}] {}',
-				self.st.nick or '---', line_len, line_repr, extra=('<< ', line) )
+				self.st_irc.nick or '---', line_len, line_repr, extra=('<< ', line) )
 			if not line.strip(): continue
 			if self.recv_queue: self.recv_queue.put_nowait(line)
 			else: self.log.error('Data after recv queue stopped: {!r}', line)
@@ -1258,7 +1258,7 @@ class IRCProtocol:
 	def data_send(self, data):
 		data_len, data_repr = self._repr_bin(data, True)
 		self.log_proto.debug( ' >> [{} {}] {}',
-			self.st.nick or '---', data_len, data_repr, extra=(' >>', data) )
+			self.st_irc.nick or '---', data_len, data_repr, extra=(' >>', data) )
 		self.transport.write(data)
 
 
@@ -1312,7 +1312,7 @@ class IRCProtocol:
 		line = line_or_code
 		if isinstance(line, int): # code=0 only adds :host prefix
 			code, line = line, f':{self.bridge.server_host}'
-			if code: line += f' {code:03d} {self.st.nick or "*"}'
+			if code: line += f' {code:03d} {self.st_irc.nick or "*"}'
 		if args: line += ' ' + ' '.join(map(str, args))
 		if isinstance(line, str): line = line.encode()
 		if max_len is None: max_len = self.conf.irc_len_hwm
@@ -1401,7 +1401,7 @@ class IRCProtocol:
 		# "Registration" (auth) does not finish until cap-neg finishes, as per spec.
 		# After each potentially-auth-finishing command, irc_auth timer is (re-)started.
 		# check_auth_done_delayed() tests all auth requirements, sets st.auth, sends hello.
-		if not self.st.auth:
+		if not self.st_irc.auth:
 			res = cmd in ['cap', 'user', 'nick', 'pass', 'quit', 'ping']
 			if not res: self.send(451, ':You have not registered')
 			return res
@@ -1429,54 +1429,54 @@ class IRCProtocol:
 			try: ver = caps_str and int(caps_str) or 0 # unused, to filter sent caps
 			except ValueError:
 				return self.send(410, sub_raw, ':Invalid CAP command')
-			self.st.cap_neg = True
+			self.st_irc.cap_neg = True
 			self.send(0, f'CAP * LS :{" ".join(caps_allowed)}')
 		elif sub == 'list':
-			self.send(0, f'CAP * LIST :{" ".join(self.st.caps)}')
+			self.send(0, f'CAP * LIST :{" ".join(self.st_irc.caps)}')
 		elif sub == 'req':
-			self.st.cap_neg, caps = True, self.st.caps.copy()
+			self.st_irc.cap_neg, caps = True, self.st_irc.caps.copy()
 			for c in caps_str.split():
 				if c.startswith('-'): caps.discard(c[1:])
 				else: caps.add(c)
 			if caps.difference(caps_allowed):
 				return self.send(0, f'CAP * NAK :{caps_str}')
-			self.st.caps = caps
+			self.st_irc.caps = caps
 			self.send(0, f'CAP * ACK :{caps_str}')
-			self.log.debug('Negotiated IRCv3 caps: {}', ' '.join(self.st.caps))
+			self.log.debug('Negotiated IRCv3 caps: {}', ' '.join(self.st_irc.caps))
 		elif sub == 'end':
-			self.st.cap_neg = False
+			self.st_irc.cap_neg = False
 			self.check_auth_done()
 		else: self.send(410, sub_raw, ':Invalid CAP command')
 
 	def recv_cmd_pass(self, pw):
-		self.st.pw = pw
+		self.st_irc.pw = pw
 		self.check_auth_done()
 	def recv_cmd_user(self, name, a, b, real_name):
-		self.st.update(user=name, real_name=real_name)
+		self.st_irc.update(user=name, real_name=real_name)
 		self.check_auth_done()
 	def recv_cmd_nick(self, nick):
 		if not re.search(r'^[-._a-zA-Z0-9]+$', nick):
 			return self.send(432, nick, ':Erroneus nickname')
 		if self.bridge.cmd_conn(nick):
 			return self.send(433, nick, ':Nickname is already in use')
-		self.st.nick = nick
-		if self.st.auth and self.st.nick:
-			self.send(f':{self.st.nick} NICK {nick}')
+		self.st_irc.nick = nick
+		if self.st_irc.auth and self.st_irc.nick:
+			self.send(f':{self.st_irc.nick} NICK {nick}')
 		self.check_auth_done()
 
 	def check_auth_done(self):
 		# Token-bucket delay is added here is to avoid trivial bruteforcing
 		self.bridge.cmd_delay('irc_auth', self.check_auth_done_delayed)
 	def check_auth_done_delayed(self):
-		if self.st.auth: return
-		if self.st.cap_neg: return # delayed until the end of cap-negotiation
-		if not (self.st.nick and self.st.user): return
+		if self.st_irc.auth: return
+		if self.st_irc.cap_neg: return # delayed until the end of cap-negotiation
+		if not (self.st_irc.nick and self.st_irc.user): return
 		if self.conf.irc_password_hash:
-			if not pw_hash(self.st.pw or '', self.conf.irc_password_hash):
+			if not pw_hash(self.st_irc.pw or '', self.conf.irc_password_hash):
 				return self.send(464, ':Password incorrect')
-		self.st.auth = True
+		self.st_irc.auth = True
 		self.send(0, 'NOTICE * :*** registration completed')
-		self.send(1, f':Welcome to the rdircd discord-irc bridge, {self.st.nick}')
+		self.send(1, f':Welcome to the rdircd discord-irc bridge, {self.st_irc.nick}')
 		self.send(2,
 			f':Your host is {self.bridge.server_host},'
 			f' running rdircd {self.bridge.server_ver}' )
@@ -1531,7 +1531,7 @@ class IRCProtocol:
 		if cm.ø_online: return False # confirmed to not exist on discord
 
 	def recv_cmd_join(self, chan, key=None):
-		if chan == '0': return self.recv_cmd_part(','.join(self.st.chans))
+		if chan == '0': return self.recv_cmd_part(','.join(self.st_irc.chans))
 		chan_list, cm = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list: self.cmd_join(chan, cm=cm)
 
@@ -1540,23 +1540,23 @@ class IRCProtocol:
 		c = self.req_chan_info(chan, cm=cm, check=False)
 		if c is False: return self.send(403, chan, ':No such channel')
 		name = c.name if c else self.chan_name(chan)
-		self.send(f':{self.st.nick} JOIN {chan}')
+		self.send(f':{self.st_irc.nick} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
-		self.send(0, f'MODE {chan} +v {self.st.nick}')
+		self.send(0, f'MODE {chan} +v {self.st_irc.nick}')
 		# topic=None will always be updated on cmd_chan_list_sync
-		self.st.chans[name] = adict(topic=c and c.topic)
+		self.st_irc.chans[name] = adict(topic=c and c.topic)
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, cm = chan.split(','), self.bridge.cmd_chan_map()
 		for chan in chan_list:
 			c = self.req_chan_info(chan, cm=cm, check=False)
 			name = c.name if c else self.chan_name(chan)
-			if name not in self.st.chans:
+			if name not in self.st_irc.chans:
 				self.send(442, chan, ':You are not on that channel')
 			else:
-				del self.st.chans[name]
-				self.send(f':{self.st.nick} PART {chan}')
+				del self.st_irc.chans[name]
+				self.send(f':{self.st_irc.nick} PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
 		if not (c := self.req_chan_info(chan)):
@@ -1587,9 +1587,9 @@ class IRCProtocol:
 		name_line, names = list(), self.bridge.cmd_chan_names(c.name) if c else list()
 		for name in it.chain(names, [None]):
 			if name:
-				if irc_name_eq(name, self.st.nick): own = False
+				if irc_name_eq(name, self.st_irc.nick): own = False
 				name_line.append(name)
-			elif own and self.st.nick: name_line.append(self.st.nick)
+			elif own and self.st_irc.nick: name_line.append(self.st_irc.nick)
 			if name_line and (
 					not name or sum(len(n)+1 for n in name_line) > msg_len_max ):
 				self.send(353, '=', chan, ':' + ' '.join(name_line))
@@ -1603,18 +1603,18 @@ class IRCProtocol:
 			if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
 			if c: chan_ts = int(c.ts_created)
 			else:
-				if self.chan_name(chan) not in self.st.chans:
+				if self.chan_name(chan) not in self.st_irc.chans:
 					return self.send(403, chan, ':No such channel')
 				chan_ts = int(time.time())
 			if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
 		else:
-			if not irc_name_eq(target, self.st.nick):
+			if not irc_name_eq(target, self.st_irc.nick):
 				return self.send(502, ':No access to modes of other users')
 			self.send(221, ':+w')
 
 	def recv_cmd_away(self, msg=None):
-		self.st.away = msg or None
-		if self.st.away: self.send(306, ':You have been marked as being away')
+		self.st_irc.away = msg or None
+		if self.st_irc.away: self.send(306, ':You have been marked as being away')
 		else: self.send(305, ':You are no longer marked as being away')
 
 	def recv_cmd_list(self, chan=None, cond=None):
@@ -1632,13 +1632,13 @@ class IRCProtocol:
 		self.send_feats()
 
 	def recv_cmd_privmsg(self, target, text):
-		self.cmd_msg_from_irc(self.st.nick, target, text, from_self=True)
+		self.cmd_msg_from_irc(self.st_irc.nick, target, text, from_self=True)
 
 	def recv_cmd_notice(self, target, text):
-		self.cmd_msg_from_irc(self.st.nick, target, text, notice=True, from_self=True)
+		self.cmd_msg_from_irc(self.st_irc.nick, target, text, notice=True, from_self=True)
 
 	def cmd_chan_list_sync(self, cm):
-		for name, ch in self.st.chans.items():
+		for name, ch in self.st_irc.chans.items():
 			topic = cm[name].topic if name in cm else self.nx_chan_warn
 			if topic == ch.topic: continue
 			self.log.debug('Client-topic update [ {} ]: {!r} -> {!r}', name, ch.topic, topic)
@@ -1665,7 +1665,7 @@ class IRCProtocol:
 					' this is read-only channel, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
-				if name not in conn.st.chans: self.cmd_join(chan) # from chan_auto_join_re
+				if name not in conn.st_irc.chans: self.cmd_join(chan) # from chan_auto_join_re
 				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
@@ -1677,35 +1677,35 @@ class IRCProtocol:
 		'Send direct message to this IRC client and nick'
 		if not src: src = self.conf.irc_nick_sys
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
-		self.send(f':{src} {msg_type} {self.st.nick} :{text}')
+		self.send(f':{src} {msg_type} {self.st_irc.nick} :{text}')
 
 	def cmd_msg_chan(self, src, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
 			Message is never filtered/dropped here for reliability/sanity reasons.'''
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
 		chan, name = self.chan_spec(chan), self.chan_name(chan)
-		if ( name not in self.st.chans and
+		if ( name not in self.st_irc.chans and
 				self.conf._irc_chan_auto_join_re.search(name) ):
 			self.cmd_join(chan)
 		if self.conf.irc_names_join and src and joined and not notice:
-			if not irc_name_eq(src, self.st.nick): self.send(f':{src} JOIN {chan}')
+			if not irc_name_eq(src, self.st_irc.nick): self.send(f':{src} JOIN {chan}')
 		self.send(f':{src} {msg_type} {chan} :{text}')
-		self.st.typing_repeat.active.pop((src, chan), None)
+		self.st_irc.typing_repeat.active.pop((src, chan), None)
 
 	def cmd_typing(self, src, chan, repeated=False):
 		interval, timeout = self.conf.irc_typing_interval, self.conf.irc_typing_timeout
-		if 'message-tags' not in self.st.caps or interval <= 0: return
+		if 'message-tags' not in self.st_irc.caps or interval <= 0: return
 		chan = self.chan_spec(chan)
 		self.send(f'@+typing=active :{src} TAGMSG {chan}')
 		if repeated: return
 		if timeout and timeout > interval and (
-				not (task := (st := self.st.typing_repeat).task) or task.done() ):
+				not (task := (st := self.st_irc.typing_repeat).task) or task.done() ):
 			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
 		else: st.wakeup.set()
 		st.active[src, chan] = True
 
 	async def cmd_typing_repeat_task(self):
-		st, last_delay = self.st.typing_repeat, False
+		st, last_delay = self.st_irc.typing_repeat, False
 		repeat_last = TimedCacheDict(timeout := self.conf.irc_typing_timeout)
 		while (delay := self.conf.irc_typing_interval) > 0:
 			td, td_next, ts = None, 0, time.monotonic()
@@ -1739,8 +1739,8 @@ class IRCProtocol:
 	#  so no need for these beyond stubs for what ZNC and such use.
 
 	def recv_cmd_userhost(self, nick):
-		if irc_name_eq(nick, self.st.nick):
-			self.send(302, f':{nick}=+~{self.st.user}@{self.st.host}')
+		if irc_name_eq(nick, self.st_irc.nick):
+			self.send(302, f':{nick}=+~{self.st_irc.user}@{self.st_irc.host}')
 		else: self.send(401, nick, ':No such nick/channel')
 
 	def recv_cmd_who(self, name=None):
@@ -1755,8 +1755,8 @@ class IRCProtocol:
 			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[0], name[1:]))
 		else:
 			if conn := self.bridge.cmd_conn_map().get(name):
-				self.send( 352, '*', conn.st.user, conn.st.host,
-					self.bridge.server_host,conn.st.nick, 'H', f':0 {conn.st.nick}' )
+				self.send( 352, '*', conn.st_irc.user, conn.st_irc.host,
+					self.bridge.server_host,conn.st_irc.nick, 'H', f':0 {conn.st_irc.nick}' )
 		self.send(315, name, ':End of /WHO list.')
 
 	def recv_cmd_whois(self, *args):
@@ -1843,15 +1843,15 @@ class Discord:
 		return str(flake)
 
 	@property
-	def st(self):
+	def st_da(self):
 		try:
 			if not self.session: raise KeyError
-			return self.session.st
+			return self.session.st_da
 		except KeyError: return adict(guilds=dict())
 
 	def irc_chan_name(self, cc):
 		return IRCProtocol.chan_spec(
-			self.bridge.cache.did_chan.get(cc.did, '???') )
+			self.bridge.st_br.did_chan.get(cc.did, '???') )
 
 	_user_name_uid_fallback = object()
 	def user_name(self, u, mentions=None, fallback=_user_name_uid_fallback):
@@ -1912,7 +1912,7 @@ class Discord:
 				if ts >= ts_ack:
 					try: await self.conn_req(
 						f'channels/{cid}/messages/{flake}/ack', m='post',
-						json=dict(token=None, last_viewed=self.st.read_state_last) )
+						json=dict(token=None, last_viewed=self.st_da.read_state_last) )
 					except DiscordHTTPError as err:
 						if err.code != 404: raise # chan/msg might not exist by the time of ACK
 					self.msg_acks.queue.pop(cid, None)
@@ -2143,7 +2143,7 @@ class Discord:
 
 	def cmd_guild_event(self, gid, msg, ev_hash=''):
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
-		prefix = ( f'%{gid}' if not (gg := self.st.guilds.get(gid))
+		prefix = ( f'%{gid}' if not (gg := self.st_da.guilds.get(gid))
 			else ('%' + self.bridge.uid("guild", gg.id, kh=gg.get("kh"))) )
 		prefix += f' :: {self.conf.irc_prefix_guild_event}'
 		if gg: prefix += f'[{gg.name}] '
@@ -2292,9 +2292,9 @@ class DiscordSession:
 		self.ws_closed, self.ws_closed_clean = asyncio.Event(), asyncio.Event()
 		self.ws_closed_clean.set()
 		self.rate_limits = adict()
-		self.st = adict(guilds={1: adict(
+		self.st_da = adict(guilds={1: adict(
 			id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict() )})
-		self.st.update(me=self.st.guilds[1], embed_info=dict(), icache=adict())
+		self.st_da.update(me=self.st_da.guilds[1], embed_info=dict(), icache=adict())
 		self.auth_token, self.auth_token_manual = (
 			self.get_auth('token'), self.get_auth('token_manual') )
 		self.ws_enabled = False
@@ -2330,7 +2330,7 @@ class DiscordSession:
 	def state(self, st):
 		'''This is purely informative, and should never
 			actually be checked - use class flags for that, not strings here.'''
-		st_old, self.st.state = self.st.get('state', 'none'), st
+		st_old, self.st_da.state = self.st_da.get('state', 'none'), st
 		if st == st_old: return
 		self.log_ws.debug( '--- state: {} -> {}',
 			st_old, st, extra=('---', f'st {st_old} -> {st}') )
@@ -2609,7 +2609,7 @@ class DiscordSession:
 
 	async def ws_auth_timeout(self):
 		await asyncio.sleep(timeout := self.conf.discord_ws_auth_timeout)
-		if self.st.state == 'ready': return
+		if self.st_da.state == 'ready': return
 		self.log.error( 'Discord gateway auth failed'
 			' to complete within {:.1f}s, closing connection', timeout )
 		self.ws_close_later()
@@ -2651,7 +2651,7 @@ class DiscordSession:
 			if self.ws_tasks: await self.ws_tasks.close()
 			if self.ws: await self.ws.close()
 			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
-			self.st.disconnect_ts = time.monotonic()
+			self.st_da.disconnect_ts = time.monotonic()
 			self.state('disconnected')
 			self.ws_closed.set()
 		finally: self.ws_closed_clean.set()
@@ -2677,7 +2677,7 @@ class DiscordSession:
 
 	def ws_req_guild_sync(self):
 		'Fetches a list of threads and enables message events in large guilds (>10K users)'
-		for gid, gg in self.st.guilds.items():
+		for gid, gg in self.st_da.guilds.items():
 			if gid == 1: continue # "me" pseudo-guild
 			chan_req = list( (cc.id, [[0, 99]])
 				for cc in gg.chans.values() if cc.ct == cc.ct.text )
@@ -2690,7 +2690,7 @@ class DiscordSession:
 
 	### Gateway Websocket event handlers
 
-	def op_track_seq(self, m): self.st.seq = m.s
+	def op_track_seq(self, m): self.st_da.seq = m.s
 
 	def op_reconnect(self, m):
 		self.log.info('Received reconnect event - closing connection')
@@ -2698,13 +2698,13 @@ class DiscordSession:
 
 	async def op_hello(self, m):
 		self.state('hello')
-		self.st.hb_interval = m.d.heartbeat_interval / 1e3
+		self.st_da.hb_interval = m.d.heartbeat_interval / 1e3
 		await self.op_hello_auth()
 		return self.c.oneshot
 
 	async def op_hello_auth(self):
 		self.state('hello.auth.token')
-		sid = self.st.get('session_id')
+		sid = self.st_da.get('session_id')
 		token = await self.req_auth_token()
 		if not sid:
 			self.state('hello.auth.identify')
@@ -2719,17 +2719,17 @@ class DiscordSession:
 			self.ws_add_handler( self.c.dispatch,
 				t='resumed', func=self.op_ready, replace=True )
 			self.ws_send(self.c.resume, dict(
-				token=token, session_id=sid, seq=self.st.get('seq') ))
+				token=token, session_id=sid, seq=self.st_da.get('seq') ))
 
 	async def op_invalid_session_retry(self, m):
 		# "expected to wait a random amount of time -
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
 		self.state('session.error.delay')
 		delay = asyncio.create_task(asyncio.sleep(1 + random.random() * 4))
-		if not m.get('d') and self.st.get('session_id'):
+		if not m.get('d') and self.st_da.get('session_id'):
 			self.log.info( 'Session/auth rejected (id={}) - trying'
-				' to open new session first', self.st.get('session_id', '-')[:6] )
-			self.st.session_id = self.st.seq = None
+				' to open new session first', self.st_da.get('session_id', '-')[:6] )
+			self.st_da.session_id = self.st_da.seq = None
 			await delay
 		else:
 			if self.auth_token_manual:
@@ -2761,9 +2761,9 @@ class DiscordSession:
 
 	def op_ready(self, m):
 		md, resume, ts = m.get('d'), False, time.monotonic()
-		ts_start = tuple(self.st.get(k) for k in ['session_ts', 'connect_ts'])
+		ts_start = tuple(self.st_da.get(k) for k in ['session_ts', 'connect_ts'])
 		if md and md.get('session_id'):
-			self.st.update(
+			self.st_da.update(
 				session_id=md.session_id,
 				session_ts=ts,
 				user_id=md.user.id,
@@ -2771,42 +2771,42 @@ class DiscordSession:
 				user_n=md.user.discriminator,
 				read_state_last=1 )
 			self.op_ev_guilds(md.get('guilds'), sync=True)
-			self.op_ev_chans(self.st.me.id, md.get('private_channels'), sync=True)
+			self.op_ev_chans(self.st_da.me.id, md.get('private_channels'), sync=True)
 			self.ws_req_guild_sync()
 			self.log.debug( 'New session id: {} gw=[ {} ]',
-				self.st.session_id, md.get('resume_gateway_url') )
+				self.st_da.session_id, md.get('resume_gateway_url') )
 			if isinstance(rs := md.get('read_state'), dict): rs = rs.get('entries')
 			for rs in rs or list():
 				if not (n := rs.get('last_viewed')): continue
-				self.st.read_state_last = max(n, self.st.read_state_last)
+				self.st_da.read_state_last = max(n, self.st_da.read_state_last)
 		else: resume = True
 		if resume_url := md.get('resume_gateway_url'):
 			self.conf.discord_gateway = resume_url
-		td_sess, td_conn = ((repr_duration(self.st.get(
+		td_sess, td_conn = ((repr_duration(self.st_da.get(
 			'disconnect_ts' ) or ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_start)
 		level = 'warning' if self.conf.discord_ws_reconnect_warn_always else 'debug'
 		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
 		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
-			' [resumed]' if resume else ' [new]', self.st.session_id[:6], ws_addr,
+			' [resumed]' if resume else ' [new]', self.st_da.session_id[:6], ws_addr,
 			'' if not (td_sess + td_conn).strip('-') else ' {}sess-lifetime=[{}]{}'.format(
 				'last-' if not resume else '', td_sess,
 				'' if td_conn == td_sess else f' last-conn-duration=[{td_conn}]' ) )
-		self.st.connect_ts, self.st.disconnect_ts = ts, None
+		self.st_da.connect_ts, self.st_da.disconnect_ts = ts, None
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_event, replace=True )
-		self.ws_tasks.add(self.op_heartbeat_task(self.st.hb_interval))
+		self.ws_tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
 		return self.c.oneshot
 
 	async def op_heartbeat_task(self, interval):
 		loop = asyncio.get_running_loop()
-		self.st.hb_ts_ack = hb_ts = loop.time() + interval
+		self.st_da.hb_ts_ack = hb_ts = loop.time() + interval
 		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
 		while not self.ws_closed.is_set():
-			self.ws_send(self.c.heartbeat, self.st.get('seq'))
+			self.ws_send(self.c.heartbeat, self.st_da.get('seq'))
 			ts = loop.time()
-			if self.st.hb_ts_ack < ts - interval*2:
+			if self.st_da.hb_ts_ack < ts - interval*2:
 				self.log.info('Missing heartbeat ack, reconnecting')
 				self.state('heartbeat.fail')
 				return self.ws_close_later()
@@ -2815,7 +2815,7 @@ class DiscordSession:
 			await asyncio.sleep(delay)
 
 	def op_heartbeat_ack(self, m):
-		self.st.hb_ts_ack = asyncio.get_running_loop().time()
+		self.st_da.hb_ts_ack = asyncio.get_running_loop().time()
 
 	def op_ev(self, m):
 		'Dispatcher for op=0 (dispatch) gateway-ws events, which is most of the activity'
@@ -2904,7 +2904,7 @@ class DiscordSession:
 		self.discord.cmd_user_cache(gid, m.user.id, self.discord.user_name(m.user))
 
 	def op_ev_delete(self, gid=None, chan=...):
-		if not (gg := self.st.guilds.get(gid)): return
+		if not (gg := self.st_da.guilds.get(gid)): return
 		if chan is not ...:
 			self.log.debug('Channel delete event: guild={} chan={}', gid, chan)
 			if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
@@ -2912,20 +2912,20 @@ class DiscordSession:
 		else:
 			self.log.debug('Guild delete event: guild={}', gid)
 			self.discord.cmd_guild_event(gid, 'Discord was DELETED')
-			self.st.guilds.pop(gid, None)
+			self.st_da.guilds.pop(gid, None)
 
 	def op_ev_guilds(self, guilds, sync=False):
-		gs_new, gs_chans, gs_vcs = {1: self.st.me}, dict(), cs.defaultdict(set)
+		gs_new, gs_chans, gs_vcs = {1: self.st_da.me}, dict(), cs.defaultdict(set)
 		for g in force_list(guilds):
 			if g.get('unavailable'): continue # can be sent in "ready" event
-			if g.id == self.st.me.id:
+			if g.id == self.st_da.me.id:
 				self.log.error('Skipping guild due to id=1 conflict with "me" guild: {}', g)
 				continue
 			# "properties" can be separated with some capabilities= bits in op=identify
 			if 'properties' in g: g = adict(g.pop('properties'), **g)
 			gg = gs_new.setdefault( g.id,
-				self.st.guilds.get(g.id, adict(id=g.id, chans=dict())) )
-			if g.id not in self.st.guilds:
+				self.st_da.guilds.get(g.id, adict(id=g.id, chans=dict())) )
+			if g.id not in self.st_da.guilds:
 				prefix = self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
 				self.log.debug('New guild: gid={} prefix={} name={!r}', g.id, prefix, g.name)
 			ts_joined = g.get('joined_at') or 0
@@ -2936,14 +2936,14 @@ class DiscordSession:
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
 			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
 			gs_vcs[g.id].update(vs.get('channel_id') for vs in g.get('voice_states') or list())
-		dict_update(self.st.guilds, gs_new, sync=sync)
+		dict_update(self.st_da.guilds, gs_new, sync=sync)
 		for (gid, sk), chans in sorted(gs_chans.items()):
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
-			for cid, cc in self.st.guilds[gid].chans.items():
+			for cid, cc in self.st_da.guilds[gid].chans.items():
 				if cid in gs_vcs[gid]: cc.vc_active = True
 
 	def op_ev_chans(self, gid, chans, sync=None):
-		if not (gg := self.st.guilds.get(gid)): return
+		if not (gg := self.st_da.guilds.get(gid)): return
 		chans_updated, new_threads = self.op_ev_chans_process(gg, chans)
 
 		rename_list = list() # sent after chan_map is updated
@@ -3119,7 +3119,7 @@ class DiscordSession:
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
-		cc = self.st.guilds[1].chans.get(m.channel_id)
+		cc = self.st_da.guilds[1].chans.get(m.channel_id)
 		nick = (u := m.get('user')) and self.discord.user_name(u)
 		if u: self.discord.cmd_user_cache(1, u.id, nick)
 		self.discord.cmd_msg_recv(cc, nick, f'recipient {act.lower()}', dict(_ev=True))
@@ -3163,7 +3163,7 @@ class DiscordSession:
 			for v in ['Notification', m.get('type'), m.get('body') or m.get('message')] if v ))
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
-		gg = self.st.guilds.get(m.get('guild_id', 1))
+		gg = self.st_da.guilds.get(m.get('guild_id', 1))
 		if not cc:
 			if gg: cc = gg.chans.get(m.channel_id)
 			if not cc:
@@ -3195,7 +3195,7 @@ class DiscordSession:
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
-			nick = self.st.embed_info.get(m.id)
+			nick = self.st_da.embed_info.get(m.id)
 			media_info = ( msg_is_update and
 				self.conf.discord_embed_info and self.op_msg_media_info(m) or list() )
 			if media_info: act = 'media' # will be processed/added to msg below
@@ -3246,14 +3246,14 @@ class DiscordSession:
 			if act != 'media' and re.search(
 					r'\b(https?://|(www\.|m\.)?youtube\.|youtu\.be)\b', line ): # URL or YT-domain
 				# Some embeds can come in both original msg and edits, deduped via embed_info
-				while len(self.st.embed_info) >= self.conf.discord_embed_info_buffer:
-					del self.st.embed_info[next(iter(self.st.embed_info.keys()))]
-				self.st.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
-				self.st.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
+				while len(self.st_da.embed_info) >= self.conf.discord_embed_info_buffer:
+					del self.st_da.embed_info[next(iter(self.st_da.embed_info.keys()))]
+				self.st_da.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
+				self.st_da.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
 			if media_info := media_info or self.op_msg_media_info(m, force_meta=media_expected):
 				tag = self.conf.irc_prefix_embed.format(str_hash(m.id, 3))
 				if tag not in (pre := tags.get('_prefix', '')): tags['_prefix'] = pre + tag
-				if em_suffs := self.st.embed_info.get(f'lines.{m.id}'):
+				if em_suffs := self.st_da.embed_info.get(f'lines.{m.id}'):
 					for el, suff in it.product(list(media_info), em_suffs):
 						if el.endswith(suff) and el in media_info: media_info.remove(el)
 				line = '\n'.join([line, *(str_cut( line,
@@ -3483,10 +3483,10 @@ class DiscordSession:
 		#  is used, if any (or if "ref" is passed), to avoid follow-up
 		#  no-content embed-info updates replacing meaningful cached line
 		if not self.conf.discord_msg_interact_cache:
-			if self.st.icache: self.st.icache.clear()
+			if self.st_da.icache: self.st_da.icache.clear()
 			return
-		elif not (c := self.st.icache):
-			self.st.icache.update(hot=dict(), shared=dict(), gid=dict(), chan=dict())
+		elif not (c := self.st_da.icache):
+			self.st_da.icache.update(hot=dict(), shared=dict(), gid=dict(), chan=dict())
 		if not line and ref: line = ref.line
 		caches, ts = list(), time.monotonic()
 		for ck, cx, cxn in (
@@ -3513,7 +3513,7 @@ class DiscordSession:
 
 	def op_msg_ref_get(self, msg_id, cc):
 		'Return None or adict(nick, line) reference for msg-id/chan'
-		if not (c := self.st.icache): return
+		if not (c := self.st_da.icache): return
 		for ck, cx in ( (False, c.hot),
 				(None, c.shared), (cc.gg.id, c.gid), (cc.id, c.chan) ):
 			if ck: cx = cx.get(ck, dict())
@@ -3539,7 +3539,7 @@ class DiscordSession:
 
 	def op_react(self, m, act):
 		if self.conf.irc_disable_reactions: return
-		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+		if not ( (gg := self.st_da.guilds.get(m.get('guild_id', 1)))
 			and (cc := gg.chans.get(m.get('channel_id'))) ): return
 		try: # emo_id seem to be only passed if it's not unicode emoji
 			emo_id, emo = m.emoji.get('id'), m.emoji.get('name') or ''
@@ -3558,7 +3558,7 @@ class DiscordSession:
 		self.discord.cmd_msg_recv(cc, nick, f'reacts: {act}{emo} {ext}', dict(_ev=True))
 
 	def op_gift_code(self, m):
-		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+		if not ( (gg := self.st_da.guilds.get(m.get('guild_id', 1)))
 			and (cc := gg.chans.get(m.get('channel_id'))) ): return
 		self.discord.cmd_msg_recv( cc, None,
 			f'gift-code: uses={m.uses} sku={m.sku_id} code={m.code}', dict(_ev=True) )
@@ -3569,7 +3569,7 @@ class DiscordSession:
 		return not next(tbf)
 
 	def op_voice_st_chan(self, m):
-		if not ( (gg := self.st.guilds.get(m.get('guild_id', 1)))
+		if not ( (gg := self.st_da.guilds.get(m.get('guild_id', 1)))
 			and (cc := gg.chans.get(m.get('id'))) ): return
 		# status here seem to always be null, indicating empty channel
 		if ( bool(st := m.get('status')) == bool(cc.get('vc_active'))
@@ -3579,7 +3579,7 @@ class DiscordSession:
 			'voice-chat status: ' + str(st or 'empty'), dict(_ev='vc'), notice=True )
 
 	def op_voice_st_user(self, m):
-		if not (gg := self.st.guilds.get(m.get('guild_id', 1))): return
+		if not (gg := self.st_da.guilds.get(m.get('guild_id', 1))): return
 
 		ev, vcs, user_id = set(), gg.get('vcs', dict()), gg.get('user_id')
 		if not (cc := gg.chans.get(m.get('channel_id'))): # "user left" event
@@ -3608,14 +3608,14 @@ class DiscordSession:
 			msg_base + ' '.join(sorted(ev)), dict(_ev='vc'), notice=True )
 
 	def op_typing(self, m):
-		if gg := self.st.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
+		if gg := self.st_da.guilds.get(m.get('guild_id', 1)): cc = gg.chans.get(m.channel_id)
 		if not cc: return self.log.warning( 'Dropped typing event with'
 			' unknown guild/channel id: guild_id={} channel_id={}', gg, m.channel_id )
 		# These messages always have "user_id", but "member" only in non-private chats
 		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
 		if nick := m.get('member'): nick = self.discord.user_name(nick)
 		else: nick = self.discord.cmd_user_cache(gg.id, m.user_id)
-		if m.user_id == self.st.user_id: return # echo of own typing msgs
+		if m.user_id == self.st_da.user_id: return # echo of own typing msgs
 		self.discord.cmd_typing(cc, nick or '???')
 
 
@@ -3645,7 +3645,7 @@ class RDIRCD:
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
-		self.cache = adict( chan_map=None, uid=dict(),
+		self.st_br = adict( chan_map=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover/voice channels
 			gid_mon_chan=dict(), gid_nc_chan=dict(), gid_vc_chan=dict(), did_chan=dict(),
@@ -3674,18 +3674,18 @@ class RDIRCD:
 			kh can specify pre-defined hash value to only lookup alias for that.
 			alias_key/default is to query other aliases associated with same kh.'''
 		ck = t, v, alias_key
-		if ck not in self.cache.uid:
+		if ck not in self.st_br.uid:
 			if kh is None:
-				if not (kh := self.cache.uid.get(tv := f'{t}\0{v}')):
-					kh = self.cache.uid[tv] = str_hash(
+				if not (kh := self.st_br.uid.get(tv := f'{t}\0{v}')):
+					kh = self.st_br.uid[tv] = str_hash(
 						tv, hash_len or self.uid_len, self.uid_seed )
-					if kh in self.cache.uid: # raise irc uid-len if this happens
+					if kh in self.st_br.uid: # raise irc uid-len if this happens
 						raise ValueError( f'Unique-id hash collision [ {t}={v} ]: key={kh}'
-							f' len/seed=[ {self.uid_len} {self.uid_seed} ] other={self.cache.uid[kh]}' )
-					self.cache.uid[kh] = ck
-			self.cache.uid[ck] = self.conf.renames.get(
+							f' len/seed=[ {self.uid_len} {self.uid_seed} ] other={self.st_br.uid[kh]}' )
+					self.st_br.uid[kh] = ck
+			self.st_br.uid[ck] = self.conf.renames.get(
 				(t, str_norm(alias_key.format(kh=kh))), alias_default or kh )
-		return self.cache.uid[ck]
+		return self.st_br.uid[ck]
 
 	async def run(self):
 		if self.conf.debug_mean_minutes_to_segfault > 0:
@@ -3727,17 +3727,17 @@ class RDIRCD:
 	def irc_conn_lost(self, irc): self.irc_conns.pop(id(irc), None)
 	def irc_conn_stats(self):
 		stats = adict(
-			servers=len(self.discord.st.get('guilds', dict())) or 1,
+			servers=len(self.discord.st_da.get('guilds', dict())) or 1,
 			chans=len(self.cmd_chan_map()),
 			total=0, total_max=self.irc_conns_max, unknown=0, auth=0, op=0 )
 		for conn in self.irc_conns.values():
 			stats.total += 1
-			if conn.st.auth: stats.auth += 1
+			if conn.st_irc.auth: stats.auth += 1
 			else: stats.unknown += 1
 		return stats
 	def irc_conn_names(self):
 		for conn in self.irc_conns.values():
-			if conn.st.auth: yield conn.st.nick
+			if conn.st_irc.auth: yield conn.st_irc.nick
 
 	def irc_name(self, name, casefold=False, _irc_remap=dict([
 			*((n, f'°{n:02d}') for n in range(32)),
@@ -3745,13 +3745,13 @@ class RDIRCD:
 		'Return IRC name for a Discord name'
 		# Must be deterministic but ideally not create collisions by stripping too much
 		# General idea is to replace all irc-problematic chars by lookalike unicode
-		if name not in self.cache.d2i:
+		if name not in self.st_br.d2i:
 			name_irc, sub_chars = '', '°¨·„∂¦◄►'
 			name_clean = re.sub(rf'[{sub_chars}]', '', name)
 			if name_clean != name: name = name_clean + '¨' + self.uid('name', name)
 			name_irc = name.translate(_irc_remap)
-			self.cache.d2i[name], self.cache.i2d[name_irc] = name_irc, name
-		name = self.cache.d2i[name]
+			self.st_br.d2i[name], self.st_br.i2d[name_irc] = name_irc, name
+		name = self.st_br.d2i[name]
 		if casefold: name = irc_casefold_rfc1459(name)
 		return name
 
@@ -3759,7 +3759,7 @@ class RDIRCD:
 		'Return Discord name for an IRC name'
 		# Relies on a i2d cache being set by earlier irc_name() call for this name
 		# Which is done for every channel/user, notably in cmd_chan_map
-		return self.cache.i2d.get(name_irc)
+		return self.st_br.i2d.get(name_irc)
 
 	def irc_discord_info(self, name):
 		'Return info{gg, cc} object for IRC name for discord channel or None'
@@ -3775,7 +3775,7 @@ class RDIRCD:
 		for gid in list(info):
 			if not (users := info.pop(gid)): continue
 			guild = dict(id=gid)
-			if gg := self.discord.st.guilds.get(gid): guild['name'] = gg.name
+			if gg := self.discord.st_da.guilds.get(gid): guild['name'] = gg.name
 			for m in users.values():
 				m.pop('joined_at', None) # to merge otherwise-same records
 				dh = data_hash(m)
@@ -3881,7 +3881,7 @@ class RDIRCD:
 			id_str = f'{t}/{id_str}'
 		elif t == 'users' and not id_str.isdigit():
 			nick, nick_irc = id_str, self.irc_name_revert(id_str)
-			gids = list(gid for gid in self.discord.st.guilds if gid != 1) # skip "me" non-guild
+			gids = list(gid for gid in self.discord.st_da.guilds if gid != 1) # skip "me" non-guild
 			info = await self._irc_cmd_query_username(id_str, gids)
 			id_str = f' {nick_irc or nick!r} on {len(gids)} discord(s) '
 			if not nick_irc:
@@ -3977,7 +3977,7 @@ class RDIRCD:
 	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
 		for conn in self.irc_conns.values():
-			if conn.st.nick: yield (conn.st.nick, conn)
+			if conn.st_irc.nick: yield (conn.st_irc.nick, conn)
 
 	def cmd_conn(self, name=None):
 		'Get IRC connection for sending a direct message'
@@ -3990,19 +3990,19 @@ class RDIRCD:
 	def cmd_chan_conns(self, name_or_cc):
 		'Get list of irc connections for users in a channel'
 		if isinstance(name_or_cc, str): name = name_or_cc
-		elif not (name := self.cache.did_chan.get(name_or_cc.did)): return
+		elif not (name := self.st_br.did_chan.get(name_or_cc.did)): return
 		for conn in self.irc_conns.values():
 			chan_name = conn.chan_name(name)
-			if chan_name not in conn.st.chans:
+			if chan_name not in conn.st_irc.chans:
 				if not self.conf._irc_chan_auto_join_re.search(chan_name): continue
-				if not conn.st.auth: continue
+				if not conn.st_irc.auth: continue
 			yield conn
 
 	def cmd_chan_names(self, name):
 		'Returns list of irc-unique nicks for specified channel, for /names and such'
 		if not (info := self.irc_discord_info(name)): return list()
 		chan_nicks = irc_name_dict.value_map(
-			conn.st.nick for conn in self.cmd_chan_conns(name) if conn.st.nick )
+			conn.st_irc.nick for conn in self.cmd_chan_conns(name) if conn.st_irc.nick )
 		for nick_discord, nick in (users := info.cc.get('users', dict())).items():
 			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
 			chan_nicks.add(nick)
@@ -4010,13 +4010,13 @@ class RDIRCD:
 
 	def cmd_chan_map(self):
 		'''Returns cached adict of {chan-name: {name, topic, did, ts_created}},
-			updating misc minor .cache.* maps used elsewhere in the process.'''
-		if cm0 := self.cache.chan_map: cm = cm0
+			updating misc minor .st_br.* maps used elsewhere in the process.'''
+		if cm0 := self.st_br.chan_map: cm = cm0
 		else:
-			cache_drop = ft.partial(self.cache.update, chan_map=None)
+			cache_drop = ft.partial(self.st_br.update, chan_map=None)
 			cache_track = lambda d, keys=None: d._track(keys, cb=cache_drop)
 			cm_list = list(self._cmd_chan_map_build(cache_track))
-			cm = self.cache.chan_map = irc_name_dict(cm_list)
+			cm = self.st_br.chan_map = irc_name_dict(cm_list)
 			if len(cm) < len(cm_list):
 				cm_repeats = ' '.join( k for k, n in
 					cs.Counter(k for k, v in cm_list).items() if n > 1 )
@@ -4033,12 +4033,12 @@ class RDIRCD:
 
 	def _cmd_chan_map_build(self, cache_track):
 		# Name-keys returned here are used in irc_name_dict, so don't need casemapping
-		cache_track(self.discord.st.guilds)
+		cache_track(self.discord.st_da.guilds)
 		gg_uid = lambda gg,**kws: self.uid('guild', gg.id, kh=gg.get('kh'), **kws)
 		gg_info = list(
 			adict( gg=gg, prefix=gg_uid(gg),
 				name_fmt=gg_uid(gg, alias_key='{kh}.chan-fmt', alias_default='{prefix}.{name}') )
-			for gg in sorted(self.discord.st.guilds.values(), key=op.itemgetter('ts_joined')) )
+			for gg in sorted(self.discord.st_da.guilds.values(), key=op.itemgetter('ts_joined')) )
 		sys_chan_ts = self.server_ts.timestamp()
 
 		def _topic_fmt(key, gi=None, cid='', tags='', topic=''):
@@ -4060,7 +4060,7 @@ class RDIRCD:
 			kc = _kc[k]
 			name = ( getattr(self.conf, f'irc_chan_{kc}') if not gi else
 				getattr(self.conf, f'irc_chan_{kc}_guild').format(prefix=gi.prefix) )
-			getattr(self.cache, f'gid_{k}_chan')[gi and gi.gg.id] = name
+			getattr(self.st_br, f'gid_{k}_chan')[gi and gi.gg.id] = name
 			if not name: return
 			topic = _topic_fmt(kc) if not gi else _topic_fmt(f'{kc}_guild', gi)
 			yield (name, adict( name=name, topic=topic,
@@ -4089,7 +4089,7 @@ class RDIRCD:
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = _topic_fmt('channel', gi, cid=cc.id, tags=tags, topic=topic)
-				self.cache.did_chan[cc.did] = name
+				self.st_br.did_chan[cc.did] = name
 				yield (name, adict(
 					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
 					name=name, topic=topic, ts_created=gi.gg.ts_joined ))
@@ -4100,8 +4100,8 @@ class RDIRCD:
 		getattr(self, f'cmd_chan_sys_{sys_type}')(conn, chan, line)
 
 	def cmd_chan_sys_uptime(self):
-		up_td = repr_duration(self.discord.bridge.uptime_ts, time.monotonic())
-		up_dt = self.discord.bridge.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+		up_td = repr_duration(self.uptime_ts, time.monotonic())
+		up_dt = self.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
 		return f'since {up_dt} ({up_td})'
 
 	def cmd_chan_sys_log_counts(self):
@@ -4116,13 +4116,13 @@ class RDIRCD:
 		cmd, send = line[0], ft.partial(conn.cmd_msg_chan, self.conf.irc_nick_sys, chan)
 		if cmd in ['h', 'help']:
 			return send(doc_fmt_lines(
-				self._cmd_chan_sys_status(conn.st.ts) + '\n'
+				self._cmd_chan_sys_status(conn.st_irc.ts) + '\n'
 				+ doc_control_chan_cmds
 				+ ( '' if not self.conf.debug_dev_cmds
 					else ('\n' + doc_control_chan_dev_cmds) )
 				+ '\n\nOnly immediate response to sent'
 					' commands is logged here - no noise over time.' ))
-		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status(conn.st.ts))
+		elif cmd in ['status', 'st']: return send(self._cmd_chan_sys_status(conn.st_irc.ts))
 		elif cmd in ['cache-stats', 'cs']: return send(self._cmd_chan_sys_cache())
 		try:
 			if cmd in ['connect', 'on']:
@@ -4159,13 +4159,13 @@ class RDIRCD:
 
 	def _cmd_chan_sys_status(self, conn_ts):
 		'Implementation for status display in control-channel'
-		st, ts = self.discord.st, time.monotonic()
+		st, ts = self.discord.st_da, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
 		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=None))
 			for v in [conn_ts, *(st.get(k, '') for k in ('session_ts', 'connect_ts'))] )
 		if sess_st != 'ready': conn_td = ''
-		up_td = repr_duration(self.discord.bridge.uptime_ts, time.monotonic())
-		up_dt = self.discord.bridge.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+		up_td = repr_duration(self.uptime_ts, time.monotonic())
+		up_dt = self.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
 		return '\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
 			f'  discord-session-id: {sess_id}',
@@ -4187,7 +4187,7 @@ class RDIRCD:
 			sz = f'{sz / u1:.1f}'.removesuffix('.0')
 			return f'{sz} {u}'
 		med = lambda v, n: v / n if n > 0 else 0
-		c, stats = self.discord.st.get('icache', dict()), list()
+		c, stats = self.discord.st_da.get('icache', dict()), list()
 		for name, ck, cx, cxn in (
 				('Shared', None, 'shared', 'shared'),
 				('Interacted-with "hot"', None, 'hot', 'hot'),
@@ -4349,7 +4349,7 @@ class RDIRCD:
 		cm = self.cmd_chan_map() # should be in caches too
 		cc = ci = cm.get(chan)
 		if ci: cc = ci.get('cc', None)
-		dump = pyaml_dump(dict(chan_info=ci, chan=cc, caches=self.cache))
+		dump = pyaml_dump(dict(chan_info=ci, chan=cc, caches=self.st_br))
 		(p := pl.Path(path_filter(dst_file))).write_text(dump)
 		chan_info = cc.name if cc else f'-no-channel-({chan!r})'
 		send( f'Stored channel-sim data: file=[ {p} ]'
@@ -4364,7 +4364,7 @@ class RDIRCD:
 				elif k == 'bt': v = self.c_bc_type(v)
 			return v
 		for k, upd in dump['caches'].items():
-			if not isinstance(cache := self.cache.get(k), cs.abc.Mapping): continue
+			if not isinstance(cache := self.st_br.get(k), cs.abc.Mapping): continue
 			if all(type(v) is adict for v in cache.values()):
 				upd.update((k, adict.rec_make(v, enum_rec)) for k,v in upd.items())
 			cache.clear(); cache.update(upd)
@@ -4374,7 +4374,7 @@ class RDIRCD:
 		if not nick: nick = f'user-{str_uid(4)}'
 		if not msg: msg = f'⚛️ Message Test ⚛️ [{str_uid(8)}]'
 		self.cmd_msg_discord(cc, nick, msg)
-		chan_name = self.cache.did_chan.get(
+		chan_name = self.st_br.did_chan.get(
 			cc.did, f'<ERR {cc.gg.name!r} {cc.name!r}>' )
 		return send(f'Chan-msg sim [ {p} ]: #{chan_name} :: <{nick}> {msg}')
 
@@ -4472,7 +4472,7 @@ class RDIRCD:
 		nc_conns_skip = set(leftover_skip or list())
 		for ct in 'mon', 'nc', 'vc':
 			if ct == 'vc' and ev != 'vc': continue
-			chans, cache = list(), getattr(self.cache, f'gid_{ct}_chan')
+			chans, cache = list(), getattr(self.st_br, f'gid_{ct}_chan')
 			if gid and (name := cache.get(gid)): chans.append(name)
 			if name := cache[None]: chans.append(name)
 			for name in chans:
@@ -4491,7 +4491,7 @@ class RDIRCD:
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
 		if ts: self.conf.state_set(self.uid_start, ts)
-		prefix, ev, name = '', '', name_irc or self.cache.did_chan.get(cc.did)
+		prefix, ev, name = '', '', name_irc or self.st_br.did_chan.get(cc.did)
 		if conn: skip_monitor, conns_joined = True, [conn] # e.g. log-replay for this irc client
 		else:
 			conns_joined = self.cmd_chan_conns(name) if name else list()
@@ -4503,7 +4503,7 @@ class RDIRCD:
 			for k, (tt, v) in tags.items():
 				if tt == mt.user: v = f'@{self.irc_name(v)}'
 				elif tt == mt.chan:
-					v = IRCProtocol.chan_spec(self.cache.did_chan.get(v, v))
+					v = IRCProtocol.chan_spec(self.st_br.did_chan.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick_discord, nick = nick, self.irc_name(nick)
 		else:
@@ -4545,14 +4545,14 @@ class RDIRCD:
 
 	def cmd_typing(self, cc, nick):
 		'Incoming typing event from some user in a discord channel'
-		if not (name := self.cache.did_chan.get(cc.did)): return
+		if not (name := self.st_br.did_chan.get(cc.did)): return
 		for conn in self.cmd_chan_conns(name): conn.cmd_typing(self.irc_name(nick), name)
 
 	def cmd_msg_rename_func(self, cc):
 		'''Returns cmd_msg_discord func to send rename-notice to old channel.
 			Runs before discord-id cache updates to new channel name to use old name_irc.'''
 		return ft.partial( self.cmd_msg_discord,
-			cc, name_irc=self.cache.did_chan.get(cc.did) )
+			cc, name_irc=self.st_br.did_chan.get(cc.did) )
 
 
 
