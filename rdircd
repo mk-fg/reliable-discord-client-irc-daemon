@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.09.9' # git-version: py-str
+	version = '24.09.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -114,9 +114,8 @@ class RDIRCDConfigBase:
 	# Per-discord voice-mon chans are default-disabled, set e.g. rdircd.voice.{prefix} to enable.
 	irc_chan_voice_guild = ''
 
-	# Space-separated list of IRCv3 capabilities to hide/NAK, even if supported by rdircd/client.
-	# Example: message-tags draft/read-marker
-	irc_v3_caps_nak = ''
+	# Space-separated list of allowed IRCv3 capabilities, if supported by rdircd and client.
+	irc_ircv3_caps = 'message-tags'
 
 	# Interval (seconds) to repeat typing notifications from discord to irc client (if supported).
 	# Discord sends typing notifications every ~10s, ircv3 requires these to be every 3-6s.
@@ -1194,8 +1193,6 @@ class IRCProtocol:
 	nx_chan_warn = ( 'WARNING :: Discord has no channel'
 		' linked to this one, nothing will happen here :: WARNING' )
 
-	server_caps = {'message-tags'}
-
 	@classmethod
 	def factory_for_bridge(cls, rdircd):
 		def _wrapper():
@@ -1221,8 +1218,6 @@ class IRCProtocol:
 			# Channels here get initialized on joins and removed on parts
 			# There is no need to track them otherwise
 			chans=irc_name_dict() )
-		if caps_nak := self.conf.irc_v3_caps_nak:
-			self.server_caps = self.server_caps.difference(caps_nak.split())
 
 
 	def connection_made(self, tr):
@@ -1429,12 +1424,13 @@ class IRCProtocol:
 		self.send(0, f'PONG {self.bridge.server_host} :{server}')
 
 	def recv_cmd_cap(self, sub_raw, caps_str=''):
+		caps_allowed = set(self.conf.irc_ircv3_caps.split())
 		if (sub := sub_raw.lower()) == 'ls':
 			try: ver = caps_str and int(caps_str) or 0 # unused, to filter sent caps
 			except ValueError:
 				return self.send(410, sub_raw, ':Invalid CAP command')
 			self.st.cap_neg = True
-			self.send(0, f'CAP * LS :{" ".join(self.server_caps)}')
+			self.send(0, f'CAP * LS :{" ".join(caps_allowed)}')
 		elif sub == 'list':
 			self.send(0, f'CAP * LIST :{" ".join(self.st.caps)}')
 		elif sub == 'req':
@@ -1442,7 +1438,7 @@ class IRCProtocol:
 			for c in caps_str.split():
 				if c.startswith('-'): caps.discard(c[1:])
 				else: caps.add(c)
-			if caps.difference(self.server_caps):
+			if caps.difference(caps_allowed):
 				return self.send(0, f'CAP * NAK :{caps_str}')
 			self.st.caps = caps
 			self.send(0, f'CAP * ACK :{caps_str}')
