@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.0' # git-version: py-str
+	version = '24.10.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3446,8 +3446,8 @@ class DiscordSession:
 			elif mt == mtc.default:
 				if m.get('activity') and m.get('timestamp'):
 					pass # discord embedded-app activities don't display channel msgs anyway
-				else: self.log.warning( 'Discarded basic text-msg'
-					' without contents (processing bug?): {}', self._repr(m) )
+				elif not has_media_info: self.log.warning( 'Discarded basic'
+					' text-msg without contents (processing bug?): {}', self._repr(m) )
 		return line.strip(), tags
 
 	def op_msg_parse_tags(self, line, m, chans, roles):
