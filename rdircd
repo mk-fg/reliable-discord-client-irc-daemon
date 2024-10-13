@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.1' # git-version: py-str
+	version = '24.10.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2819,13 +2819,11 @@ class DiscordSession:
 		mt = (m.get('t') or '').lower()
 		try: o, act = mt.rsplit('_', 1)
 		except ValueError: o = act = None
-		try: gid = m.d.guild_id
-		except: gid = None
 
 		# Events with some handling needed
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(m.d)
-			elif act == 'delete': return self.op_ev_delete(m.d.id)
+			elif act == 'delete': return self.op_ev_delete(m.d)
 		elif mt.startswith('guild_member_'):
 			act = mt[13:]
 			if act == 'list_update': return self.op_ev_member_ops(m.d)
@@ -2837,8 +2835,8 @@ class DiscordSession:
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'guild_scheduled_event': return self.op_ev_sched(m.d, act)
 		elif o in ['channel', 'thread']:
-			if act in ['create', 'update']: return self.op_ev_chans(gid or 1, m.d)
-			elif act == 'delete': return self.op_ev_delete(gid or 1, chan=m.d.id)
+			if act in ['create', 'update']: return self.op_ev_chans(m.d.get('guild_id') or 1, m.d)
+			elif act == 'delete': return self.op_ev_del_chan(m.d)
 		elif o == 'channel_recipient': return self.op_ev_recipient(m.d, act)
 		elif o == 'message':
 			if act in ['create', 'update', 'delete']: return self.op_msg(m.d, act)
@@ -2900,16 +2898,21 @@ class DiscordSession:
 		if delete: return self.discord.cmd_user_cache(gid, m.user.id, delete=True)
 		self.discord.cmd_user_cache(gid, m.user.id, self.discord.user_name(m.user))
 
-	def op_ev_delete(self, gid=None, chan=...):
-		if not (gg := self.st_da.guilds.get(gid)): return
-		if chan is not ...:
-			self.log.debug('Channel delete event: guild={} chan={}', gid, chan)
-			if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
-				gid, f'Discord channel deleted: {self.discord.irc_chan_name(cc)}' )
+	def op_ev_del_guild(self, m):
+		if not (gg := self.st_da.guilds.get(gid := m.id)): return
+		if outage := m.get('unavailable'):
+			self.log.debug('Guild outage event: guild={}', gid)
+			self.discord.cmd_guild_event(gid, 'Discord outage notification')
 		else:
 			self.log.debug('Guild delete event: guild={}', gid)
 			self.discord.cmd_guild_event(gid, 'Discord was DELETED')
 			self.st_da.guilds.pop(gid, None)
+
+	def op_ev_del_chan(self, m):
+		if not (gg := self.st_da.guilds.get(gid := m.get('guild_id') or 1)): return
+		self.log.debug('Channel delete event: guild={} chan={}', gid, chan := m.id)
+		if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
+			gid, f'Discord channel deleted: {self.discord.irc_chan_name(cc)}' )
 
 	def op_ev_guilds(self, guilds, sync=False):
 		gs_new, gs_chans, gs_vcs = {1: self.st_da.me}, dict(), cs.defaultdict(set)
