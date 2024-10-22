@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.3' # git-version: py-str
+	version = '24.10.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2795,6 +2795,7 @@ class DiscordSession:
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
 			self.op_invalid_session_event, replace=True )
+		self.ws_add_handler(self.c.heartbeat, func=self.op_heartbeat_req)
 		self.ws_tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
 		return self.c.oneshot
 
@@ -2815,6 +2816,9 @@ class DiscordSession:
 
 	def op_heartbeat_ack(self, m):
 		self.st_da.hb_ts_ack = asyncio.get_running_loop().time()
+
+	def op_heartbeat_req(self, m):
+		self.ws_send(self.c.heartbeat, self.st_da.get('seq'))
 
 	def op_ev(self, m):
 		'Dispatcher for op=0 (dispatch) gateway-ws events, which is most of the activity'
