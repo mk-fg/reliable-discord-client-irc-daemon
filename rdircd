@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.2' # git-version: py-str
+	version = '24.10.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -843,16 +843,18 @@ async def aio_task_cancel(task_list):
 	for task in task_list:
 		with cl.suppress(asyncio.CancelledError): await task
 
-class aio_timeout:
-	def __init__(self, timeout):
-		loop = asyncio.get_running_loop()
-		self._timeout, self._timeout_call = False, loop.call_at(
-			loop.time() + timeout, self._timeout_set, asyncio.current_task() )
-	def _timeout_set(self, task): self._timeout = task.cancel() or True
-	async def __aenter__(self): return self
-	async def __aexit__(self, err_t, err, err_tb):
-		if err_t is asyncio.CancelledError and self._timeout: raise asyncio.TimeoutError
-		self._timeout_call.cancel()
+try: aio_timeout = asyncio.timeout
+except: # py < 3.11
+	class aio_timeout:
+		def __init__(self, timeout):
+			loop = asyncio.get_running_loop()
+			self._timeout, self._timeout_call = False, loop.call_at(
+				loop.time() + timeout, self._timeout_set, asyncio.current_task() )
+		def _timeout_set(self, task): self._timeout = task.cancel() or True
+		async def __aenter__(self): return self
+		async def __aexit__(self, err_t, err, err_tb):
+			if err_t is asyncio.CancelledError and self._timeout: raise asyncio.TimeoutError
+			self._timeout_call.cancel()
 
 
 class StacklessContext:
