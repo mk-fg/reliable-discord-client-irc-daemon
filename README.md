@@ -1663,7 +1663,7 @@ without explicit indication.
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2024-07-12
+Last updated: 2024-10-24
 
 -   [Discord API docs] don't seem to cover "full-featured client" use-case,
     likely because such use of its API is explicitly not supported, and is
@@ -1730,10 +1730,16 @@ Last updated: 2024-07-12
 -   Discord allows channels and users to have exactly same visible name, which is not
     a big deal for users (due to one-way translation), but still disambiguated irc-side.
 
--   Gateway websocket [can use zlib compression], which makes inspecting protocol in
-    browser devtools a bit inconvenient. [gw-ws-har-decode.py] helper script
-    in this repo can be used to decompress/decode websocket messages saved from
-    chromium-engine browser devtools (pass `-h/--help` option for info on how to do it).
+-   Gateway websocket [can use zlib compression] (and [zstd in non-browser apps]),
+    which makes inspecting protocol in browser devtools a bit inconvenient.
+
+    [gw-ws-har-decode.py] helper script in this repo can be used to decompress/decode
+    websocket messages saved from chromium-engine browser devtools
+    (pass `-h/--help` option for info on how to do it).
+
+-   Run `./rdircd --test` for info on some extra development/testing helper commands.
+
+    `dev-cmds = yes` under `[debug]` also enables some runtime helpers in #rdircd.control.
 
 -   Adding support for initiating private chats might be a bad idea, as [Cordless]
     dev apparently got banned for that, and since these seem to be main spam vector,
@@ -1745,5 +1751,8 @@ Last updated: 2024-07-12
 [Change Log page of the API docs]: https://discord.com/developers/docs/change-log
 [litecord]: https://gitlab.com/litecord/litecord
 [Abaddon]: https://github.com/uowuo/abaddon
-[can use zlib compression]: https://discord.com/developers/docs/topics/gateway#encoding-and-compression
+[can use zlib compression]:
+  https://discord.com/developers/docs/topics/gateway#encoding-and-compression
+[zstd in non-browser apps]:
+  https://discord.com/blog/how-discord-reduced-websocket-traffic-by-40-percent
 [gw-ws-har-decode.py]: gw-ws-har-decode.py

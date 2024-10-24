@@ -9,7 +9,7 @@ import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc, urllib.parse as up
 import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
-import pickle, hashlib, base64, random, unicodedata, string, ast
+import pickle, hashlib, base64, random, textwrap, unicodedata, string, ast
 import logging, logging.handlers
 
 import aiohttp
@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.5' # git-version: py-str
+	version = '24.10.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -552,6 +552,9 @@ get_logger = lambda name: LogStyleAdapter(logging.getLogger(name))
 log_bak = get_logger('fallback')
 log_proto_root = logging.getLogger('proto')
 
+
+dd = lambda text: re.sub( r' \t+', ' ',
+	textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 
 def pprint(data):
 	if not (pp := getattr(pprint, 'module', None)):
@@ -4981,12 +4984,76 @@ def parse_conf_code_comments(lines):
 				comms[var], var_break = comm, False
 	return comms
 
+def main_test(cmd, conf):
+	help_msg = dd('''
+		Supported --test=<command> helper/tool commands:
+
+			msg-parse[=<json-file-path>]
+				Parse full MESSAGE_CREATE even from a JSON file with it (or stdin), using op_msg.
+				Prints resulting parsed lines and any warnings logged during that.
+				Intended to test pasing new/complicated message structures after code tweaks.
+
+			msg-parse-base[=<json-file-path>]
+				Same as msg-parse above, but to parse "message" payload object, using op_msg_parse.
+			msg-parse-media[=<json-file-path>]
+				Same as msg-parse above, but to parse media/embed info only, using op_msg_media_info.''')
+	if not (cmd := cmd.strip()) or cmd in ['help', '?']: return print(help_msg)
+	cmd, s, arg = cmd.partition('=')
+
+	if cmd in ['msg-parse', 'msg-parse-base', 'msg-parse-media']:
+		class DiscordStub(RDIRCD, Discord, DiscordSession):
+			st_da = st_br = msg_recv = None
+			def cmd_user_cache(self, gid, uid, name=None): pass
+			def op_msg_ref(self, msg_id, cc, nick, line, ref=None): pass
+			def cmd_msg_recv( self, cc, nick, line,
+					tags=None, flake=None, nonce=None, notice=None, skip_monitor=False ):
+				self.msg_recv = cc, nick, line, tags, flake, nonce, notice, skip_monitor
+			def __init__(self, conf, st):
+				self.st_da = self.st_br = st
+				self.conf, self.log = conf, get_logger('xxx')
+				self.discord = self.bridge = self # all-in-one mock object
+
+		ev = adict(json.loads(pl.Path(arg).read_bytes() if arg else sys.stdin.read()))
+		guild_id, chan_id, msg_id = ev.d.guild_id, ev.d.channel_id, ev.d.id
+		author = ( ev.d.get('author') or
+			dict(username='test', public_flags=0, id='298467229970726912', discriminator='8418') )
+		embed_info = {msg_id: author}
+		chan = adict(
+			name='somechan', topic='somechan.topic',
+			ct=DiscordStub.c_chan_type.text, did=f'#{guild_id}-{chan_id}',
+			id=chan_id, private=False, threads=dict(), tid=None, users=dict() )
+		gg = adict(name='test', id=guild_id, chans={chan_id: chan})
+		discord = DiscordStub(conf, adict(
+			d2i=dict(), i2d=dict(), embed_info=embed_info, guilds={guild_id: gg} ))
+
+		tags = ''
+		if cmd.endswith('-base'): lines, tags = discord.op_msg_parse(ev.d, gg)
+		elif cmd.endswith('-media'): lines = '\n'.join(discord.op_msg_media_info(ev.d) or '')
+		else:
+			mt = (ev.get('t') or '').lower()
+			try: o, act = mt.rsplit('_', 1)
+			except ValueError: o = act = None
+			discord.op_msg(ev.d, act)
+			if discord.msg_recv:
+				cc, nick, lines, tags, flake, nonce, notice, skip_monitor = discord.msg_recv
+			else: return print('--- msg discarded')
+
+		if not lines: return
+		lines = (lines or '').split('\n')
+		print('\nIRC lines as-is:')
+		for line in lines: print('  ' + line)
+		print('\nIRC lines repr:')
+		for line in lines: print('  ' + repr(line))
+		if tags: print('\nTags:', tags)
+		if em_info := discord.st_da.embed_info: print('\nEm-info:', em_info)
+		print()
+
+	else: return print(help_msg, file=sys.stderr) or 1
+
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
 
-	import argparse, textwrap
-	dd = lambda text: re.sub( r' \t+', ' ',
-		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
+	import argparse
 	parser = argparse.ArgumentParser(
 		usage='%(prog)s [options]',
 		formatter_class=argparse.RawTextHelpFormatter,
@@ -5052,6 +5119,9 @@ def main(args=None, conf=None):
 	group.add_argument('-l', '--debug-log', metavar='file', help=dd('''
 		Separate file for debug-level logging, to use regardless of any verbosity options.
 		Max file size and rotation options can be configured via --conf file.'''))
+	group.add_argument('--test', nargs='?', const='', metavar='test-to-run', help=dd('''
+		Various code development/testing helpers and tools to run and exit.
+		Specify without arguments (or --test=help --test=?) to get more info.'''))
 
 	opts = parser.parse_args(sys.argv[1:] if args is None else args)
 
@@ -5131,6 +5201,7 @@ def main(args=None, conf=None):
 			print(f'  {k}: {ts_iso8601(v)}')
 		return
 
+	if opts.test is not None: return main_test(opts.test, conf)
 	if opts.debug: conf.debug_verbose = True
 	if opts.debug_asyncio: conf.debug_asyncio_logs = True
 	if opts.debug_log: conf.debug_log_file = opts.debug_log
