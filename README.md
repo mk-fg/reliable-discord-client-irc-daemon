@@ -894,11 +894,12 @@ for completions or visible parts, which doesn't map well to irc, hence all this 
 
 Similar regexp is configured for per-discord emojis:
 
-    msg-emoji-re = (?:^|\s)(:)(?P<emoji>[^\s,;@+]+)(:)(?:\s|[^\w]|$)
+    msg-emoji-re = (?:^|\s)(:)(?P<emoji>\w+)(:)(?:\s|[^\w]|$)
 
-Where for example `I use :Arch: btw` from IRC will match that regexp, lookup/replace
-"emoji" group there using this discord's emojis, and either send it translated
-as `I use 🐧 btw`, or return error notice if such emoji isn't available in that discord.
+Where for example `I use :Arch: btw` from IRC will match that regexp,
+lookup/replace "emoji" group there using this discord's emojis (case-insensitive),
+and either send it translated as `I use 🐧 btw`, or return error notice
+if such emoji isn't available in that discord.
 
 Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translation.
 

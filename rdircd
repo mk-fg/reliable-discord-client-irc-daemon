@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.1' # git-version: py-str
+	version = '24.11.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -184,7 +184,7 @@ class RDIRCDConfigBase:
 
 	# Regexp with "emoji" group for discord emojis like :smile: - similar to user mentions.
 	# If matches, either guild-emoji for tag is found/translated, or msg sending error returned.
-	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>[^\s,;@+]+)(:)(?:\s|[^\w]|$)'
+	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>\w+)(:)(?:\s|[^\w]|$)'
 
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 	discord_user_mention_cache_timeout = '3d' # to remember nicks for user-mentions
