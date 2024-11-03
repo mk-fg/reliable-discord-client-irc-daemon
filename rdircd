@@ -2026,6 +2026,7 @@ class Discord:
 			res = None
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
 				line, flags = self.cmd_msg_parse_flags(line)
+				line = self.cmd_msg_emojify(cc.gg.id, line)
 				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
 				res = asyncio.create_task(self.conn_req(
 					f'channels/{cc.id}/messages', m='post',
@@ -2045,6 +2046,23 @@ class Discord:
 				' msg-id mismatch: {} != {}', flake_gw, flake_res )
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 		cc.last_msg_sent.update(flake=flake_res, line=line)
+
+	def cmd_msg_emojify(self, gid, line):
+		if not (gg := self.st_da.guilds.get(gid)): return line
+		matches = list(re.finditer(r'(^|\s):(?P<name>[^\s,;@+]+):', line))
+		line_parts = [line]
+		for m in reversed(matches):
+			line = line_parts.pop()
+			emoji, emoji_name = m.group(), m.group('name')
+			(a, b) = m.span()
+
+			for e in gg.emojis:
+				if e.name == emoji_name:
+					emoji = f'{m.group(1)}<:{e.name}:{e.id}>'
+					break
+
+			line_parts.extend([line[b:], emoji, line[:a]])
+		return ''.join(reversed(line_parts))
 
 	async def cmd_msg_mentionify(self, gid, line):
 		'''Translate IRC nick mentions matched by
@@ -2861,12 +2879,13 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 		elif mt == 'typing_start': return self.op_typing(m.d)
+		elif o == "guild_emojis": return self.op_guild_emojis(m.d)
 
 		# Known-ignored events
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
-			'guild_emojis', 'guild_integrations', 'guild_role', 'guild_stickers',
-			'guild_audit_log_entry', 'burst_credit_balance', 'message_poll_vote' }: return
+			'guild_integrations', 'guild_role', 'guild_stickers', 'guild_audit_log_entry',
+			'burst_credit_balance', 'message_poll_vote' }: return
 		elif re.search( r'^(guild_scheduled_event'
 			r'|(guild_)?application_command|embedded_activity)_', mt ): return
 		elif re.search( r'^user_(note|'
@@ -2940,7 +2959,7 @@ class DiscordSession:
 			ts_joined = g.get('joined_at') or 0
 			if ts_joined: ts_joined = parse_iso8601(ts_joined)
 			gg.update(
-				name=g.name, ts_joined=ts_joined,
+				name=g.name, ts_joined=ts_joined, emojis=g.emojis,
 				roles=dict((r.id, r) for r in g.get('roles', list())) )
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
 			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
@@ -3640,6 +3659,10 @@ class DiscordSession:
 		else: nick = self.discord.cmd_user_cache(gg.id, m.user_id)
 		if m.user_id == self.st_da.user_id: return # echo of own typing msgs
 		self.discord.cmd_typing(cc, nick or '???')
+
+	def op_guild_emojis(self, m):
+		if not (gg := self.st_da.guilds.get(m.get('guild_id', 1))): return
+		gg.emojis = m.emojis
 
 
 
