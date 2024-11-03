@@ -894,7 +894,7 @@ for completions or visible parts, which doesn't map well to irc, hence all this 
 
 Similar regexp is configured for per-discord emojis:
 
-    msg-emoji-re = (?:^|\s)(:)(?P<emoji>\w+)(:)(?:\s|[^\w]|$)
+    msg-emoji-re = (?:^|\s)(:)(?P<emoji>\w+)(:)(?:[^\w]|$)
 
 Where for example `I use :Arch: btw` from IRC will match that regexp,
 lookup/replace "emoji" group there using this discord's emojis (case-insensitive),
