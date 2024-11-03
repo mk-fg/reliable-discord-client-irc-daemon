@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.3' # git-version: py-str
+	version = '24.11.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2065,8 +2065,8 @@ class Discord:
 		matches = list((rx := self.conf._discord_msg_emoji_re).finditer(line))
 		line_parts, tag_idx = [line], rx.groupindex['emoji']
 		for n, m in enumerate(reversed(matches), 1):
-			if not (em := gg.emojis.get((tag := m.group('emoji')).lower())):
-				raise IRCBridgeSignal(f'{tag}=no-matches')
+			if not (em := gg.get('emojis', dict()).get((tag := m.group('emoji')).lower())):
+				raise IRCBridgeSignal(f'emoji-not-found={tag}')
 			self.log.debug( 'Discord emoji match'
 				' [{}/{}]: {!r} -> {} [{}-{}]', n, len(matches), m.group(), em.name, *m.span() )
 			subs = ( (a, b, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
@@ -2863,10 +2863,11 @@ class DiscordSession:
 			elif act in ['add', 'update']: return self.op_ev_member(m.d)
 			elif act == 'remove': return self.op_ev_member(m.d, delete=True)
 		elif mt == 'guild_members_chunk': return self.op_ev_member_chunk(m.d)
-		elif mt == 'thread_list_sync': return self.op_ev_thread_list(m.d)
 		elif o == 'guild_ban':
 			if act in ['add', 'remove']: return self.op_ev_ban(m.d, act)
 		elif o == 'guild_scheduled_event': return self.op_ev_sched(m.d, act)
+		elif o == 'guild_emojis': return self.op_ev_emojis(m.d)
+		elif mt == 'thread_list_sync': return self.op_ev_thread_list(m.d)
 		elif o in ['channel', 'thread']:
 			if act in ['create', 'update']: return self.op_ev_chans(m.d.get('guild_id') or 1, m.d)
 			elif act == 'delete': return self.op_ev_del_chan(m.d)
@@ -2885,7 +2886,6 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 		elif mt == 'typing_start': return self.op_typing(m.d)
-		elif o == 'guild_emojis': return self.op_guild_emojis(m.d)
 
 		# Known-ignored events
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
@@ -2964,9 +2964,9 @@ class DiscordSession:
 				self.log.debug('New guild: gid={} prefix={} name={!r}', g.id, prefix, g.name)
 			ts_joined = g.get('joined_at') or 0
 			if ts_joined: ts_joined = parse_iso8601(ts_joined)
-			gg.update(
-				name=g.name, ts_joined=ts_joined, emojis=g.emojis,
-				roles=dict((r.id, r) for r in g.get('roles', list())) )
+			gg.update( name=g.name, ts_joined=ts_joined,
+				roles=dict((r.id, r) for r in g.get('roles', list())),
+				emojis=self.op_ev_guilds_emojis(g.get('emojis') or list()) )
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
 			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
 			gs_vcs[g.id].update(vs.get('channel_id') for vs in g.get('voice_states') or list())
@@ -2975,6 +2975,11 @@ class DiscordSession:
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 			for cid, cc in self.st_da.guilds[gid].chans.items():
 				if cid in gs_vcs[gid]: cc.vc_active = True
+
+	def op_ev_guilds_emojis(self, emojis):
+		return dict(
+			(em.name.lower(), adict(id=em.id, name=em.name))
+			for em in emojis if em.get('available') )
 
 	def op_ev_chans(self, gid, chans, sync=None):
 		if not (gg := self.st_da.guilds.get(gid)): return
@@ -3195,6 +3200,10 @@ class DiscordSession:
 	def op_ev_note(self, m):
 		self.discord.cmd_guild_event(m.guild_id or 1, ' :: '.join( str(v)
 			for v in ['Notification', m.get('type'), m.get('body') or m.get('message')] if v ))
+
+	def op_ev_emojis(self, m):
+		if not (gg := self.st_da.guilds.get(m.get('guild_id'))): return
+		gg.emojis = self.op_ev_guilds_emojis(m.get('emojis') or list())
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		gg = self.st_da.guilds.get(m.get('guild_id', 1))
@@ -3665,14 +3674,6 @@ class DiscordSession:
 		else: nick = self.discord.cmd_user_cache(gg.id, m.user_id)
 		if m.user_id == self.st_da.user_id: return # echo of own typing msgs
 		self.discord.cmd_typing(cc, nick or '???')
-
-	def op_guild_emojis(self, m):
-		if not (gg := self.st_da.guilds.get(m.get('guild_id', 1))): return
-		gg.emojis = dict()
-		for em in m.get('emojis') or list():
-			if not em.get('available'): continue
-			gg.emojis[em.name.lower()] = adict(id=em.id, name=em.name)
-
 
 
 

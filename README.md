@@ -153,9 +153,6 @@ You have been warned! :)
 
 - Per-server and global catch-all channels to track general activity.
 
-- Limited translation for using discord user mentions and emojis in sent
-  messages, edits and deletions.
-
 - Configurable local name aliases/renames, outgoing message blocks/replacements,
   regexp-filtering for received messages.
 
@@ -168,6 +165,9 @@ You have been warned! :)
 
 - Translation for discord mentions, replies, attachments, stickers and emojis
   in incoming msgs, other events, basic annotations for some embedded links.
+
+- Limited support for translation of discord user mentions and emojis in
+  sent messages, edits and deletions.
 
 - Easily accessible backlog via /topic (/t) commands in any channel, e.g. "/t
   log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
@@ -828,7 +828,7 @@ for specific discords or channels.
 <a name=hdr-discord_user_mentions_and_emojis></a>
 ### Discord user mentions and emojis
 
-These are `@username` tags on discord, designed to alert someone to direct-ish message.
+Mentions are `@username` tags on discord, designed to alert someone to direct-ish message.
 
 With default config, when you see e.g. `<Galaxy🌌·Brain> Hi!` and want to
 reply highlighting them, sending `Hey @galaxy and welcome` should probably work.
@@ -901,7 +901,7 @@ lookup/replace "emoji" group there using this discord's emojis (case-insensitive
 and either send it translated as `I use 🐧 btw`, or return error notice
 if such emoji isn't available in that discord.
 
-Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translation.
+Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translations.
 
 <a name=hdr-quick_edits_deletes_for_just-sent_messages></a>
 ### Quick edits/deletes for just-sent messages
