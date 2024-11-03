@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.2' # git-version: py-str
+	version = '24.11.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2032,8 +2032,8 @@ class Discord:
 			res = None
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
 				line, flags = self.cmd_msg_parse_flags(line)
-				line = self.cmd_msg_emojify(cc.gg, line)
-				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
+				line_tagged = self.cmd_msg_emojify(cc.gg, line)
+				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line_tagged)
 				res = asyncio.create_task(self.conn_req(
 					f'channels/{cc.id}/messages', m='post',
 					json=dict(content=line_tagged, nonce=nonce, flags=flags) ))
@@ -2053,20 +2053,26 @@ class Discord:
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 		cc.last_msg_sent.update(flake=flake_res, line=line)
 
+	def cmd_msg_parse_flags(self, line, flags=0):
+		if m := re.search(self.conf.discord_msg_flag_silent_re, line):
+			line = line[:m.start()] + line[m.end():]
+			flags |= self.c_msg_flags.suppress_notifications
+		return line, flags
+
 	def cmd_msg_emojify(self, gg, line):
 		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
 			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
 		matches = list((rx := self.conf._discord_msg_emoji_re).finditer(line))
 		line_parts, tag_idx = [line], rx.groupindex['emoji']
-		for m in reversed(matches):
+		for n, m in enumerate(reversed(matches), 1):
 			if not (em := gg.emojis.get((tag := m.group('emoji')).lower())):
 				raise IRCBridgeSignal(f'{tag}=no-matches')
-			subs = list( (a, b, n, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
+			self.log.debug( 'Discord emoji match'
+				' [{}/{}]: {!r} -> {} [{}-{}]', n, len(matches), m.group(), em.name, *m.span() )
+			subs = ( (a, b, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
 				for n, (a, b) in ((n, m.span(n)) for n, group in enumerate(m.groups(), 1)) )
-			line = [line_parts.pop()]
-			for sa, sb, n, s in sorted(subs, reverse=True):
-				part = line.pop(); line.extend([part[sb:], s, part[:sa]])
-			line_parts.extend(line)
+			for a, b, s in sorted(subs, reverse=True):
+				line_parts.extend([(p := line_parts.pop())[b:], s, p[:a]])
 		return ''.join(reversed(line_parts))
 
 	async def cmd_msg_mentionify(self, gid, line):
@@ -2079,22 +2085,15 @@ class Discord:
 		if not self.conf._discord_msg_mention_re: return line
 		matches = list((rx := self.conf._discord_msg_mention_re).finditer(line))
 		line_parts, nick_idx = [line], rx.groupindex['nick']
-		for n, m in enumerate(reversed(matches)):
+		for n, m in enumerate(reversed(matches), 1):
 			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
 			mx = self.conf._discord_msg_mention_re_ignore.search(tag)
-			self.log.debug(
-				'Discord mention match [{}/{}]: {!r} [{}-{}]{}',
-				n+1, len(matches), tag, a, b, ' + ignore-pattern match' if mx else '' )
+			self.log.debug( 'Discord mention match [{}/{}]: {!r} [{}-{}]{}',
+				n, len(matches), tag, a, b, ' + ignore-pattern match' if mx else '' )
 			tag_parts = ( self.cmd_msg_mentionify_ignore_strip(tag, mx)
 				if mx else await self.cmd_msg_mentionify_translate_tag(gid, m, nick_idx) )
 			line_parts.extend([line[b:], *tag_parts, line[:a]])
 		return ''.join(reversed(line_parts))
-
-	def cmd_msg_parse_flags(self, line, flags=0):
-		if m := re.search(self.conf.discord_msg_flag_silent_re, line):
-			line = line[:m.start()] + line[m.end():]
-			flags |= self.c_msg_flags.suppress_notifications
-		return line, flags
 
 	def cmd_msg_mentionify_ignore_strip(self, tag, mx):
 		'Strips all capture groups in match from tag-string'
