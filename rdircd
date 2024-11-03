@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.10.6' # git-version: py-str
+	version = '24.11.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -174,12 +174,17 @@ class RDIRCDConfigBase:
 	# discord_msg_mention_re should match only discord user mentions.
 	# "nick" group must be irc nick, to be replaced with
 	#  discord user-id tag, all other capturing groups are replaced by "".
+	# On match, either unique mention for <nick> will be used, or msg not sent with error.
 	# Don't use repeating/overlapping capturing groups (w/o "?:"). Empty value - disable.
 	discord_msg_mention_re = r'(?:^|\s)(@)(?P<nick>[^\s,;@+]+)'
 	# discord_msg_mention_re_ignore is matched
 	#  against full capture of the regexp above, not full line.
 	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
+
+	# Regexp with "emoji" group for discord emojis like :smile: - similar to user mentions.
+	# If matches, either guild-emoji for tag is found/translated, or msg sending error returned.
+	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>[^\s,;@+]+)(:)(?:\s|[^\w]|$)'
 
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 	discord_user_mention_cache_timeout = '3d' # to remember nicks for user-mentions
@@ -331,16 +336,17 @@ class RDIRCDConfigBase:
 	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
+	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
+	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
+	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'])
 	_conv_discord_user_mention_cache_timeout = _parse_td_str
 	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
-	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_old_upd_timestamp = _parse_td_str
 	_conv_discord_msg_old_upd_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x'))
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
-	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
@@ -2026,7 +2032,7 @@ class Discord:
 			res = None
 			async with aio_timeout(self.conf.discord_msg_confirm_timeout):
 				line, flags = self.cmd_msg_parse_flags(line)
-				line = self.cmd_msg_emojify(cc.gg.id, line)
+				line = self.cmd_msg_emojify(cc.gg, line)
 				line_tagged = await self.cmd_msg_mentionify(cc.gg.id, line)
 				res = asyncio.create_task(self.conn_req(
 					f'channels/{cc.id}/messages', m='post',
@@ -2047,33 +2053,32 @@ class Discord:
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 		cc.last_msg_sent.update(flake=flake_res, line=line)
 
-	def cmd_msg_emojify(self, gid, line):
-		if not (gg := self.st_da.guilds.get(gid)): return line
-		matches = list(re.finditer(r'(^|\s):(?P<name>[^\s,;@+]+):', line))
-		line_parts = [line]
+	def cmd_msg_emojify(self, gg, line):
+		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
+			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
+		matches = list((rx := self.conf._discord_msg_emoji_re).finditer(line))
+		line_parts, tag_idx = [line], rx.groupindex['emoji']
 		for m in reversed(matches):
-			line = line_parts.pop()
-			emoji, emoji_name = m.group(), m.group('name')
-			(a, b) = m.span()
-
-			for e in gg.emojis:
-				if e.name == emoji_name:
-					emoji = f'{m.group(1)}<:{e.name}:{e.id}>'
-					break
-
-			line_parts.extend([line[b:], emoji, line[:a]])
+			if not (em := gg.emojis.get((tag := m.group('emoji')).lower())):
+				raise IRCBridgeSignal(f'{tag}=no-matches')
+			subs = list( (a, b, n, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
+				for n, (a, b) in ((n, m.span(n)) for n, group in enumerate(m.groups(), 1)) )
+			line = [line_parts.pop()]
+			for sa, sb, n, s in sorted(subs, reverse=True):
+				part = line.pop(); line.extend([part[sb:], s, part[:sa]])
+			line_parts.extend(line)
 		return ''.join(reversed(line_parts))
 
 	async def cmd_msg_mentionify(self, gid, line):
 		'''Translate IRC nick mentions matched by
 				"discord_msg_mention_re" replaced with Discord mention-tags, if any.
-			Either returns line with all mentions translated or fails with DiscordError.'''
+			Either returns line with all mentions translated or fails with IRCBridgeSignal.'''
 		# Regexp group replacements are made from the end to start,
 		#  with line/tag parts lists containing reversed str parts to reassemble.
 		# https://discord.com/developers/docs/reference#message-formatting
 		if not self.conf._discord_msg_mention_re: return line
-		line_parts, nick_idx = [line], self.conf._discord_msg_mention_re.groupindex['nick']
-		matches = list(self.conf._discord_msg_mention_re.finditer(line))
+		matches = list((rx := self.conf._discord_msg_mention_re).finditer(line))
+		line_parts, nick_idx = [line], rx.groupindex['nick']
 		for n, m in enumerate(reversed(matches)):
 			line, tag, (a, b) = line_parts.pop(), m.group(), m.span()
 			mx = self.conf._discord_msg_mention_re_ignore.search(tag)
@@ -2099,7 +2104,9 @@ class Discord:
 			tag.extend([part[b:], part[:a]])
 		return tag
 
-	async def cmd_msg_mentionify_translate_tag(self, gid, m, nick_idx):
+	async def cmd_msg_mentionify_translate_tag(self, gid, m, nick_idx) -> [str]:
+		'''Returns string-parts of a regexp match,
+			with nick_idx capture-group replaced and all others stripped.'''
 		tag, (a, b) = m.group(), m.span()
 		nick, (na, nb) = m.group(nick_idx), m.span(nick_idx)
 		if not (tag and nick): return [tag]
@@ -2879,7 +2886,7 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 		elif mt == 'typing_start': return self.op_typing(m.d)
-		elif o == "guild_emojis": return self.op_guild_emojis(m.d)
+		elif o == 'guild_emojis': return self.op_guild_emojis(m.d)
 
 		# Known-ignored events
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
@@ -3662,7 +3669,10 @@ class DiscordSession:
 
 	def op_guild_emojis(self, m):
 		if not (gg := self.st_da.guilds.get(m.get('guild_id', 1))): return
-		gg.emojis = m.emojis
+		gg.emojis = dict()
+		for em in m.get('emojis') or list():
+			if not em.get('available'): continue
+			gg.emojis[em.name.lower()] = adict(id=em.id, name=em.name)
 
 
 

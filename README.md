@@ -23,7 +23,7 @@ Table of Contents
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
     - [Auto-joining channels]
-    - [Discord user mentions](#hdr-discord_user_mentions)
+    - [Discord user mentions and emojis]
     - [Quick edits/deletes for just-sent messages]
     - [@silent messages and other such flags]
     - [Custom replacements/blocks in outgoing messages]
@@ -54,6 +54,8 @@ Table of Contents
 [People's names on discord]: #hdr-people_s_names_on_discord
 [Local Name Aliases]: #hdr-local_name_aliases
 [Auto-joining channels]: #hdr-auto-joining_channels
+[Discord user mentions and emojis]:
+  #hdr-discord_user_mentions_and_emojis
 [Quick edits/deletes for just-sent messages]:
   #hdr-quick_edits_deletes_for_just-sent_messages
 [@silent messages and other such flags]:
@@ -151,8 +153,8 @@ You have been warned! :)
 
 - Per-server and global catch-all channels to track general activity.
 
-- Limited translation for using discord user mentions in sent messages,
-  edits and deletions.
+- Limited translation for using discord user mentions and emojis in sent
+  messages, edits and deletions.
 
 - Configurable local name aliases/renames, outgoing message blocks/replacements,
   regexp-filtering for received messages.
@@ -197,9 +199,9 @@ You have been warned! :)
 <a name=hdr-limitations></a>
 ## Limitations
 
-- Only user mentions sent from IRC are translated into discord tags
+- Only user mentions and emojis sent from IRC are translated into discord tags
   (if enabled and with some quirks, see below) - not channels, roles, stickers,
-  components or emojis.
+  components, etc.
 
 - No support for sending attachments or embeds of any kind - use WebUI for that, not IRC.
 
@@ -823,8 +825,8 @@ for specific discords or channels.
 [python "re" syntax]:
   https://docs.python.org/3/library/re.html#regular-expression-syntax
 
-<a name=hdr-discord_user_mentions></a>
-### Discord user mentions
+<a name=hdr-discord_user_mentions_and_emojis></a>
+### Discord user mentions and emojis
 
 These are `@username` tags on discord, designed to alert someone to direct-ish message.
 
@@ -886,11 +888,19 @@ of pattern above) can also be used to skip some non-mention things from being
 treated as such, that'd otherwise be picked-up by first regexp, stripping
 capturing groups from them too, which can be used to e.g. undo escaping.
 
-Set `msg-mention-re` to an empty value to disable all this translation entirely.
-
-Note that discord user lists can be quite massive (10K+ users), are not split
+Note that discord user lists can be quite massive (500K+ users), are not split
 by channel, and are not intended to be pre-fetched by the client, only queried
 for completions or visible parts, which doesn't map well to irc, hence all this magic.
+
+Similar regexp is configured for per-discord emojis:
+
+    msg-emoji-re = (?:^|\s)(:)(?P<emoji>[^\s,;@+]+)(:)(?:\s|[^\w]|$)
+
+Where for example `I use :Arch: btw` from IRC will match that regexp, lookup/replace
+"emoji" group there using this discord's emojis, and either send it translated
+as `I use 🐧 btw`, or return error notice if such emoji isn't available in that discord.
+
+Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translation.
 
 <a name=hdr-quick_edits_deletes_for_just-sent_messages></a>
 ### Quick edits/deletes for just-sent messages
@@ -932,7 +942,7 @@ with \[edit\] or such prefix (configurable under \[irc\] section).
 Any older-than-last messages can be edited through Discord WebUI - this client
 only tracks last one for easy quick follow-up oops-fixes, nothing more than that.
 
-[Discord user mentions]: #hdr-discord_user_mentions
+[Discord user mentions]: #hdr-discord_user_mentions_and_emojis
 [--conf-dump-defaults]: rdircd.defaults.ini
 [sed]: https://en.wikipedia.org/wiki/Sed
 [python re.sub()]: https://docs.python.org/3/library/re.html#re.sub
