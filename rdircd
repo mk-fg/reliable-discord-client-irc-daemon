@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.6' # git-version: py-str
+	version = '24.11.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -319,7 +319,7 @@ class RDIRCDConfigBase:
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
 	#   renames, send_repls, unmon_filters, recv_filters
 
-	def _re_chk(key, groups, v_def=''):
+	def _re_chk(key, groups, v_def=re.compile('$x')):
 		def _conv(self, v):
 			if not v: return v_def
 			rx = re.compile(v)
@@ -336,16 +336,16 @@ class RDIRCDConfigBase:
 	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
-	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'])
+	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'], None)
 	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
-	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'])
+	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'], None)
 	_conv_discord_user_mention_cache_timeout = _parse_td_str
 	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_old_upd_timestamp = _parse_td_str
 	_conv_discord_msg_old_upd_ignore = _parse_td_str
-	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'], re.compile('$x'))
+	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
@@ -2062,13 +2062,13 @@ class Discord:
 	def cmd_msg_emojify(self, gg, line):
 		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
 			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
-		matches = list((rx := self.conf._discord_msg_emoji_re).finditer(line))
+		if not (rx := self.conf._discord_msg_emoji_re): return line
 		line_parts, tag_idx = [line], rx.groupindex['emoji']
-		for n, m in enumerate(reversed(matches), 1):
+		for n, m in enumerate(reversed(ms := list(rx.finditer(line))), 1):
 			if not (em := gg.get('emojis', dict()).get((tag := m.group('emoji')).lower())):
 				raise IRCBridgeSignal(f'emoji-not-found={tag}')
 			self.log.debug( 'Discord emoji match'
-				' [{}/{}]: {!r} -> {} [{}-{}]', n, len(matches), m.group(), em.name, *m.span() )
+				' [{}/{}]: {!r} -> {} [{}-{}]', n, len(ms), m.group(), em.name, *m.span() )
 			subs = ( (a, b, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
 				for n, (a, b) in ((n, m.span(n)) for n, group in enumerate(m.groups(), 1)) )
 			for a, b, s in sorted(subs, reverse=True):
