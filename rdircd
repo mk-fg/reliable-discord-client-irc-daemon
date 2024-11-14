@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.7' # git-version: py-str
+	version = '24.11.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -85,6 +85,7 @@ class RDIRCDConfigBase:
 	irc_disable_reactions = False # disables all "--- reacts" messages
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
 	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
+	irc_ref_allow_disable_pings = True # don't ping irc nick if discord reply disables it
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -3212,7 +3213,7 @@ class DiscordSession:
 			if not cc:
 				return self.log.warning( 'Dropped msg event with unknown guild/channel'
 					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
-		new_msg_flake, nick, ts = None, m.get('author'), time.time()
+		nick, ts = m.get('author'), time.time()
 		msg_ev, msg_ts, msg_is_update = None, self.discord.flake_parse(m.id), act == 'update'
 
 		if msg_is_update:
@@ -3269,25 +3270,9 @@ class DiscordSession:
 			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 			if (td := self.conf._discord_msg_old_upd_timestamp) and ts - msg_ts > td:
 				tags['_prefix'] += f'[old-msg {ts_iso8601(msg_ts, human=True, short=True)}] '
-		else:
-			new_msg_flake, ref = m.id, m.get('referenced_message')
-			if self.conf.irc_inline_reply_quote_len > 0 and ref:
-				ref_user = '' if not ( (u := ref.get('author'))
-					and (u := self.discord.bridge.irc_name(
-						self.discord.user_name(u, m.get("mentions")))) ) else f'<{u}>'
-				ref_username = '' if not ( (u := ref.get('author')) and (u := u.get('username')) ) else u
-				if len(ref_user) > 0 and ref_username not in (u.get("username") for u in m.get("mentions", [])):
-					ref_user = ref_user[:2] + chr(0x200b) + ref_user[2:] # zero-width space
-				ref_line, ref_tags = self.op_msg_parse(ref, gg, can_be_empty=True)
-				if not ref_line:
-					snapshots = ref.get('message_reference') and ref.get('message_snapshots') or list()
-					ext = self.op_msg_parse_snapshots(snapshots, gg)
-					for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
-					ref_line, ref_tags = '\n'.join(ext.lines), ext.tags
-				ref = str_cut(ref_line, self.conf.irc_inline_reply_quote_len)
-				if ref_user and ref:
-					line = f'-- re:{ref_user} {ref}\n{line.strip()}'
-					tags.update((k,v) for k,v in ref_tags.items() if not k.startswith('_'))
+		elif reply := self.op_msg_parse_reply(m, gg):
+			reply_line, reply_tags = reply
+			line = f'{reply_line}\n{line.strip()}'; tags.update(reply_tags)
 
 		if self.conf.discord_embed_info:
 			if act != 'media' and re.search(
@@ -3311,7 +3296,8 @@ class DiscordSession:
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
 		self.discord.cmd_msg_recv( cc, nick, line.strip(), tags,
-			new_msg_flake, nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
+			new_msg_flake=msg_is_update and m.id,
+			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m, force_meta=False):
 		'Parse and return "embeds" objects as text lines to prefix and append to msg'
@@ -3536,6 +3522,25 @@ class DiscordSession:
 				else: v = mt.other, f'{t}{k}'
 				tags[k_src] = v
 		return tags
+
+	def op_msg_parse_reply(self, m, gg):
+		if not ( self.conf.irc_inline_reply_quote_len > 0
+			and (ref := m.get('referenced_message'))
+			and (ua := ref.get('author')) and ( ref_nick :=
+				self.discord.bridge.irc_name(self.discord.user_name(ua, m.get('mentions'))) ) ): return
+		if ( self.conf.irc_ref_allow_disable_pings
+				and (ref_nick in self.discord.bridge.irc_conn_names())
+				and not any(u.username == ua.username for u in m.get('mentions') or list()) ):
+			ref_nick = f'{ref_nick[:-1]}.no-@'
+		ref_line, ref_tags = self.op_msg_parse(ref, gg, can_be_empty=True)
+		if not ref_line:
+			snapshots = ref.get('message_reference') and ref.get('message_snapshots') or list()
+			ext = self.op_msg_parse_snapshots(snapshots, gg)
+			for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
+			ref_line, ref_tags = '\n'.join(ext.lines), ext.tags
+		ref_line = str_cut(ref_line, self.conf.irc_inline_reply_quote_len)
+		return ( f'-- re:<{ref_nick}> {ref_line}',
+			dict((k,v) for k,v in ref_tags.items() if not k.startswith('_')) )
 
 	def op_msg_ref(self, msg_id, cc, nick, line, ref=None):
 		'Cache message to reference later in reacts and such'
@@ -3795,8 +3800,10 @@ class RDIRCD:
 			else: stats.unknown += 1
 		return stats
 	def irc_conn_names(self):
+		names = irc_name_dict()
 		for conn in self.irc_conns.values():
-			if conn.st_irc.auth: yield conn.st_irc.nick
+			if conn.st_irc.auth: names.add(conn.st_irc.nick)
+		return names
 
 	def irc_name(self, name, casefold=False, _irc_remap=dict([
 			*((n, f'°{n:02d}') for n in range(32)),
