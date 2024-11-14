@@ -3275,6 +3275,9 @@ class DiscordSession:
 				ref_user = '' if not ( (u := ref.get('author'))
 					and (u := self.discord.bridge.irc_name(
 						self.discord.user_name(u, m.get("mentions")))) ) else f'<{u}>'
+				ref_username = '' if not ( (u := ref.get('author')) and (u := u.get('username')) ) else u
+				if len(ref_user) > 0 and ref_username not in (u.get("username") for u in m.get("mentions", [])):
+					ref_user = ref_user[:2] + chr(0x200b) + ref_user[2:] # zero-width space
 				ref_line, ref_tags = self.op_msg_parse(ref, gg, can_be_empty=True)
 				if not ref_line:
 					snapshots = ref.get('message_reference') and ref.get('message_snapshots') or list()
