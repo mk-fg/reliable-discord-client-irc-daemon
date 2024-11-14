@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.10' # git-version: py-str
+	version = '24.11.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3296,7 +3296,7 @@ class DiscordSession:
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
 		self.discord.cmd_msg_recv( cc, nick, line.strip(), tags,
-			new_msg_flake=msg_is_update and m.id,
+			new_msg_flake=not msg_is_update and m.id,
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m, force_meta=False):
