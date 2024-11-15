@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.11' # git-version: py-str
+	version = '24.11.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3234,8 +3234,7 @@ class DiscordSession:
 		if not m.get('content') and m.get('call'):
 			msg_ev, m.content = 'vc', 'voice-chat: incoming audio/video call notification'
 
-		ref, line_cache, media_info = None, None, list()
-		snapshots = m.get('message_reference') and m.get('message_snapshots') or list()
+		ref, line_cache, media_info, media_tags = None, None, list(), dict()
 		if not nick:
 			# No-author update msgs are embed-annotations or status updates for earlier ones
 			# E.g. YT video or twitter link info follow-up after posted link, call status update
@@ -3250,16 +3249,16 @@ class DiscordSession:
 						' of an old msg [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
+		if snapshots := m.get('message_reference') and m.get('message_snapshots'):
+			# Msg-snapshots here appear as embedded messages, so put into media_info
+			ext = self.op_msg_parse_snapshots(snapshots, gg)
+			for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
+			media_info.extend(ext.lines); media_info.extend(ext.media); media_tags.update(ext.tags)
 
 		# "line" here can be multiline, and have attachments/stickers/buttons and such
 		# Link/media info ("embeds") is parsed/cached/added to it separately, if enabled
-		line, tags = self.op_msg_parse( m, gg,
-			is_update=msg_is_update, can_be_empty=media_info or snapshots )
-
-		# Msg-snapshots here appear as embedded messages, so put into media_info
-		ext = self.op_msg_parse_snapshots(snapshots, gg)
-		for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
-		tags.update(ext.tags); media_info.extend(ext.lines); media_info.extend(ext.media)
+		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update, can_be_empty=media_info)
+		tags.update(media_tags)
 
 		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
 		if msg_ev: tags.update(_ev=msg_ev)
