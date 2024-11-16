@@ -50,7 +50,7 @@ Table of Contents
 
 [WARNING]: #hdr-warning
 [#rdircd.monitor and #rdircd.leftover channels]:
-  #hdr-_rdircd.monitor_and_rdircd.leftover_channels
+  #hdr-rdircd.monitor_and_rdircd.leftover_channels
 [People's names on discord]: #hdr-people_s_names_on_discord
 [Local Name Aliases]: #hdr-local_name_aliases
 [Auto-joining channels]: #hdr-auto-joining_channels
@@ -59,7 +59,7 @@ Table of Contents
 [Quick edits/deletes for just-sent messages]:
   #hdr-quick_edits_deletes_for_just-sent_messages
 [@silent messages and other such flags]:
-  #hdr-_silent_messages_and_other_such_flags
+  #hdr-silent_messages_and_other_such_flags
 [Custom replacements/blocks in outgoing messages]:
   #hdr-custom_replacements_blocks_in_outgoing_m.NzCf
 [Custom filtering for all received messages]:
@@ -492,7 +492,7 @@ See also [Auto-joining channels] and/or [/join e.g. #rdircd.leftover.me channel]
 to monitor private messages reliably, if needed.
 
 [/join e.g. #rdircd.leftover.me channel]:
-  #hdr-_rdircd.monitor_and_rdircd.leftover_channels
+  #hdr-rdircd.monitor_and_rdircd.leftover_channels
 
 <a name=hdr-channel_commands></a>
 ### Channel Commands
@@ -562,11 +562,11 @@ e.g. here are some of the commands for #rdircd.control:
 [various discord names]: #hdr-people_s_names_on_discord
 [edited using sed-replacement command]: #hdr-quick_edits_deletes_for_just-sent_messages
 ["quick edits/deletes"]: #hdr-quick_edits_deletes_for_just-sent_messages
-[explained below somewhere]: #hdr-_silent_messages_and_other_such_flags
+[explained below somewhere]: #hdr-silent_messages_and_other_such_flags
 [section about this filtering]: #hdr-custom_filtering_for_all_received_messages
 [more examples of such stuff under tips-and-tricks]: #hdr-cut_down_on_various_common_noise
 
-<a name=hdr-_rdircd.monitor_and_rdircd.leftover_channels></a>
+<a name=hdr-rdircd.monitor_and_rdircd.leftover_channels></a>
 ### #rdircd.monitor and #rdircd.leftover channels
 
 #rdircd.monitor can be used to see activity from all connected servers -
@@ -949,7 +949,7 @@ only tracks last one for easy quick follow-up oops-fixes, nothing more than that
 [python re.sub()]: https://docs.python.org/3/library/re.html#re.sub
 [PCRE-like]: https://en.wikipedia.org/wiki/Perl_Compatible_Regular_Expressions
 
-<a name=hdr-_silent_messages_and_other_such_flags></a>
+<a name=hdr-silent_messages_and_other_such_flags></a>
 ### @silent messages and other such flags
 
 Somewhat similar to quick edits/deletes above, "msg-flag-silent-re" option is
@@ -1235,7 +1235,7 @@ topic/history/etc there, and such stuff.
 There is a similar `prefix-all` option, to add prefix to all messages,
 if `prefix-all-private` doesn't go far enough.
 
-[monitor/leftover channels]: #hdr-_rdircd.monitor_and_rdircd.leftover_channels
+[monitor/leftover channels]: #hdr-rdircd.monitor_and_rdircd.leftover_channels
 [auto-joining channels]: #hdr-auto-joining_channels
 
 <a name=hdr-message_acks_typing_notifications_and_ot.9aX7></a>
