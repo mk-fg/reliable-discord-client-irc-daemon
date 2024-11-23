@@ -42,6 +42,7 @@ Table of Contents
 
     - [Simpler DM and monitor channel names]
     - [Change message edit/embed/attachment prefixes to shorter emojis]
+    - [Use terminal links regexp to format attachment links differently]
     - [Cut down on various common noise]
 
 - [Links]
@@ -83,6 +84,8 @@ Table of Contents
   #hdr-change_message_edit_embed_attachment_pre.xxnp
 [Simpler DM and monitor channel names]:
   #hdr-simpler_dm_and_monitor_channel_names
+[Use terminal links regexp to format attachment links differently]:
+  #hdr-use_terminal_links_regexp_to_format_atta.OdnL
 [Cut down on various common noise]: #hdr-cut_down_on_various_common_noise
 [Links]: #hdr-links
 [More info on third-party client blocking]:
@@ -1475,6 +1478,19 @@ file parser (which ignores any leading/trailing spaces, unless punctuated by bac
 
 Alternatively, set-command like `set irc-prefix-edit '✍️ '` can be used in #rdircd.control
 to configure and tweak this stuff on-the-fly (or `-s/--save` into config too).
+
+<a name=hdr-use_terminal_links_regexp_to_format_atta.OdnL></a>
+### Use terminal links regexp to format attachment links differently
+
+``` ini
+[discord]
+terminal-links = yes
+terminal-links-emojis = no
+terminal-links-tpl = {name} :: {url}
+```
+
+Normally this is intended for using [OSC 8 hyperlinks for terminal IRC clients]
+but can easily be repurposed to format links differently for other clients as well.
 
 <a name=hdr-cut_down_on_various_common_noise></a>
 ### Cut down on various common noise
