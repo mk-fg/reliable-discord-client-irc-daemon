@@ -17,7 +17,7 @@ def main(args=None):
 				from Discord gateway websocket into JSON lines.
 			Reads HAR file either from argument path or stdin, outputs JSON to stdout.
 
-			To save HAR file in chromium/brave/etc:
+			To save HAR file in chrome/chromium/vivaldi/edge/brave/etc:
 			- Open devtools on Discord login screen (F12 key).
 			- Open Network tab there, set filter on top of it to "WS" only (websockets).
 			- Proceed with logging into discord, perform whatever actions are needed there.

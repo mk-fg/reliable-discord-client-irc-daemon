@@ -7,7 +7,7 @@
 import itertools as it, operator as op, functools as ft
 import contextlib as cl, datetime as dt, pathlib as pl
 import collections as cs, collections.abc as cs_abc, urllib.parse as up
-import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, math
+import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, gzip, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
 import pickle, hashlib, base64, random, textwrap, unicodedata, string, ast
 import logging, logging.handlers
@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.12' # git-version: py-str
+	version = '24.11.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -183,9 +183,11 @@ class RDIRCDConfigBase:
 	discord_msg_mention_re_ignore = r'@(?:everyone|here)'
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 
-	# Regexp with "emoji" group for discord emojis like :smile: - similar to user mentions.
+	# Regexp with "emoji" group for discord emojis like :debian: - similar to user mentions.
 	# If matches, either guild-emoji for tag is found/translated, or msg sending error returned.
-	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>\w+)(:)(?=[^\w]|$)'
+	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>[-\w+]+)(:)(?=[^\w]|$)'
+	# File with a list of generic emojis translated to unicode in any discord.
+	discord_msg_emoji_unicode_list_file = 'rdircd.unicode-emojis.txt.gz'
 
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
 	discord_user_mention_cache_timeout = '3d' # to remember nicks for user-mentions
@@ -332,14 +334,16 @@ class RDIRCDConfigBase:
 	_parse_td_str = lambda s, v: parse_duration(v)
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
-	_conv_irc_uid_seed = lambda s, v: v if len(v.encode()) <= 32 else str_hash(v, 32)
+	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
 	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
 	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
-	_conv_discord_name_preference_order = lambda s, v: v.lower().split()
+	_conv_discord_name_preference_order = lambda s,v: v.lower().split()
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'], None)
-	_conv_discord_msg_mention_re_ignore = lambda s, v: re.compile(v or '$x')
+	_conv_discord_msg_mention_re_ignore = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'], None)
+	_conv_discord_msg_emoji_unicode_list_file = \
+		lambda s,v: v and (pl.Path(__file__).resolve(True).parent / v).resolve(True)
 	_conv_discord_user_mention_cache_timeout = _parse_td_str
 	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
@@ -1810,7 +1814,7 @@ class Discord:
 		self.log = get_logger('rdircd.discord')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 		self.st_eris = adict(
-			enabled=False, online=False,
+			enabled=False, online=False, unicode_emoji_cache=None,
 			msg_confirms=dict(), msg_acks=adict(queue=dict(), task=None),
 			typing_delays=TimedCacheDict(timeout=6.8, bump_on_get=False),
 			user_mentions=adict(cache=cs.defaultdict(irc_name_dict), ts=0) )
@@ -2060,17 +2064,33 @@ class Discord:
 			flags |= self.c_msg_flags.suppress_notifications
 		return line, flags
 
+	def cmd_msg_emojify_unicode_list(self, _empty=set()):
+		if not (src := self.conf._discord_msg_emoji_unicode_list_file): return _empty
+		src_chk, mtime_chk, uems = self.st_eris.unicode_emoji_cache or ('', 0, _empty)
+		if src_chk != (src_str := str(src)): mtime_chk = 0
+		if mtime_chk < (ts := time.time()) - 30*60:
+			mtime = ts
+			try:
+				if (mtime := src.stat().st_mtime) > mtime_chk:
+					uems = set(gzip.decompress(src.read_bytes()).decode().split())
+			except Exception as err: self.log.warning(
+				'Failed to load unicode-emoji list-file: {}', src, err_fmt(err) )
+			self.st_eris.unicode_emoji_cache = src_str, mtime, uems
+		return uems
+
 	def cmd_msg_emojify(self, gg, line):
 		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
 			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
 		if not (rx := self.conf._discord_msg_emoji_re): return line
 		line_parts, tag_idx = [line], rx.groupindex['emoji']
+		uems = self.cmd_msg_emojify_unicode_list()
 		for n, m in enumerate(reversed(ms := list(rx.finditer(line))), 1):
-			if not (em := gg.get('emojis', dict()).get((tag := m.group('emoji')).lower())):
-				raise IRCBridgeSignal(f'emoji-not-found={tag}')
-			self.log.debug( 'Discord emoji match'
-				' [{}/{}]: {!r} -> {} [{}-{}]', n, len(ms), m.group(), em.name, *m.span() )
-			subs = ( (a, b, '' if n != tag_idx else f'<:{em.name}:{em.id}>')
+			if (en := m.group('emoji').lower()) in uems: em_tag = f':{en}:'
+			elif em := gg.get('emojis', dict()).get(en): en = em.name; em_tag = f'<:{en}:{em.id}>'
+			else: raise IRCBridgeSignal(f'emoji-not-found={en}')
+			self.log.debug( 'Discord emoji match [{}/{}]:'
+				' {!r} -> {} [{}-{}]', n, len(ms), m.group(), en, *m.span() )
+			subs = ( (a, b, '' if n != tag_idx else em_tag)
 				for n, (a, b) in ((n, m.span(n)) for n, group in enumerate(m.groups(), 1)) )
 			for a, b, s in sorted(subs, reverse=True):
 				line_parts.extend([(p := line_parts.pop())[b:], s, p[:a]])

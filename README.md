@@ -1690,7 +1690,7 @@ without explicit indication.
 Note: only using this API here, only going by public info, can be wrong,
 and would appreciate any updates/suggestions/corrections via open issues.
 
-Last updated: 2024-10-24
+Last updated: 2024-11-26
 
 -   [Discord API docs] don't seem to cover "full-featured client" use-case,
     likely because such use of its API is explicitly not supported, and is
@@ -1757,6 +1757,27 @@ Last updated: 2024-10-24
 -   Discord allows channels and users to have exactly same visible name, which is not
     a big deal for users (due to one-way translation), but still disambiguated irc-side.
 
+-   Discord emojis like `:smile:` are handled in multiple different ways:
+
+    - Looked up among unicode emoji names that work in all discords and
+      translated to a unicode character, e.g. `:smile:` to ☺️.
+
+    - Can be found in current discord's custom emojis and replaced by a
+      [message formatting tag] for it, like `:debian:` to a tag like `<:debian:12345>`,
+      which discord clients will display as debian logo in a linux-related discord.
+
+    - If user has Discord Nitro subscription, custom emoji from any discord
+      works in any other discord as well.
+
+    rdircd doesn't handle last Nitro case at all (looks-up custom emojis in one discord),
+    while first two cases are distinguished from each other via [rdircd.unicode-emojis.txt.gz]
+    file (optional/configurable), which has list of all non-custom emojis (~6k of them),
+    pulled from Discord WebUI using [extract-unicode-emojis-from-js.py script].
+
+    If generic emojis stop working in the future (incorrectly treated as if
+    they're discord-custom ones), due to renames or new additions, that script
+    can be used to update the list of them easily.
+
 -   Gateway websocket [can use zlib compression] (and [zstd in non-browser apps]),
     which makes inspecting protocol in browser devtools a bit inconvenient.
 
@@ -1778,8 +1799,11 @@ Last updated: 2024-10-24
 [Change Log page of the API docs]: https://discord.com/developers/docs/change-log
 [litecord]: https://gitlab.com/litecord/litecord
 [Abaddon]: https://github.com/uowuo/abaddon
+[message formatting tag]: https://discord.com/developers/docs/reference#message-formatting
 [can use zlib compression]:
   https://discord.com/developers/docs/topics/gateway#encoding-and-compression
+[rdircd.unicode-emojis.txt.gz]: rdircd.unicode-emojis.txt.gz
+[extract-unicode-emojis-from-js.py script]: extract-unicode-emojis-from-js.py
 [zstd in non-browser apps]:
   https://discord.com/blog/how-discord-reduced-websocket-traffic-by-40-percent
 [gw-ws-har-decode.py]: gw-ws-har-decode.py

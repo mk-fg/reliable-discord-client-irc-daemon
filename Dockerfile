@@ -15,6 +15,7 @@ ARG GID=55373
 
 RUN echo "### Using following uid:gid for rdircd: $UID:$GID" && \
 	addgroup -S -g $GID rdircd && adduser -S -h /config -s /bin/false -G rdircd -DH -u $UID rdircd
+COPY rdircd rdircd.unicode-emojis.txt.gz /
 
 USER rdircd:rdircd
 ENV PYTHONUNBUFFERED=1
@@ -22,5 +23,4 @@ EXPOSE 6667
 VOLUME /config
 WORKDIR /config
 
-COPY rdircd /
 ENTRYPOINT [ "/rdircd", "--conf", "config.ini", "-i", "0.0.0.0" ]
