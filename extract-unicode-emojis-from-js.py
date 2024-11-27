@@ -34,8 +34,7 @@ def main(argv=None):
 		textwrap.dedent(text).strip('\n') + '\n' ).replace('\t', '  ')
 
 	parser = argparse.ArgumentParser(
-		formatter_class=argparse.RawTextHelpFormatter,
-		description=dd('''
+		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
 			Parse current list of unicode emojis like :smile: that discord
 				auto-translates in messages from a saved web.<something>.js file,
 				printing names of all emojis in there, one per line.
@@ -58,12 +57,13 @@ def main(argv=None):
 	em_names, data = set(), pl.Path(opts.web_js).read_text()
 	n, em_keys = 0, 'names surrogates unicodeVersion'.split()
 	while (n := data.find('"surrogates":', n)-1) > 0:
-		a, b = parse_up(data, n, -1), parse_up(data, n, 1)
+		a, b = parse_up(data, n, -1), parse_up(data, n, 1) # single emoji spec
+		a, b = parse_up(data, a, -1), parse_up(data, b, 1) # up to emoji list
+		data_json, fix_esc = data[a:b+1], list()
 		# print(f'n={n:,d} span={b-a:,d} [ -{n-a:,d} +{b-n:,d} ]')
 		try:
-			a, b, fix_esc = parse_up(data, a, -1), parse_up(data, b, 1), list()
 			# Convert non-ascii latin-1 single-byte escapes like \xf1 to \u00f1 for JSON
-			for m in re.finditer(r'(?<!\\)\\x([0-9a-f]{2})', data_json := data[a:b+1]):
+			for m in re.finditer(r'(?<!\\)\\x([0-9a-f]{2})', data_json):
 				if (cn := int(m[1], 16)) >= 128: fix_esc.append((m.start(), m.end(), cn))
 			for ca, cb, cn in reversed(fix_esc):
 				data_json = data_json[:ca] + json.dumps(chr(cn))[1:-1] + data_json[cb:]

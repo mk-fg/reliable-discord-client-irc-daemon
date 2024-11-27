@@ -901,8 +901,8 @@ Similar regexp is configured for per-discord emojis:
 
 Where for example `I use :Arch: btw` from IRC will match that regexp,
 lookup/replace "emoji" group there using this discord's emojis (case-insensitive),
-and either send it translated as `I use 🐧 btw`, or return error notice
-if such emoji isn't available in that discord.
+and either send it translated as `I use 🐧 btw`, or return error notice if such
+emoji isn't available in that discord and not on a list of generic unicode ones.
 
 Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translations.
 
