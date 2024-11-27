@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.14' # git-version: py-str
+	version = '24.11.15' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -335,9 +335,9 @@ class RDIRCDConfigBase:
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
-	_conv_irc_len_dont_split_re = lambda s, v: re.compile(v or '$x') # $x = never match
+	_conv_irc_len_dont_split_re = lambda s,v: re.compile(v or '$x') # $x = never match
 	_conv_irc_names_timeout = _parse_td_str
-	_conv_irc_chan_auto_join_re = lambda s, v: re.compile(v or '$x')
+	_conv_irc_chan_auto_join_re = lambda s,v: re.compile(v or '$x')
 	_conv_discord_name_preference_order = lambda s,v: v.lower().split()
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'], None)
 	_conv_discord_msg_mention_re_ignore = lambda s,v: re.compile(v or '$x')
@@ -351,7 +351,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_old_upd_timestamp = _parse_td_str
 	_conv_discord_msg_old_upd_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
-	_conv_discord_msg_del_re = lambda s, v: re.compile(v or '$x')
+	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
@@ -2074,7 +2074,7 @@ class Discord:
 				if (mtime := src.stat().st_mtime) > mtime_chk:
 					uems = set(gzip.decompress(src.read_bytes()).decode().split())
 			except Exception as err: self.log.warning(
-				'Failed to load unicode-emoji list-file: {}', src, err_fmt(err) )
+				'Failed to load unicode-emoji list-file: {}', err_fmt(err) )
 			self.st_eris.unicode_emoji_cache = src_str, mtime, uems
 		return uems
 
@@ -2082,8 +2082,8 @@ class Discord:
 		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
 			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
 		if not (rx := self.conf._discord_msg_emoji_re): return line
-		line_parts, tag_idx = [line], rx.groupindex['emoji']
 		uems = self.cmd_msg_emojify_unicode_list()
+		line_parts, tag_idx = [line], rx.groupindex['emoji']
 		for n, m in enumerate(reversed(ms := list(rx.finditer(line))), 1):
 			if (en := m.group('emoji').lower()) in uems: em_tag = f':{en}:'
 			elif em := gg.get('emojis', dict()).get(en): en = em.name; em_tag = f'<:{en}:{em.id}>'
