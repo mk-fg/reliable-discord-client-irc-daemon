@@ -847,7 +847,7 @@ Default value for it should look like this:
 
 ``` ini
 [discord]
-msg-mention-re = (?:^|\s)(@)(?P<nick>[^\s,;@+]+)
+msg-mention-re = (?:^|\s)(@)(?P<nick>[^\s,;@+!]+)
 ```
 
 Which would match any word-like space- or punctuation-separated `@nick`
