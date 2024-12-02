@@ -324,7 +324,7 @@ root # su - rdircd
 # Or alternatively run script via "./_venv/bin/python rdircd ..." command line
 rdircd % source ./_venv/bin/activate
 
-rdircd % curl -o rdircd https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd
+rdircd % curl -OL 'https://raw.githubusercontent.com/mk-fg/reliable-discord-client-irc-daemon/master/rdircd{,.unicode-emojis.txt.gz}'
 rdircd % chmod +x rdircd
 
 ## Use "pipx run rdircd ..." here and below, if using pipx instead of pip/venv/distro-pkgs
