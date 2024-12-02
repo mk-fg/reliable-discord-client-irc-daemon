@@ -1482,6 +1482,20 @@ to configure and tweak this stuff on-the-fly (or `-s/--save` into config too).
 <a name=hdr-use_terminal_links_regexp_to_format_atta.OdnL></a>
 ### Use terminal links regexp to format attachment links differently
 
+Unless [OSC 8 hyperlinks for terminal IRC clients] option is enabled,
+attachments normally are just a long link with a filename buried in there:
+```
+<user> 🖼️ https://cdn.discordapp.com/attachments/813633048368761786/1313964897464246919/cat-pic.jpg?ex=674e6959&is=674d17d9&hm=2519bb427b1392bce87a0749ed664520d25493e509b8272170a66512f9e143d2&
+```
+
+But same OSC8-formatting feature can be used to get
+a bit more readable version for e.g. GUI IRC clients:
+```
+<user> 🖼️ cat-pic.jpg LCak :: https://cdn.discordapp.com/attachments/813633048368761786/1313964897464246919/cat-pic.jpg?ex=674e6959&is=674d17d9&hm=2519bb427b1392bce87a0749ed664520d25493e509b8272170a66512f9e143d2&
+```
+
+Using config like this:
+
 ``` ini
 [discord]
 terminal-links = yes
@@ -1489,8 +1503,8 @@ terminal-links-emojis = no
 terminal-links-tpl = {name} :: {url}
 ```
 
-Normally this is intended for using [OSC 8 hyperlinks for terminal IRC clients]
-but can easily be repurposed to format links differently for other clients as well.
+("LCak" bit at the end of "cat-pic.jpg LCak" is hash of the link, so that
+it's possible to tell different "image.jpg" attachments apart at a glance)
 
 <a name=hdr-cut_down_on_various_common_noise></a>
 ### Cut down on various common noise
