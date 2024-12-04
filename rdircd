@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.11.15' # git-version: py-str
+	version = '24.12.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1767,7 +1767,7 @@ class IRCProtocol:
 				'/who @John·Smith - user lookup by IRC nick.',
 				'/who *665560022562111489 - translate discord snowflake-id to date/time.',
 				'--- /who info end' ]))
-		elif name[0] == '@' or re.search(r'^[#%*]\d+$', name):
+		elif name[0] == '@' or re.fullmatch(r'[#%*]\d+', name):
 			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[0], name[1:]))
 		else:
 			if conn := self.bridge.cmd_conn_map().get(name):
@@ -5311,6 +5311,7 @@ def main(args=None, conf=None):
 
 	sys.excepthook = ( lambda err_t, err, err_tb:
 		log.error('Unhandled error: {}', err_fmt(err), exc_info=(err_t, err, err_tb)) )
+	log.debug('Starting rdircd {}', conf.version)
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
 	for k_old, k_new in conf._conf_old_found.items():
