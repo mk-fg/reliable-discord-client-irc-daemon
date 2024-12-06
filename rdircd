@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.0' # git-version: py-str
+	version = '24.12.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -960,7 +960,7 @@ def convert_iso8601_str(ts, human=True, short=True):
 		return ts
 
 _td_days = dict(
-	y=365.25, yr=365.25, year=365.25,
+	y=365.2422, yr=365.2422, year=365.2422,
 	mo=30.5, month=30.5, w=7, week=7, d=1, day=1 )
 _td_s = dict( h=3600, hr=3600, hour=3600,
 	m=60, min=60, minute=60, s=1, sec=1, second=1 )
@@ -987,7 +987,7 @@ def parse_duration(ts_str, to_float=True):
 def repr_duration( ts, ts0=None,
 		ext=True, units_max=2, units_res=None,
 		_units=dict( h=3600, m=60, s=1,
-			y=365.25*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
+			y=365.2422*86400, mo=30.5*86400, w=7*86400, d=1*86400 ) ):
 	delta = ts if ts0 is None else (ts - ts0)
 	if ext is True: ext = 'ago' if delta < 0 else 'from now'
 	res, s, n_last = list(), abs(delta), units_max - 1
@@ -2000,7 +2000,8 @@ class Discord:
 	async def cmd_msg_edit_last(self, cc, aaa, bbb):
 		if not cc.last_msg_sent: raise IRCBridgeSignal('no-last-msg')
 		flake, line_old = cc.last_msg_sent.flake, cc.last_msg_sent.line
-		line = re.sub(aaa, bbb, line_old)
+		try: line = re.sub(aaa, bbb, line_old)
+		except Exception as err: raise IRCBridgeSignal(f'edit-re=[ {err} ]')
 		if line == line_old: raise IRCBridgeSignal('edit-changed-nothing')
 		self.log.debug(
 			'MSG:  E> :: {} {} {} :: {}', cc.gg.id, cc.name, flake, self._repr(line) )
