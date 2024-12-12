@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.2' # git-version: py-str
+	version = '24.12.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3228,21 +3228,19 @@ class DiscordSession:
 		gg.emojis = self.op_ev_guilds_emojis(m.get('emojis') or list())
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
-		gg = self.st_da.guilds.get(m.get('guild_id', 1))
-		if not cc:
-			if gg: cc = gg.chans.get(m.channel_id)
-			if not cc:
-				return self.log.warning( 'Dropped msg event with unknown guild/channel'
-					' id: msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
 		nick, ts = m.get('author'), time.time()
-		msg_ev, msg_ts, msg_is_update = None, self.discord.flake_parse(m.id), act == 'update'
-
-		if msg_is_update:
+		msg_ev, msg_ts = None, self.discord.flake_parse(m.id)
+		if msg_is_update := act == 'update':
 			# Sometimes discord sends completely empty msg-updates
 			if not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']): return
 			if (td := self.conf._discord_msg_old_upd_ignore) and ts - msg_ts > td:
-				return self.log.debug( 'Ignoring too-old msg update'
-					' [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+				return self.log.debug( 'Ignoring too-old msg'
+					' update [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+		gg = self.st_da.guilds.get(m.get('guild_id', 1))
+		if not cc:
+			if gg: cc = gg.chans.get(m.channel_id)
+			if not cc: return self.log.warning( 'Dropped unknown guild/channel msg event:'
+				' msg_id={} guild_id={} channel_id={}', m.id, m.get('guild_id'), m.channel_id )
 
 		if cc.tid and self.conf.discord_thread_msgs_in_parent_chan:
 			prefix = not self.conf.discord_thread_msgs_in_parent_chan_full_prefix
