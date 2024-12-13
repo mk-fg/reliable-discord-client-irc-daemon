@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.4' # git-version: py-str
+	version = '24.12.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2878,7 +2878,7 @@ class DiscordSession:
 		# Events with some handling needed
 		if o == 'guild':
 			if act in ['create', 'update']: return self.op_ev_guilds(m.d)
-			elif act == 'delete': return self.op_ev_delete(m.d)
+			elif act == 'delete': return self.op_ev_del_guild(m.d)
 		elif mt.startswith('guild_member_'):
 			act = mt[13:]
 			if act == 'list_update': return self.op_ev_member_ops(m.d)
