@@ -260,6 +260,13 @@ You have been warned! :)
 * [Python 3.8+](http://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 
+On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
+also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
+as python port there doesn't seem to have [hashlib.scrypt] in its stdlib.
+
+[scrypt module]: https://github.com/holgern/py-scrypt/
+[hashlib.scrypt]: https://docs.python.org/3/library/hashlib.html#hashlib.scrypt
+
 
 <a name=hdr-installation></a>
 ### Installation
