@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.7' # git-version: py-str
+	version = '24.12.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -343,7 +343,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_mention_re_ignore = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'], None)
 	_conv_discord_msg_emoji_unicode_list_file = \
-		lambda s,v: v and (pl.Path(__file__).resolve().parent / v).resolve()
+		lambda s,v: v and (pl.Path(__file__).resolve().parent / path_filter(v)).resolve()
 	_conv_discord_user_mention_cache_timeout = _parse_td_str
 	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
@@ -624,7 +624,9 @@ def path_names(*paths):
 
 def path_filter(path):
 	'Prevent using/saving files with potentially dangerous filenames'
-	if re.search(r'(?i)\.pyc?$', str(path)):
+	# It's not a panacea, esp. with TOCTTOU issue wrt symlinks, just basic sanity-check
+	path = os.path.expanduser(path)
+	if any(re.search(r'(?i)\.pyc?$', p) for p in [path, os.path.realpath(path)]):
 		raise RuntimeError(f'Disallowed using file with .py/.pyc suffix [ {path} ]')
 	return path
 
@@ -780,7 +782,7 @@ def host_uid_seed():
 
 @cl.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
-	path = path_filter(str(path))
+	path = path_filter(path)
 	if mode is None:
 		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
 		except OSError: pass
@@ -5218,7 +5220,7 @@ def main(args=None, conf=None):
 		return print(pw_hash(pw))
 
 	conf_user_paths = list(
-		path_filter(os.path.expanduser(p)) for p in opts.conf or [conf._conf_path] )
+		path_filter(p) for p in opts.conf or [conf._conf_path] )
 
 	if opts.conf_init:
 		exit_code, conf.irc_uid_seed = 0, host_uid_seed()
