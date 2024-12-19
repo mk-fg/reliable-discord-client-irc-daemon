@@ -119,7 +119,7 @@ Repository URLs:
 
 Last one has git-notes with todo list and such at the default ref for those.
 
-[Discord]: http://discord.gg/
+[Discord]: https://discord.gg/
 [IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 [#rdircd at libera.chat]: https://web.libera.chat/?channels=#rdircd
 
@@ -257,7 +257,7 @@ You have been warned! :)
 <a name=hdr-requirements></a>
 ### Requirements
 
-* [Python 3.8+](http://python.org/)
+* [Python 3.8+](https://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 
 On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
