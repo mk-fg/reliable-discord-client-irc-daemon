@@ -400,7 +400,7 @@ Connect IRC client to "localhost:6667" - default listen/bind host and port.
 `-s/--irc-tls-pem-file` options for binding on different host/port and TLS
 socket wrapping, for non-localhost connections)
 
-Run `/list` to see channels for all joined discord servers/guilds:
+Use IRC `/list` command to see channels for all joined discord servers/guilds:
 
     Channel           Users Topic
     -------           ----- -----
@@ -437,7 +437,7 @@ Notes on information here:
   channels (with #, that you /join), it doesn't use /q or /msg pretty much anywhere.
 - Channels always list at least 1 user, to avoid clients hiding ones with 0.
 
-`/j #axsd.offtopic` (/join) as you'd do with regular IRC to start shitposting there.
+`/j #axsd.offtopic` (`/join`) as you'd do with regular IRC to see/post msgs there.\
 Channels joins/parts in IRC side do not affect discord in any way.
 
 Run `/topic` (often works as `/t`) irc-command to show more info on

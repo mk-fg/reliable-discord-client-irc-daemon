@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.8' # git-version: py-str
+	version = '24.12.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2271,7 +2271,8 @@ class DiscordSession:
 		media = 16
 
 	class c_msg_type(enum.IntEnum):
-		# https://discord.com/developers/docs/resources/channel#message-object-message-types
+		# Some sequential numbers are unused/reserved/missing
+		# https://discord.com/developers/docs/resources/message#message-object-message-types
 		default = 0
 		recipient_add = 1
 		recipient_remove = 2
@@ -2301,8 +2302,14 @@ class DiscordSession:
 		stage_start = 27
 		stage_end = 28
 		stage_speaker = 29
-		stage_topic = 31 # type=30 is missing in docs
+		stage_topic = 31
 		guild_application_premium_subscription = 32
+		guild_incident_alert_mode_enabled = 36
+		guild_incident_alert_mode_disabled = 37
+		guild_incident_report_raid = 38
+		guild_incident_report_false_alarm = 39
+		purchase_notification = 44
+		poll_result = 46
 		media = -1 # internal type, same as "default" but can have empty "content"
 
 	class c_rel_type(enum.IntEnum):
@@ -3287,7 +3294,7 @@ class DiscordSession:
 		line, tags = self.op_msg_parse(m, gg, is_update=msg_is_update, can_be_empty=media_info)
 		tags.update(media_tags)
 
-		media_expected = tags.pop('_bot-media-info', False) # msg looking like bot-media-info
+		media_expected = tags.pop('_embed-info', False)
 		if msg_ev: tags.update(_ev=msg_ev)
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
@@ -3380,6 +3387,18 @@ class DiscordSession:
 			elif emt in ['article', 'link']: lines.append(
 				f'{emt.title()} :: ' + (' :: '.join(filter(None, [ title,
 					title != desc and desc ])) or em.get('url') or '-no-useful-info-') )
+			elif emt == 'poll_result':
+				pre = self.conf.irc_prefix_poll.format(str_hash(
+					m.get('message_reference', adict()).message_id or m.id, 3 ))
+				info = adict((ef.name, ef.value) for ef in em.get('fields') or list())
+				vs, vs_total = map(int, [info.victor_answer_votes, info.total_votes])
+				vs_perc = f' = {round(100 * vs / vs_total):.0f}%' if vs_total else ''
+				lines.append(f'{pre}Question: {info.poll_question_text} [ result ]')
+				lines.append( f'{pre}Top ' +
+					(f'A#{aid}' if (aid := str(info.get('victor_answer_id', ''))) else 'A')
+					+ f' [ {vs:,d} / {vs_total:,d}{vs_perc} votes ]: ' + ((
+						((pick := info.get('victor_answer_emoji_name', '')) and f':{pick}: ')
+						+ info.get('victor_answer_text', '') ).strip() or '???') )
 			if meta_add or force_meta:
 				if not meta_add: # some unrecognized embed-type, added on force_meta
 					info = ' '.join(k for k in ['image', 'thumbnail', 'video', 'provider'] if em.get(k))
@@ -3419,7 +3438,7 @@ class DiscordSession:
 
 		if not mt:
 			if author.get('bot'): # bots adding/removing media-info annotations
-				if m.get('embeds'): mt, tags['_bot-media-info'] = None, True
+				if m.get('embeds'): mt, tags['_embed-info'] = None, True
 				elif is_update and not line: mt = None
 			# Attachments added/removed on earlier msg w/o type/author info
 			# Sometimes identical updates like this get spammed every hour, not sure why
@@ -3448,6 +3467,7 @@ class DiscordSession:
 			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
 				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
+				if m.get('embeds'): tags['_embed-info'] = True
 		if line: tags.update(self.op_msg_parse_tags(line, m, gg.chans, gg.get('roles')))
 
 		for att in m.get('attachments') or list():
@@ -5076,8 +5096,8 @@ def main_test(cmd, conf):
 			def cmd_user_cache(self, gid, uid, name=None): pass
 			def op_msg_ref(self, msg_id, cc, nick, line, ref=None): pass
 			def cmd_msg_recv( self, cc, nick, line,
-					tags=None, flake=None, nonce=None, notice=None, skip_monitor=False ):
-				self.msg_recv = cc, nick, line, tags, flake, nonce, notice, skip_monitor
+					tags=None, new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
+				self.msg_recv = cc, nick, line, tags, new_msg_flake, nonce, notice, skip_monitor
 			def __init__(self, conf, st):
 				self.st_da = self.st_br = st
 				self.conf, self.log = conf, get_logger('xxx')
@@ -5219,8 +5239,7 @@ def main(args=None, conf=None):
 		else: pw = sys.stdin.buffer.readline().rstrip(b'\r\n')
 		return print(pw_hash(pw))
 
-	conf_user_paths = list(
-		path_filter(p) for p in opts.conf or [conf._conf_path] )
+	conf_user_paths = list(path_filter(p) for p in opts.conf or [conf._conf_path])
 
 	if opts.conf_init:
 		exit_code, conf.irc_uid_seed = 0, host_uid_seed()
