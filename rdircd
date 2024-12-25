@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.9' # git-version: py-str
+	version = '24.12.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3298,7 +3298,7 @@ class DiscordSession:
 		if msg_ev: tags.update(_ev=msg_ev)
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
 		if not (line or media_info or media_expected): return # joins/parts/pins events and such
-		self.op_msg_ref(m.id, cc, nick, line, ref=ref)
+		if line: self.op_msg_ref(m.id, cc, nick, line, ref=ref)
 		if msg_is_update:
 			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 			if (td := self.conf._discord_msg_old_upd_timestamp) and ts - msg_ts > td:
@@ -3323,7 +3323,9 @@ class DiscordSession:
 						if el.endswith(suff) and el in media_info: media_info.remove(el)
 				line = '\n'.join([line, *(str_cut( line,
 					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
-			if not (nick and line): return
+			if not line: return self.log.warning( 'Expected msg media'
+				' info parsed to empty line [ {} ]: {}', m.id, self._repr(m) )
+		if not (nick and line): return
 
 		if tid_prefix: tags['_prefix'] = tags.get('_prefix', '') + tid_prefix
 		skip_mirrored_msg_in_monitor = (
