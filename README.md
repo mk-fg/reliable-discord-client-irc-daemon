@@ -557,11 +557,11 @@ e.g. here are some of the commands for #rdircd.control:
   control discord connection, e.g. for a more one-off usage, or to temporarily
   suppress failed conn warnings while local network is down that way.
 
-- `set irc-disable-reactions yes` - temp-disable discord
+- `set irc-disable-reacts-msgs yes` - temp-disable discord
   reaction notifications (using `set` command).\
-  Or `set -s irc-disable-reactions yes` to make it permanent (`-s/--save`
-  flag for saving value to ini config file), or simple `set` without parameters
-  to see all general configuration options and their values.
+  Or `set -s irc-disable-reacts-msgs yes` to make it permanent
+  (`-s/--save` flag for saving value to ini config file), or simple `set`
+  without parameters to see all general configuration options and their values.
 
 - `rx Block mee6 bot-noise = (?i)^<MEE6>` - temp-block all messages from MEE6 bot.\
   (see [section about this filtering] below, or [more examples of such stuff under tips-and-tricks])
@@ -1543,7 +1543,7 @@ Here are some random commands to try out in #rdircd.control channel:
     under each rule, if there's anything to show (but reset on rdircd restarts!),
     otherwise it's probably safe to drop unused rules to keep lists more tidy.
 
-- Disable "reacts" noise everywhere: `set discord-disable-reactions yes`
+- Disable "reacts" noise everywhere: `set irc-disable-reacts-msgs yes`
 
 - Remove long, confusing and silly nicknames full of unicode junk:\
     `set discord-name-preference-order 'login'`
