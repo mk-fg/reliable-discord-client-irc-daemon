@@ -1325,8 +1325,8 @@ Never encountered this problem myself so far.
 ### Debugging anything strange, unknown or unexpected
 
 Most likely source of that should be missing handling for some new/uncommon
-discord events, or maybe a bug in the code somewhere - either can be reported as
-a github issue.
+discord events, or maybe a bug in the code somewhere - either can be reported
+as a github/codeberg/etc issue.
 
 To get more information on the issue (so that report won't be unhelpful "don't work"),
 following things can be monitored and/or enabled:
@@ -1360,6 +1360,7 @@ following things can be monitored and/or enabled:
     logging to that channel (can be disabled again via "level warning"/"w"),
     but it might be easier to use log files for that - see below.
 
+<a name=debug-protocol-log></a>
 -   Enable debug and protocol logs to files.
 
     In any loaded rdircd ini file(s), add \[debug\] section with options like these:
@@ -1375,13 +1376,17 @@ following things can be monitored and/or enabled:
     to running rdircd and ideally nothing else, e.g. creating it as:
     `install -m700 -o rdircd -d /var/log/rdircd`
 
-    Such opts should enable those auto-rotating log files, which will have a lot
-    of very information about everything happening with the daemon at any time.
+    Options above should enable those auto-rotating log files, which will have
+    a lot of information about everything happening with the daemon at any time.
 
     Both of these can also be enabled/controlled and/or queried at runtime from
-    #rdircd.debug chan.
+    #rdircd.debug channel.
 
-    `proto-log-shared` option (defaults to "yes") and be used to send
+    When running rdircd in a docker/podman container, easiest place to store
+    and access logs like these should probably be `/config/proto.log` or such,
+    i.e. writable docker volume used for configuration file(s).
+
+    `proto-log-shared` option (defaults to "yes") can be used to send
     discord/irc protocol logging to same log-file or #rdircd.debug channel,
     but it might be easier to have two separate logs, as in example above.
 
@@ -1393,6 +1398,7 @@ following things can be monitored and/or enabled:
     When running with protocol logs repeatedly or over long time,
     `proto-log-filter-ws` option can be handy to filter-out spammy
     uninteresting events there, like GUILD_MEMBER_LIST_UPDATE.
+    It defaults to filtering some of those out.
 
     Note that these files will contain all sorts of sensitive information - from
     auth data to all chats and contacts - so should probably not be posted or
@@ -1403,11 +1409,14 @@ following things can be monitored and/or enabled:
     `host 351 mk-fg 22.05.1 rdircd rdircd discord-to-irc bridge` on the first line,
     which is definitely useful to report, if it's not the latest one in this git repo.
 
+    Sending "help" to #rdircd.debug or #rdircd.control channels should also
+    print rdircd version somewhere at the top of the response.
+
 Generally if an issue is easy to reproduce (e.g. "I send message X anywhere and
 get this error"), it can be reported without digging much deeper for more info,
-as presumably anyone debugging it should be able to do that as well, but maybe
-info above can still be helpful to identify any of the more non-obvious problems,
-or maybe give an idea where to look at for fixing or working around these.
+as presumably anyone looking into it should be able to do that as well, but maybe
+info above can still be helpful to identify any less-obvious problems, or maybe
+give an idea where to look at for fixing or working around these.
 
 
 <a name=hdr-random_tips_and_tricks></a>
