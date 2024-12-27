@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '24.12.11' # git-version: py-str
+	version = '24.12.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1224,7 +1224,7 @@ class IRCProtocol:
 			except Exception as err:
 				log = get_logger('rdircd.irc.factory')
 				log.exception('Failed to initialize ircd protocol: {}', err_fmt(err))
-				log.critical('Stopping daemon due to unhandled protocol error')
+				log.critical('Stopping daemon due to unhandled IRC initialization error')
 				rdircd.loop.stop()
 		return _wrapper
 

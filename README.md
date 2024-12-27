@@ -1363,7 +1363,7 @@ following things can be monitored and/or enabled:
 <a name=debug-protocol-log></a>
 -   Enable debug and protocol logs to files.
 
-    In any loaded rdircd ini file(s), add \[debug\] section with options like these:
+    In any loaded rdircd ini file(s), add/update \[debug\] section with options like these:
 
     ``` ini
     [debug]
@@ -1378,9 +1378,6 @@ following things can be monitored and/or enabled:
 
     Options above should enable those auto-rotating log files, which will have
     a lot of information about everything happening with the daemon at any time.
-
-    Both of these can also be enabled/controlled and/or queried at runtime from
-    #rdircd.debug channel.
 
     When running rdircd in a docker/podman container, easiest place to store
     and access logs like these should probably be `/config/proto.log` or such,
@@ -1399,6 +1396,11 @@ following things can be monitored and/or enabled:
     `proto-log-filter-ws` option can be handy to filter-out spammy
     uninteresting events there, like GUILD_MEMBER_LIST_UPDATE.
     It defaults to filtering some of those out.
+
+    Logging can also be enabled/controlled and/or queried at runtime from
+    #rdircd.debug channel, e.g. "proto /config/proto.log" to enable protocol log
+    there, "pt" to print last entries from it, or "level ..." to control debug
+    output to that channel - send "h" or "help" there to get info all such commands.
 
     Note that these files will contain all sorts of sensitive information - from
     auth data to all chats and contacts - so should probably not be posted or
