@@ -172,8 +172,8 @@ You have been warned! :)
 - Limited support for translation of discord user mentions and emojis in
   sent messages, edits and deletions.
 
-- Easily accessible backlog via /topic (/t) commands in any channel, e.g. "/t
-  log 2h" to show last 2 hours of backlog or "/t log 2019-01-08" to dump backlog
+- Easily accessible backlog via /topic (/t) commands in any channel, e.g.
+  `/t log 2h` to show last 2 hours of backlog or `/t log 2019-01-08` to dump backlog
   from that point on to the present, fetching in multiple batches if necessary.
 
 - Messages sent through other means (e.g. browser) will be relayed to irc too,
@@ -427,7 +427,7 @@ Notes on information here:
 - Short base64 channel prefix is a persistent id of the discord guild that it belongs to.
 - Full guild name (e.g. "Server-A") is used as a prefix for every channel topic.
 - "#me." is a prefix of discord @me guild, where all private channels are.
-- #rdircd.control and #rdircd.debug are special channels, send "help" there for more info.
+- #rdircd.control and #rdircd.debug are special channels, send `help` there for more info.
 - There's #rdircd.monitor catch-all channel and guild-specific ones (see notes below).
 - #rdircd.leftover channels are like #rdircd.monitor, but skip msgs from already-joined channels.
 - #rdircd.voice is also there to monitor only voice channel notifications from everywhere.
@@ -448,7 +448,7 @@ log for/from specific time(stamp/span) (iso8601 or a simple relative format).
 
 Daemon control/config commands are available in #rdircd.control channel,
 #rdircd.debug chan can be used to tweak various logging and inspect daemon state
-and protocols more closely, send "help" there to list available commands.
+and protocols more closely, send `help` there to list available commands.
 
 For broad outline of various supported configuration settings,
 see [rdircd.defaults.ini] file (output of `./rdircd --conf-dump-defaults`),
@@ -481,7 +481,7 @@ Frequent state timestamp updates are done in-place (small fixed-length values),
 but checking ctime before writes, so should be safe to edit any of these files
 manually anytime anyway.
 
-Sending SIGHUP to the script or "reload" command in control-channel should
+Sending SIGHUP to the script or `reload` command in control-channel should
 load and apply values from all config files in the same order.
 Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
@@ -828,7 +828,7 @@ Empty value for this option (default) will match nothing.
 This can be used as an alternative to tracking new stuff via
 #rdircd.monitor/leftover channels.
 
-This regexp can be tweaked at runtime using "set" command in #rdircd.control
+This regexp can be tweaked at runtime using `set` command in #rdircd.control
 channel, same as any other values, to e.g. temporary enable/disable this feature
 for specific discords or channels.
 
@@ -1007,7 +1007,7 @@ Replacements are applied in the same order as specified, but with `*` keys
 preceding per-discord ones, and before processing to add discord tags, so anything
 like @username that can normally be typed in messages can be used there too.
 
-#rdircd.control channel has "repl" command to edit these rules on-the-fly.
+#rdircd.control channel has `repl` command to edit these rules on-the-fly.
 
 [re.sub()]: https://docs.python.org/3/library/re.html#re.sub
 
@@ -1019,7 +1019,7 @@ If you join #rdircd.monitor channel, see - for example - a message like this:
     <helper-bot> #pub.welcomes :: Welcome!
 
 ...and think "don't want to see messages like that again!" -
-config files' \[recv-regexp-filters\] section or corresponding "rx"
+config files' \[recv-regexp-filters\] section or corresponding `rx`
 command in #rdircd.control channel can help.
 
 Depending on what "messages like that" means, here are some ways to filter those out:
@@ -1215,7 +1215,7 @@ voice-notify-rate-limit-tbf = 0
 ```
 
 #rdircd.voice monitor-channel(s) can also be used to only track voice-chat
-notifications across discords/channels, potentially filtered via "um" command
+notifications across discords/channels, potentially filtered via `um` command
 in #rdircd.control or \[unmonitor\] in ini config(s).
 
 ["token bucket algorithm"]: https://en.wikipedia.org/wiki/Token_bucket
@@ -1354,10 +1354,10 @@ following things can be monitored and/or enabled:
 
 -   Join #rdircd.debug channel - any warnings/errors should be logged there.
 
-    Send "help" (or "h") msg to it to see a bunch of extra controls over it.
+    Send `help` (or `h`) msg to it to see a bunch of extra controls over it.
 
-    Sending "level debug" (or "d") there for example will enable verbose debug
-    logging to that channel (can be disabled again via "level warning"/"w"),
+    Sending `level debug` (or just `d`) there for example will enable verbose
+    debug logging to that channel (can be disabled again via `level warning`/`w`),
     but it might be easier to use log files for that - see below.
 
 <a name=debug-protocol-log></a>
@@ -1398,9 +1398,9 @@ following things can be monitored and/or enabled:
     It defaults to filtering some of those out.
 
     Logging can also be enabled/controlled and/or queried at runtime from
-    #rdircd.debug channel, e.g. "proto /config/proto.log" to enable protocol log
-    there, "pt" to print last entries from it, or "level ..." to control debug
-    output to that channel - send "h" or "help" there to get info all such commands.
+    #rdircd.debug channel, e.g. `proto /config/proto.log` to enable protocol log
+    there, `pt` to print last entries from it, or `level ...` to control debug
+    output to that channel - send `h` or `help` there to get info all such commands.
 
     Note that these files will contain all sorts of sensitive information - from
     auth data to all chats and contacts - so should probably not be posted or
@@ -1411,7 +1411,7 @@ following things can be monitored and/or enabled:
     `host 351 mk-fg 22.05.1 rdircd rdircd discord-to-irc bridge` on the first line,
     which is definitely useful to report, if it's not the latest one in this git repo.
 
-    Sending "help" to #rdircd.debug or #rdircd.control channels should also
+    Sending `help` to #rdircd.debug or #rdircd.control channels should also
     print rdircd version somewhere at the top of the response.
 
 Generally if an issue is easy to reproduce (e.g. "I send message X anywhere and
