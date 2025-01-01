@@ -172,6 +172,9 @@ You have been warned! :)
 - Limited support for translation of discord user mentions and emojis in
   sent messages, edits and deletions.
 
+- Very basic tracking for user presence - can set discord status when irc
+  (dis-)connects or on /away status there.
+
 - Easily accessible backlog via /topic (/t) commands in any channel, e.g.
   `/t log 2h` to show last 2 hours of backlog or `/t log 2019-01-08` to dump backlog
   from that point on to the present, fetching in multiple batches if necessary.
@@ -218,8 +221,6 @@ You have been warned! :)
 
     For private chats, it might be even dangerous to support - see
     [More info on third-party client blocking] section below for details.
-
-- Does not track user presence (online, offline, afk, playing game, etc) at all.
 
 - Does not emit user joins/parts events and handles irc /names in a very simple
   way, only listing nicks who used the channel since app startup and within

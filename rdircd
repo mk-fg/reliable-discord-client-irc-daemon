@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.1' # git-version: py-str
+	version = '25.01.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -344,10 +344,10 @@ class RDIRCDConfigBase:
 		for ev in v.split():
 			k, s, v = ev.lower().partition('=')
 			for k in k.split('/'):
-				if k not in ['back', 'connect', 'away', 'disconnect']:
-					raise ValueError('Unrecognized/unused IRC event name: {k} (in {ev!r})')
+				if k not in 'back connect away disconnect'.split():
+					raise ValueError(f'Unrecognized/unused IRC event name: {k} (in {ev!r})')
 				if not getattr(Discord.c_status_protobuf, v, None):
-					raise ValueError('Unknown/unsupported Discord status: {v} (in {ev!r})')
+					raise ValueError(f'Unknown/unsupported Discord status: {v} (in {ev!r})')
 				ev_map[k] = v
 		return ev_map
 
@@ -2242,9 +2242,9 @@ class Discord:
 		self.conn_req_oneway(f'channels/{cc.id}/typing', m='post', raw=True)
 
 	def cmd_status(self, st_name):
-		self.log.debug('Setting discord status: {}', st_name)
 		if not (pb := getattr(self.c_status_protobuf, st_name, None)):
 			return self.log.error('Unknown/unsupported discord status: {}', st_name)
+		self.log.debug('Setting discord status: {}', st_name)
 		self.conn_req_oneway(up.urljoin( # v10 API fails with "need to update your app"
 			self.conf.discord_api_url.format(api_ver=9),
 			'users/@me/settings-proto/1' ), m='patch', json=dict(settings=pb))
