@@ -1753,6 +1753,7 @@ Last updated: 2024-11-26
     - <https://luna.gitlab.io/discord-unofficial-docs/> (+ [litecord] api-testing server)
     - <https://github.com/Merubokkusu/Discord-S.C.U.M/tree/master/docs>
     - <https://discord.neko.wtf/> (maintained by [Abaddon] client dev\[s\])
+    - <https://github.com/dolfies/discord-protos/> - protobufs for user settings
 
 -   Sent message delivery confirmation is done by matching unique "nonce" value in
     MESSAGE_CREATE event from gateway websocket with one sent out to REST API.
