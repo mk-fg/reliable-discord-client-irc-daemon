@@ -1638,6 +1638,7 @@ class IRCProtocol:
 
 	def recv_cmd_away(self, msg=None):
 		self.st_irc.away = msg or None
+		self.bridge.cmd_away(self.st_irc.away)
 		if self.st_irc.away: self.send(306, ':You have been marked as being away')
 		else: self.send(305, ':You are no longer marked as being away')
 
@@ -2215,6 +2216,13 @@ class Discord:
 		delays[cc.id] = True
 		self.conn_req_oneway(f'channels/{cc.id}/typing', m='post', raw=True)
 
+	def cmd_away(self, is_away):
+		# Using v10 API endpoint fails with "You need to update your app to perform this action"
+		# Base64 encoded Protobuf using definition from https://github.com/dolfies/discord-protos/blob/master/discord_protos/PreloadedUserSettings.proto
+		if is_away:
+			self.conn_req_oneway('https://discord.com/api/v9/users/@me/settings-proto/1', m='patch', json=dict(settings='Wg0KCwoJaW52aXNpYmxl'))
+		else:
+			self.conn_req_oneway('https://discord.com/api/v9/users/@me/settings-proto/1', m='patch', json=dict(settings='WgoKCAoGb25saW5l'))
 
 
 class DiscordSession:
@@ -3838,6 +3846,7 @@ class RDIRCD:
 	def irc_conn_new(self, irc):
 		self.irc_conns[id(irc)] = irc
 		self.irc_conns_max = max(self.irc_conns_max, len(self.irc_conns))
+		self.discord.cmd_away(False)
 	def irc_conn_lost(self, irc): self.irc_conns.pop(id(irc), None)
 	def irc_conn_stats(self):
 		stats = adict(
@@ -4669,6 +4678,9 @@ class RDIRCD:
 			Runs before discord-id cache updates to new channel name to use old name_irc.'''
 		return ft.partial( self.cmd_msg_discord,
 			cc, name_irc=self.st_br.did_chan.get(cc.did) )
+
+	def cmd_away(self, is_away):
+		self.discord.cmd_away(is_away)
 
 
 
