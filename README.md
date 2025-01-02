@@ -1751,6 +1751,7 @@ Last updated: 2024-11-26
 
 -   There are some unofficial docs for officially-undocumented APIs and quirks:
 
+    - <https://docs.discord.sex/> - Discord Userdoccers project
     - <https://luna.gitlab.io/discord-unofficial-docs/> (+ [litecord] api-testing server)
     - <https://github.com/Merubokkusu/Discord-S.C.U.M/tree/master/docs>
     - <https://discord.neko.wtf/> (maintained by [Abaddon] client dev\[s\])

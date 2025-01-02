@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.3' # git-version: py-str
+	version = '25.01.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -340,16 +340,15 @@ class RDIRCDConfigBase:
 	_parse_td_str = lambda s, v: parse_duration(v)
 
 	def _conv_discord_status_events(self, v):
-		ev_map = dict()
+		ev_status = dict()
 		for ev in v.split():
 			k, s, v = ev.lower().partition('=')
-			for k in k.split('/'):
-				if k not in 'back connect away disconnect'.split():
-					raise ValueError(f'Unrecognized/unused IRC event name: {k} (in {ev!r})')
-				if not getattr(Discord.c_status_protobuf, v, None):
-					raise ValueError(f'Unknown/unsupported Discord status: {v} (in {ev!r})')
-				ev_map[k] = v
-		return ev_map
+			ev_status.update((k, v) for k in k.split('/'))
+			if not getattr(Discord.c_status_protobuf, v, None):
+				raise ValueError(f'Unknown/unsupported discord status: {v} (in {ev!r})')
+			if err := set(ev_status).difference('back connect away disconnect'.split()):
+				raise ValueError(f'Unrecognized IRC event name: {err.pop()} (in {ev!r})')
+		return ev_status
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
@@ -2246,7 +2245,7 @@ class Discord:
 	def cmd_status(self, st_name):
 		if not (pb := getattr(self.c_status_protobuf, st_name, None)):
 			return self.log.error('Unknown/unsupported discord status: {}', st_name)
-		self.log.debug('Setting discord status: {}', st_name)
+		self.log.debug('Setting discord user status: {}', st_name)
 		self.conn_req_oneway(up.urljoin( # v10 API fails with "need to update your app"
 			self.conf.discord_api_url.format(api_ver=9),
 			'users/@me/settings-proto/1' ), m='patch', json=dict(settings=pb))
@@ -2390,9 +2389,9 @@ class DiscordSession:
 		self.ws_closed, self.ws_closed_clean = asyncio.Event(), asyncio.Event()
 		self.ws_closed_clean.set()
 		self.rate_limits = adict()
-		self.st_da = adict(guilds={1: adict(
-			id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict() )})
-		self.st_da.update(me=self.st_da.guilds[1], embed_info=dict(), icache=adict())
+		st_guilds = {1: adict(id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict())}
+		self.st_da = adict( guilds=st_guilds, me=st_guilds[1],
+			embed_info=dict(), icache=adict(), req_action=None )
 		self.auth_token, self.auth_token_manual = (
 			self.get_auth('token'), self.get_auth('token_manual') )
 		self.ws_enabled = False
@@ -2489,9 +2488,12 @@ class DiscordSession:
 				email, pw = (self.get_auth(k) for k in ['email', 'password'])
 				res = await self.req( 'auth/login', m='post',
 					auth=False, json=dict(email=email, password=pw) )
-				if res.get('mfa'):
-					raise DiscordAbort( 'Multi-factor auth'
-						' requirement detected, but is not supported by rdircd' )
+				if res.get('mfa'): raise DiscordAbort(
+					'Multi-factor auth requirement detected, but is not supported by rdircd' )
+				if acts := res.get('required_actions'): # e.g. update_password
+					msg = ( 'Discord account is marked as requiring'
+						f' user action(s) - login/check via official client(s): {acts}' )
+					self.discord.cmd_guild_event(1, msg); self.log.warning(msg)
 				self.conf.set('auth_token', res['token'])
 				self.conf.update_file_section('auth', 'token')
 				self.auth_token = self.get_auth('token')
@@ -2877,6 +2879,10 @@ class DiscordSession:
 			for rs in rs or list():
 				if not (n := rs.get('last_viewed')): continue
 				self.st_da.read_state_last = max(n, self.st_da.read_state_last)
+			if (act := md.get('required_action')) != self.st_da.req_action:
+				self.st_da.req_action, msg = act, ( 'Discord account is marked'
+					' as requiring user action(s) - login/check via official client(s)' )
+				self.discord.cmd_guild_event(1, msg); self.log.warning(msg)
 		else: resume = True
 		if resume_url := md.get('resume_gateway_url'):
 			self.conf.discord_gateway = resume_url
@@ -3231,7 +3237,7 @@ class DiscordSession:
 	def op_ev_recipient(self, m, act):
 		# Sometimes this gets sent instead of c_msg_type.recipient_add, didn't check why
 		# No guild_id passed here (always "me"), only user + channel_id
-		cc = self.st_da.guilds[1].chans.get(m.channel_id)
+		cc = self.st_da.me.chans.get(m.channel_id)
 		nick = (u := m.get('user')) and self.discord.user_name(u)
 		if u: self.discord.cmd_user_cache(1, u.id, nick)
 		self.discord.cmd_msg_recv(cc, nick, f'recipient {act.lower()}', dict(_ev=True))
