@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.2' # git-version: py-str
+	version = '25.01.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -251,7 +251,7 @@ class RDIRCDConfigBase:
 	discord_terminal_links_tpl = '\x1b]8;;{url}\x1b\\{name}\x1b]8;;\x1b\\'
 
 	# Changes discord status on IRC /away and/or IRC client connect/disconnect.
-	# status-events can be used to fine-tune discord status values to for specific events.
+	# status-events can be used to set discord online/invisible/idle/dnd status for specific events.
 	discord_status_set = True
 	discord_status_events = 'back/connect=online away/disconnect=invisible' # omit event to ignore it
 
@@ -1842,6 +1842,8 @@ class Discord:
 		#  PreloadedUserSettings.proto | base64
 		online = 'WgoKCAoGb25saW5l'
 		invisible = 'Wg0KCwoJaW52aXNpYmxl'
+		idle = 'WggKBgoEaWRsZQ=='
+		dnd = 'WgcKBQoDZG5k'
 
 	def __init__(self, rdircd):
 		self.bridge, self.conf = rdircd, rdircd.conf
