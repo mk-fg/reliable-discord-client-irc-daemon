@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.6' # git-version: py-str
+	version = '25.01.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -80,7 +80,7 @@ class RDIRCDConfigBase:
 	irc_len_monitor = 350 # to tuncate long lines in #rdircd.monitor/leftover channels
 	irc_len_monitor_lines = 4 # to limit multiline msgs in #rdircd.monitor/leftover channels
 
-	irc_chan_modes = False # causes needless spam on ZNC reconnects
+	irc_chan_modes = False # reply to channel MODE queries, causes extra spam on ZNC reconnects
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 	irc_disable_reacts_msgs = False # disables incoming "--- reacts" notifications from users
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
@@ -1645,8 +1645,7 @@ class IRCProtocol:
 
 	def recv_cmd_mode(self, target, mode=None, mode_args=None):
 		if self.chan_spec_check(target):
-			chan = target
-			c = self.req_chan_info(chan, check=False)
+			c = self.req_chan_info(chan := target, check=False)
 			if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
 			if c: chan_ts = int(c.ts_created)
 			else:
@@ -1791,24 +1790,25 @@ class IRCProtocol:
 			self.send(302, f':{nick}=+~{self.st_irc.user}@{self.st_irc.host}')
 		else: self.send(401, nick, ':No such nick/channel')
 
-	def recv_cmd_who(self, name=None):
-		if not name:
+	def recv_cmd_who(self, query=None):
+		if not query:
 			self.cmd_msg_self('\n'.join([ '--- /who command extra usage:',
 				'/who ~#123456 - find/describe channel with id=123456.',
 				'/who ~%123456 - server/guild id lookup.', '/who ~@123456 - user id lookup.',
 				'/who ~@John·Smith - user lookup by IRC nick.',
+				'/who ~#guild.channel - discord info about channel with that name on irc side.',
 				'/who ~*665560022562111489 - translate discord snowflake-id to date/time.',
 				'--- /who info end' ]))
-		elif name.startswith('~@') or re.fullmatch(r'~[#%*]\d+', name):
-			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[1], name[2:]))
-		elif name[0] == '#': # irssi queries channel userlists like this
-			for nick in self.bridge.cmd_chan_names(name[1:]):
-				self.send( 352, name, '~'+nick, f'discord/user/{nick}',
+		elif query.startswith('~@') or re.fullmatch(r'~(#.+|[%*]\d+)', query):
+			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, query[1], query[2:]))
+		elif self.chan_spec_check(chan := query): # irssi queries channel userlists like this
+			for nick in self.bridge.cmd_chan_names(self.chan_name(chan)):
+				self.send( 352, chan, '~'+nick, f'discord/user/{nick}',
 					self.bridge.server_host, nick, 'H', f':0 '+getattr(nick, 'discord', nick) )
-		elif conn := self.bridge.cmd_conn_map().get(name): # "/who nick" query
-			self.send( 352, '*', '~'+(st := conn.st_irc).user,
-				st.host, self.bridge.server_host, st.nick, 'H', f':0 {st.real_name or nick}' )
-		self.send(315, name, ':End of /WHO list.')
+		elif conn := self.bridge.cmd_conn_map().get(query): # "/who nick" query
+			self.send( 352, '*', '~'+(st := conn.st_irc).user, st.host,
+				self.bridge.server_host, st.nick, 'H', f':0 {st.real_name or st.nick}' )
+		self.send(315, query, ':End of /WHO list.')
 
 	def recv_cmd_whois(self, *args):
 		self.send( 421, ':IRC /WHOIS command is'
@@ -4060,6 +4060,12 @@ class RDIRCD:
 			if not nick_irc:
 				info = ( f'NOTE: specified IRC name [ {nick} ] was not cached,\n   '
 					f' will be queried as-is, without reverse IRC-to-Discord translation.\n{info}' )
+		elif t == 'channels' and not id_str.isdigit():
+			name, id_str, cm = id_str, f'{t}/{id_str}', self.cmd_chan_map()
+			if not cm.ø_online: info = 'Error: discord connection is offline/disabled'
+			elif (c := cm.get(name)) and c.bt is c.bt.proxy:
+				info = await self.discord.cmd_info_dump(f'{t}/{c.cc.id}')
+			else: info = 'Error: no such channel, or it is not a discord-proxy channel'
 		else: info = await self.discord.cmd_info_dump(id_str := f'{t}/{id_str}')
 		conn.cmd_msg_self(f'--- [{id_str}] info follows')
 		conn.cmd_msg_self(info)

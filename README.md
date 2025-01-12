@@ -1114,6 +1114,8 @@ All above ID values are unique across Discord service within their type.
     Can be useful to check exact nick/display/login names
     corresponding to an IRC name, or other user info.
 
+- `/who ~#minecraft.general` - info on discord channel, same as `/t info` there.
+
 - `/who ~*665560022562111489` - translate discord snowflake-id to date/time.
 
 Results of all these commands should be dumped into a server buffer
