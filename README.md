@@ -1101,20 +1101,20 @@ rule(s) are still needed/being-used.
 Mostly useful for debugging - `/who` command can resolve specified ID
 (e.g. channel_id from protocol logs) to a channel/user/guild info:
 
-- `/who #123456` - find/describe channel with id=123456.
-- `/who %123456` - server/guild id info.
-- `/who @123456` - user id lookup.
+- `/who ~#123456` - find/describe channel with id=123456.
+- `/who ~%123456` - server/guild id info.
+- `/who ~@123456` - user id lookup.
 
 All above ID values are unique across Discord service within their type.
 
-- `/who @John·Mastodon` - user IRC nick or name/login lookup.
+- `/who ~@John·Mastodon` - user IRC nick or name/login lookup.
 
     Queries all joined discords for that name, and can return
     multiple results for same or similar non-unique names.
     Can be useful to check exact nick/display/login names
     corresponding to an IRC name, or other user info.
 
-- `/who *665560022562111489` - translate discord snowflake-id to date/time.
+- `/who ~*665560022562111489` - translate discord snowflake-id to date/time.
 
 Results of all these commands should be dumped into a server buffer
 (not into channels), regardless of where they were issued from.
@@ -1124,7 +1124,7 @@ In irc channels corresponding to ones on discord, `/topic info` command
 more information about linked discord channel and its server/guild.
 
 `/t info <username>` can also print info on user in that discord
-(unlike `/who @<username>` which looks the name up in all connected discords),
+(unlike `/who ~@<username>` which looks the name up in all connected discords),
 for example `/t info john` will print info for anyone with "john" in the name.
 
 Usernames in these queries can match exact irc name or discord username,

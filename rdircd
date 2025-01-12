@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.5' # git-version: py-str
+	version = '25.01.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -252,7 +252,7 @@ class RDIRCDConfigBase:
 
 	# Changes discord status on IRC /away and/or IRC client connect/disconnect.
 	discord_status_set = True
-	# IRC events to set discord status for - back, connect, away, disconnect.
+	# IRC events to set discord status for - connect, disconnect, away, back.
 	# Discord statuses - online, invisible, idle, dnd, offline, streaming, unknown.
 	discord_status_events = 'back/connect=online away/disconnect=invisible'
 
@@ -1053,6 +1053,12 @@ def iter_gather(container):
 	return _cls_wrapper
 
 
+class attr_str(str):
+	def __new__(cls, s, **attrs):
+		s = super().__new__(cls, s)
+		for k, v in attrs.items(): setattr(s, k, v)
+		return s
+
 class adict(cs.UserDict):
 	'dict with simpler access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
@@ -1787,18 +1793,21 @@ class IRCProtocol:
 
 	def recv_cmd_who(self, name=None):
 		if not name:
-			self.cmd_msg_self('\n'.join([ '--- /who command usage:',
-				'/who #123456 - find/describe channel with id=123456.',
-				'/who %123456 - server/guild id lookup.', '/who @123456 - user id lookup.',
-				'/who @John·Smith - user lookup by IRC nick.',
-				'/who *665560022562111489 - translate discord snowflake-id to date/time.',
+			self.cmd_msg_self('\n'.join([ '--- /who command extra usage:',
+				'/who ~#123456 - find/describe channel with id=123456.',
+				'/who ~%123456 - server/guild id lookup.', '/who ~@123456 - user id lookup.',
+				'/who ~@John·Smith - user lookup by IRC nick.',
+				'/who ~*665560022562111489 - translate discord snowflake-id to date/time.',
 				'--- /who info end' ]))
-		elif name[0] == '@' or re.fullmatch(r'[#%*]\d+', name):
-			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[0], name[1:]))
-		else:
-			if conn := self.bridge.cmd_conn_map().get(name):
-				self.send( 352, '*', conn.st_irc.user, conn.st_irc.host,
-					self.bridge.server_host,conn.st_irc.nick, 'H', f':0 {conn.st_irc.nick}' )
+		elif name.startswith('~@') or re.fullmatch(r'~[#%*]\d+', name):
+			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, name[1], name[2:]))
+		elif name[0] == '#': # irssi queries channel userlists like this
+			for nick in self.bridge.cmd_chan_names(name[1:]):
+				self.send( 352, name, '~'+nick, f'discord/user/{nick}',
+					self.bridge.server_host, nick, 'H', f':0 '+getattr(nick, 'discord', nick) )
+		elif conn := self.bridge.cmd_conn_map().get(name): # "/who nick" query
+			self.send( 352, '*', '~'+(st := conn.st_irc).user,
+				st.host, self.bridge.server_host, st.nick, 'H', f':0 {st.real_name or nick}' )
 		self.send(315, name, ':End of /WHO list.')
 
 	def recv_cmd_whois(self, *args):
@@ -3626,7 +3635,7 @@ class DiscordSession:
 		if ( self.conf.irc_ref_allow_disabling_pings
 				and (ref_nick in self.discord.bridge.irc_conn_names())
 				and not any(u.username == ua.username for u in m.get('mentions') or list()) ):
-			ref_nick = f'{ref_nick[:-1]}.no-@'
+			ref_nick = f'{ref_nick[:-1]}.no@'
 		ref_line, ref_tags = self.op_msg_parse(ref, gg, can_be_empty=True)
 		if not ref_line and ( snapshots :=
 				ref.get('message_reference') and ref.get('message_snapshots') ):
@@ -4169,7 +4178,7 @@ class RDIRCD:
 			conn.st_irc.nick for conn in self.cmd_chan_conns(name) if conn.st_irc.nick )
 		for nick_discord, nick in (users := info.cc.get('users', dict())).items():
 			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
-			chan_nicks.add(nick)
+			chan_nicks.add(attr_str(nick, discord=nick_discord))
 		return sorted(chan_nicks.values())
 
 	def cmd_chan_map(self):
@@ -5089,7 +5098,6 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 def parse_conf_code_comments(lines):
 	'Parses "class RDIRCDConfigBase" in this script, returns {var: comment} dict'
-	class attr_str(str): pass
 	def line_proc(line):
 		var = line.split(None, 1)[0] if re.search(r'^\S+\s+=', line) else ''
 		var, var_code = var.replace('_', '-'), var
