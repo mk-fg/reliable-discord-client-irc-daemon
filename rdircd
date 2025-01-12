@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.8' # git-version: py-str
+	version = '25.01.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4044,7 +4044,7 @@ class RDIRCD:
 			raise
 
 	async def irc_cmd_info(self, conn, t, id_str):
-		info, t = None, {'#': 'channels', '@': 'users', '%': 'guilds', '*': 'snowflake'}[t]
+		info, t = None, {'#':'channels', '@':'users', '%':'guilds', '*':'snowflake'}[t]
 		if t == 'snowflake':
 			if ts := self.discord.flake_parse(id_str):
 				ts_dt = ts_iso8601(ts, human=True, short=True)
@@ -4052,6 +4052,8 @@ class RDIRCD:
 				info = f'Date/time: {ts_dt} [{ts_rel}]'
 			else: info = 'Error: unrecognized snowflake format'
 			id_str = f'{t}/{id_str}'
+		elif not self.discord.st_eris.online:
+			info = 'Error: discord connection is offline/disabled'
 		elif t == 'users' and not id_str.isdigit():
 			nick, nick_irc = id_str, self.irc_name_revert(id_str)
 			gids = list(gid for gid in self.discord.st_da.guilds if gid != 1) # skip "me" non-guild
@@ -4061,9 +4063,8 @@ class RDIRCD:
 				info = ( f'NOTE: specified IRC name [ {nick} ] was not cached,\n   '
 					f' will be queried as-is, without reverse IRC-to-Discord translation.\n{info}' )
 		elif t == 'channels' and not id_str.isdigit():
-			name, id_str, cm = id_str, f'{t}/{id_str}', self.cmd_chan_map()
-			if not cm.ø_online: info = 'Error: discord connection is offline/disabled'
-			elif (c := cm.get(name)) and c.bt is c.bt.proxy:
+			name, id_str = id_str, f' irc-channel #{id_str} '
+			if (c := self.cmd_chan_map().get(name)) and c.bt is c.bt.proxy:
 				info = await self.discord.cmd_info_dump(f'{t}/{c.cc.id}')
 			else: info = 'Error: no such channel, or it is not a discord-proxy channel'
 		else: info = await self.discord.cmd_info_dump(id_str := f'{t}/{id_str}')
