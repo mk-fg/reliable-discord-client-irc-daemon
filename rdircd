@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.12' # git-version: py-str
+	version = '25.01.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1732,8 +1732,9 @@ class IRCProtocol:
 		if ( name not in self.st_irc.chans and
 				self.conf._irc_chan_auto_join_re.search(name) ):
 			self.cmd_join(chan)
-		if self.conf.irc_names_join and src and joined and not notice:
-			if not irc_name_eq(src, self.st_irc.nick): self.send(f':{src} JOIN {chan}')
+		if ( self.conf.irc_names_join and src and joined
+				and not notice and not irc_name_eq(src, self.st_irc.nick) ):
+			self.send(f':{src}!discord/{src} JOIN {chan}') # !host needed for irssi
 		self.send(f':{src} {msg_type} {chan} :{text}')
 		self.st_irc.typing_repeat.active.pop((src, chan), None)
 
