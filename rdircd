@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.11' # git-version: py-str
+	version = '25.01.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -81,7 +81,6 @@ class RDIRCDConfigBase:
 	irc_len_monitor_lines = 4 # to limit multiline msgs in #rdircd.monitor/leftover channels
 
 	irc_chan_modes = False # reply to channel MODE queries, causes extra spam on ZNC reconnects
-	irc_nick_hosts = True # send "nick!host" in PRIVMSG and such for better client compat
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 	irc_disable_reacts_msgs = False # disables incoming "--- reacts" notifications from users
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
@@ -1466,10 +1465,6 @@ class IRCProtocol:
 	chan_name = staticmethod(
 		lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:] )
 
-	def src_host(self, src):
-		if self.conf.irc_nick_hosts and '!' not in src: src += '!rdircd'
-		return src
-
 
 	def recv_cmd_ping(self, server, server_dst=None):
 		# See https://gitlab.com/gitterHQ/irc-bridge/-/issues/34#note_190986152
@@ -1693,9 +1688,9 @@ class IRCProtocol:
 			if topic == ch.topic: continue
 			self.log.debug('Client-topic update [ {} ]: {!r} -> {!r}', name, ch.topic, topic)
 			self.send_topic_update(chan := self.chan_spec(name), topic)
-			ch.topic, src = topic, self.conf.irc_nick_sys
+			ch.topic = topic
 			if name in cm: continue
-			self.send(f':{self.src_host(src)} NOTICE {chan} :{self.nx_chan_warn}')
+			self.send(f':{self.conf.irc_nick_sys} NOTICE {chan} :{self.nx_chan_warn}')
 			self.send(403, chan, ':No such channel')
 			# Doesn't actually removes channels, as they get rename-notification there
 
@@ -1716,18 +1711,18 @@ class IRCProtocol:
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
 				if name not in conn.st_irc.chans: self.cmd_join(chan) # from chan_auto_join_re
-				conn.send(f':{self.src_host(src)} {msg_type} {chan} :{text}')
+				conn.send(f':{src} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
 			if not (conn := self.bridge.cmd_conn(target)):
 				if not notice: self.send(401, target, ':No such nick/channel')
-			else: conn.send(f':{self.src_host(src)} {msg_type} {target} :{text}')
+			else: conn.send(f':{src} {msg_type} {target} :{text}')
 
 	def cmd_msg_self(self, text, src=None, notice=True):
 		'Send direct message to this IRC client and nick'
 		if not src: src = self.conf.irc_nick_sys
 		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
-		self.send(f':{self.src_host(src)} {msg_type} {self.st_irc.nick} :{text}')
+		self.send(f':{src} {msg_type} {self.st_irc.nick} :{text}')
 
 	def cmd_msg_chan(self, src, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
@@ -1739,7 +1734,7 @@ class IRCProtocol:
 			self.cmd_join(chan)
 		if self.conf.irc_names_join and src and joined and not notice:
 			if not irc_name_eq(src, self.st_irc.nick): self.send(f':{src} JOIN {chan}')
-		self.send(f':{self.src_host(src)} {msg_type} {chan} :{text}')
+		self.send(f':{src} {msg_type} {chan} :{text}')
 		self.st_irc.typing_repeat.active.pop((src, chan), None)
 
 	def cmd_typing(self, src, chan, repeated=False):
