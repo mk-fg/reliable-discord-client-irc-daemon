@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.9' # git-version: py-str
+	version = '25.01.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -81,6 +81,7 @@ class RDIRCDConfigBase:
 	irc_len_monitor_lines = 4 # to limit multiline msgs in #rdircd.monitor/leftover channels
 
 	irc_chan_modes = False # reply to channel MODE queries, causes extra spam on ZNC reconnects
+	irc_name_hosts = True # send "nick!host" in /names and such for better client compat
 	irc_chan_auto_join_re = '' # regexp to match against irc chan names to auto-join
 	irc_disable_reacts_msgs = False # disables incoming "--- reacts" notifications from users
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
@@ -1053,7 +1054,7 @@ def iter_gather(container):
 	return _cls_wrapper
 
 
-class attr_str(str):
+class str_attrs(str):
 	def __new__(cls, s, **attrs):
 		s = super().__new__(cls, s)
 		for k, v in attrs.items(): setattr(s, k, v)
@@ -1587,12 +1588,12 @@ class IRCProtocol:
 		c = self.req_chan_info(chan, cm=cm, check=False)
 		if c is False: return self.send(403, chan, ':No such channel')
 		name = c.name if c else self.chan_name(chan)
+		# topic=None will always be updated on cmd_chan_list_sync
+		self.st_irc.chans[name] = adict(topic=c and c.topic)
 		self.send(f':{self.st_irc.nick} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
 		self.send(0, f'MODE {chan} +v {self.st_irc.nick}')
-		# topic=None will always be updated on cmd_chan_list_sync
-		self.st_irc.chans[name] = adict(topic=c and c.topic)
 
 	def recv_cmd_part(self, chan, reason=None):
 		chan_list, cm = chan.split(','), self.bridge.cmd_chan_map()
@@ -1631,16 +1632,17 @@ class IRCProtocol:
 
 	def send_names(self, chan, own=False, c=..., msg_len_max=200):
 		if c is ...: c = self.req_chan_info(chan)
+		name_fmt = '{0}!{0.host}' if self.conf.irc_name_hosts else '{}'
 		name_line, names = list(), self.bridge.cmd_chan_names(c.name) if c else list()
 		for name in it.chain(names, [None]):
 			if name:
-				if irc_name_eq(name, self.st_irc.nick): own = False
-				name_line.append(name)
-			elif own and self.st_irc.nick: name_line.append(self.st_irc.nick)
-			if name_line and (
-					not name or sum(len(n)+1 for n in name_line) > msg_len_max ):
-				self.send(353, '=', chan, ':' + ' '.join(name_line))
-				name_line.clear()
+				if name_self := irc_name_eq(name, self.st_irc.nick): own = False
+				if not getattr(name, 'host', None):
+					name = str_attrs(name, host='irc' if name_self else f'discord/{name}')
+			elif own and self.st_irc.nick: name = str_attrs(self.st_irc.nick, host='irc')
+			if name: name_line.append(name_fmt.format(name))
+			if name_line and (not name or sum(len(n)+1 for n in name_line) > msg_len_max):
+				self.send(353, '=', chan, ':' + ' '.join(name_line)); name_line.clear()
 		self.send(366, chan, ':End of /NAMES list')
 
 	def recv_cmd_mode(self, target, mode=None, mode_args=None):
@@ -1803,8 +1805,8 @@ class IRCProtocol:
 			self.bridge.cmd_delay(self.bridge.irc_cmd_info(self, query[1], query[2:]))
 		elif self.chan_spec_check(chan := query): # irssi queries channel userlists like this
 			for nick in self.bridge.cmd_chan_names(self.chan_name(chan)):
-				self.send( 352, chan, '~'+nick, f'discord/user/{nick}',
-					self.bridge.server_host, nick, 'H', f':0 '+getattr(nick, 'discord', nick) )
+				self.send( 352, chan, '~'+nick, getattr(nick, 'host', f'discord/{nick}'),
+					self.bridge.server_host, nick, 'H', f':0 '+getattr(nick, 'real', nick) )
 		elif conn := self.bridge.cmd_conn_map().get(query): # "/who nick" query
 			self.send( 352, '*', '~'+(st := conn.st_irc).user, st.host,
 				self.bridge.server_host, st.nick, 'H', f':0 {st.real_name or st.nick}' )
@@ -4179,13 +4181,15 @@ class RDIRCD:
 			yield conn
 
 	def cmd_chan_names(self, name):
-		'Returns list of irc-unique nicks for specified channel, for /names and such'
+		'''Returns list of irc-unique nicks for specified channel, for /names and such.
+			Uses str_attrs instead of str, with optional real/host/etc attrs if applicable.'''
 		if not (info := self.irc_discord_info(name)): return list()
 		chan_nicks = irc_name_dict.value_map(
-			conn.st_irc.nick for conn in self.cmd_chan_conns(name) if conn.st_irc.nick )
+			str_attrs((st := conn.st_irc).nick, real=st.real_name, host=st.host)
+			for conn in self.cmd_chan_conns(name) if conn.st_irc.nick )
 		for nick_discord, nick in (users := info.cc.get('users', dict())).items():
 			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
-			chan_nicks.add(attr_str(nick, discord=nick_discord))
+			chan_nicks.add(str_attrs(nick, real=nick_discord, host=f'discord/{nick}'))
 		return sorted(chan_nicks.values())
 
 	def cmd_chan_map(self):
@@ -5140,7 +5144,7 @@ def parse_conf_code_comments(lines):
 			if comm := comms.get(var, ''):
 				comm = comms[var] = '\n'.join(f'; {line}' for line in comm.split('\n'))
 			if var_break:
-				(comm := attr_str(comm)).add_line_break = True
+				(comm := str_attrs(comm)).add_line_break = True
 				comms[var], var_break = comm, False
 	return comms
 
