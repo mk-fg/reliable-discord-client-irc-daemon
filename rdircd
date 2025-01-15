@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.13' # git-version: py-str
+	version = '25.01.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1721,13 +1721,13 @@ class IRCProtocol:
 	def cmd_msg_self(self, text, src=None, notice=True):
 		'Send direct message to this IRC client and nick'
 		if not src: src = self.conf.irc_nick_sys
-		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
+		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		self.send(f':{src} {msg_type} {self.st_irc.nick} :{text}')
 
 	def cmd_msg_chan(self, src, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
 			Message is never filtered/dropped here for reliability/sanity reasons.'''
-		msg_type = ['PRIVMSG', 'NOTICE'][bool(notice)]
+		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
 		chan, name = self.chan_spec(chan), self.chan_name(chan)
 		if ( name not in self.st_irc.chans and
 				self.conf._irc_chan_auto_join_re.search(name) ):
@@ -2715,7 +2715,9 @@ class DiscordSession:
 			elif msg_type == aiohttp.WSMsgType.closed: break
 			elif msg_type == aiohttp.WSMsgType.error:
 				self.log_ws.debug('err {}', msg, extra=('err', msg))
-				self.log.error('ws protocol error, aborting: {}', msg)
+				if isinstance(msg.data, ClientConnectionError): self.log.info(
+					'ws connection error, reconnecting: {}', msg.data.__class__.__name__ )
+				else: self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
 
