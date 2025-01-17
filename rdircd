@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.14' # git-version: py-str
+	version = '25.01.15' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3459,7 +3459,9 @@ class DiscordSession:
 						+ info.get('victor_answer_text', '') ).strip() or '???') )
 			if meta_add or force_meta:
 				if not meta_add: # some unrecognized embed-type, added on force_meta
-					info = ' '.join(k for k in ['image', 'thumbnail', 'video', 'provider'] if em.get(k))
+					if not isinstance(em, dict): info = em # won't look nice, but whatever
+					else: info = ' '.join( k for k in
+						['image', 'thumbnail', 'video', 'provider'] if em.get(k) )
 					if info: lines.append(f'Media :: [{info}]')
 				meta_add.update(meta_skip)
 				if info := em.get(meta_add.get('title')): lines.append(f'Title :: {info}')
