@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.16' # git-version: py-str
+	version = '25.01.17' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1868,7 +1868,7 @@ class Discord:
 
 	async def __aenter__(self):
 		if not ( self.conf.get('auth_email')
-				and self.conf.get('auth_password') ):
+				and self.conf.get('auth_password') or self.conf.get('auth_token') ):
 			self.log.error('Disabling discord due to missing access credentials in config')
 			self.session = None
 		else:
@@ -1889,11 +1889,12 @@ class Discord:
 
 	def conn_req(self, *req_args, nc=None, **req_kws):
 		'Proxy to return REST-API request awaitable when session is connected, nc otherwise'
-		if not self.st_eris.enabled: (fut := asyncio.Future()).set_result(nc); return fut
+		if not (self.st_eris.enabled and self.session):
+			(fut := asyncio.Future()).set_result(nc); return fut
 		return self.session.req(*req_args, **req_kws)
 	def conn_req_oneway(self, *req_args, **req_kws):
 		'Send conn_req one-way without waiting for result or reply'
-		self.session.tasks.add(self.conn_req(*req_args, **req_kws))
+		if self.session: self.session.tasks.add(self.conn_req(*req_args, **req_kws))
 
 	def flake_parse(self, flake):
 		if not flake: return None
@@ -2388,7 +2389,7 @@ class DiscordSession:
 			return default
 
 	async def __aenter__(self):
-		if not (self.get_auth('email') and self.get_auth('password')):
+		if not (self.get_auth('email') and self.get_auth('password') or self.get_auth('token')):
 			raise DiscordSessionError('Missing account auth credentials')
 		self.ctx, self.tasks = cl.AsyncExitStack(), StacklessContext(self.log)
 		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
