@@ -35,6 +35,7 @@ Table of Contents
     - [Highlight on incoming private messages]
     - [Message ACKs, typing notifications and other events from IRC]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
+    - [Irssi client reports "critical nicklist_set_host assertion" errors]
     - [Captcha-solving is required to login for some reason]
     - [Debugging anything strange, unknown or unexpected]
 
@@ -76,6 +77,8 @@ Table of Contents
   #hdr-message_acks_typing_notifications_and_ot.9aX7
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
+[Irssi client reports "critical nicklist_set_host assertion" errors]:
+  #hdr-irssi_client_reports_critical_nicklist_s.PDEM
 [Captcha-solving is required to login for some reason]:
   #hdr-captcha-solving_is_required_to_login_for.ls9P
 [Debugging anything strange, unknown or unexpected]:
@@ -1292,6 +1295,34 @@ discord itself is in limbo.
 If auth data is supposed to be correct, can be fixed by setting
 `ws-reconnect-on-auth-fail = yes` option in \[discord\] ini section,
 which will force client to keep reconnecting regardless.
+
+<a name=hdr-irssi_client_reports_critical_nicklist_s.PDEM></a>
+### [Irssi client] reports "critical nicklist_set_host assertion" errors
+
+Actual errors in irssi status window look something like this:
+```
+Irssi: critical nicklist_set_host: assertion 'host != NULL' failed
+```
+
+As far as I can tell, those are not actually critical and can be ignored,
+but cause seem to be rdircd not sending "user!host" in JOIN messages
+that populate channel userlist, which can be fixed in one of two ways:
+
+- Set `names-join-hosts = yes` under \[irc\] section in the config, or using
+  `set -s irc-names-join-hosts yes` command in #rdircd.control channel.
+
+    That option is default-disabled because it makes [ERC client] show user@host
+    in userlist by default, and maybe also affects other clients in similar way.
+
+- Set `names-join = no` there to disable sending nicks of people
+  who talk in the channels as IRC channel user list entirely.
+
+There's likely a simpler way to fix those errors in irssi, as presumably most
+other ircd's don't have this issue, but idk what it is - feel free to send msg
+somewhere if you do.
+
+[Irssi client]: https://irssi.org/
+[ERC client]: https://www.gnu.org/software/erc/
 
 <a name=hdr-captcha-solving_is_required_to_login_for.ls9P></a>
 ### Captcha-solving is required to login for some reason

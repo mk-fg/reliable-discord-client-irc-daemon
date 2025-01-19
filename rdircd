@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.17' # git-version: py-str
+	version = '25.01.18' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -57,6 +57,7 @@ class RDIRCDConfigBase:
 	irc_motd_file_path = '' # file path to read for motd command
 	irc_names_timeout = '1d' # time since last activity to "forget" channel /names
 	irc_names_join = True # send irc-join msgs, for new channel users within names-timeout
+	irc_names_join_hosts = False # send "nick!host" in irc-join msgs - for irrsi client specifically
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
 
@@ -1734,7 +1735,8 @@ class IRCProtocol:
 			self.cmd_join(chan)
 		if ( self.conf.irc_names_join and src and joined
 				and not notice and not irc_name_eq(src, self.st_irc.nick) ):
-			self.send(f':{src}!discord/{src} JOIN {chan}') # !host needed for irssi
+			join_src = src if not self.conf.irc_names_join_hosts else f'{src}!discord/{src}'
+			self.send(f':{join_src} JOIN {chan}') # !host part is needed for irssi
 		self.send(f':{src} {msg_type} {chan} :{text}')
 		self.st_irc.typing_repeat.active.pop((src, chan), None)
 
@@ -2717,7 +2719,7 @@ class DiscordSession:
 			elif msg_type == aiohttp.WSMsgType.error:
 				self.log_ws.debug('err {}', msg, extra=('err', msg))
 				if isinstance(msg.data, ClientConnectionError): self.log.info(
-					'ws connection error, reconnecting: {}', msg.data.__class__.__name__ )
+					'ws connection error, reconnecting: {}', err_fmt(msg.data) )
 				else: self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
