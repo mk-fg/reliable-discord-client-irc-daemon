@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.15' # git-version: py-str
+	version = '25.01.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1658,7 +1658,7 @@ class IRCProtocol:
 
 	def recv_cmd_away(self, msg=None):
 		away = self.st_irc.away = msg or None
-		self.bridge.cmd_away_status('away' if away else 'back')
+		self.bridge.cmd_user_status('away' if away else 'back')
 		if away: self.send(306, ':You have been marked as being away')
 		else: self.send(305, ':You are no longer marked as being away')
 
@@ -3459,7 +3459,7 @@ class DiscordSession:
 						+ info.get('victor_answer_text', '') ).strip() or '???') )
 			if meta_add or force_meta:
 				if not meta_add: # some unrecognized embed-type, added on force_meta
-					if not isinstance(em, dict): info = em # won't look nice, but whatever
+					if not isinstance(em, dict): info = em or '' # probably won't look nice
 					else: info = ' '.join( k for k in
 						['image', 'thumbnail', 'video', 'provider'] if em.get(k) )
 					if info: lines.append(f'Media :: [{info}]')
@@ -3895,10 +3895,10 @@ class RDIRCD:
 	def irc_conn_new(self, irc):
 		self.irc_conns[id(irc)] = irc
 		self.irc_conns_max = max(self.irc_conns_max, len(self.irc_conns))
-		self.cmd_away_status('connect')
+		self.cmd_user_status('connect')
 	def irc_conn_lost(self, irc):
 		self.irc_conns.pop(id(irc), None)
-		if not self.irc_conns: self.cmd_away_status('disconnect')
+		if not self.irc_conns: self.cmd_user_status('disconnect')
 	def irc_conn_stats(self):
 		stats = adict(
 			servers=len(self.discord.st_da.get('guilds', dict())) or 1,
@@ -4738,7 +4738,7 @@ class RDIRCD:
 			Runs before discord-id cache updates to new channel name to use old name_irc.'''
 		return ft.partial(self.cmd_msg_discord, cc, name_irc=self.st_br.did_chan.get(cc.did))
 
-	def cmd_away_status(self, irc_ev_name):
+	def cmd_user_status(self, irc_ev_name):
 		if not self.conf.discord_status_set: return
 		if not (st_name := self.conf._discord_status_events.get(irc_ev_name)): return
 		self.discord.cmd_status(st_name)
@@ -5328,11 +5328,11 @@ def main(args=None, conf=None):
 				continue
 			with os.fdopen(fd, 'r+') as dst:
 				if n: continue # all files after first one are created empty
-				req_keys = ['email', 'password', 'password-hash', 'uid-seed']
+				required_keys = ['email', 'password', 'password-hash', 'uid-seed']
 				def _store_commented_line(line): # skips storing defaults
 					if not line.lstrip().startswith('['):
 						key, sep, rest = line.partition(' ')
-						if key in req_keys: req_keys.remove(key)
+						if key in required_keys: required_keys.remove(key)
 						elif line.strip(): line = '\n'.join(f';{line}' for line in line.split('\n'))
 					print(line, file=dst)
 				conf.pprint(
