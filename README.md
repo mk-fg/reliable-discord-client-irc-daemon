@@ -34,6 +34,7 @@ Table of Contents
     - [Voice chat activity notifications]
     - [Highlight on incoming private messages]
     - [Message ACKs, typing notifications and other events from IRC]
+    - [Not getting messages in some of 200+ joined discords]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Irssi client reports "critical nicklist_set_host assertion" errors]
     - [Captcha-solving is required to login for some reason]
@@ -75,6 +76,8 @@ Table of Contents
   #hdr-highlight_on_incoming_private_messages
 [Message ACKs, typing notifications and other events from IRC]:
   #hdr-message_acks_typing_notifications_and_ot.9aX7
+[Not getting messages in some of 200+ joined discords]:
+  #hdr-not_getting_messages_in_some_of_200_join.8aTB
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Irssi client reports "critical nicklist_set_host assertion" errors]:
@@ -1276,6 +1279,28 @@ Any IRCv3 features like that typing stuff can also be disabled via `ircv3-caps`
 option, e.g. if there're problems with them in rdircd or client.
 
 [IRCv3 typing notifications]: https://ircv3.net/specs/client-tags/typing
+
+<a name=hdr-not_getting_messages_in_some_of_200_join.8aTB></a>
+### Not getting messages in some of 200+ joined discords
+
+Official discord clients normally only get all messages from a single
+discord that is open, and not all joined ones, which doesn't work for rdircd,
+where everything needs to be sent to an IRC client.
+
+Normally that doesn't seem to be an issue, and requesting discord to deliver
+messages for all joined discords works, but apparently not when there's just
+too many of them - reportedly not with >200 joined discords, for instance.
+
+Setting `only-track-irc-joined = yes` in \[discord\] section can help
+with this use-case, only selectively enabling delivery of messages for discords
+where at least some IRC channel is joined (incl. per-discord monitor/leftover ones).
+
+This can allow either using only relevant-enough discords from rdircd,
+or maybe even connecting to multiple rdircd instances side-by-side,
+joining different discord channels on each of them, to work around the issue that way.
+
+This option can also be useful to lower amount of network traffic from discords
+that you don't want to leave, but don't care to keep up with via IRC either.
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection

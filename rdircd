@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.21' # git-version: py-str
+	version = '25.01.22' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -172,6 +172,13 @@ class RDIRCDConfigBase:
 	# For example, "nick display" value will try discord/friend nickname,
 	#  then name that user set in account settings, and login name if there aren't any of those.
 	discord_name_preference_order = 'nick display login'
+
+	# Makes rdircd only request discord sending messages
+	#  for discords, channels of which are joined/monitored in IRC client in some way.
+	# This might be needed with large number of discords on the account, and either
+	#  all traffic in those is unnecessary, or discord starts rate-limiting it in some way.
+	# Most discord clients only receive messages of a single discord, not all of them.
+	discord_only_track_irc_joined = False
 
 	# discord_msg_mention_re should match only discord user mentions.
 	# "nick" group must be irc nick, to be replaced with
@@ -1587,6 +1594,7 @@ class IRCProtocol:
 		if not cm: cm = self.bridge.cmd_chan_map()
 		c = self.req_chan_info(chan, cm=cm, check=False)
 		if c is False: return self.send(403, chan, ':No such channel')
+		elif c: self.bridge.cmd_chan_map_sync_tracking(c, cm)
 		name = c.name if c else self.chan_name(chan)
 		# topic=None will always be updated on cmd_chan_list_sync
 		self.st_irc.chans[name] = adict(topic=c and c.topic)
@@ -2249,6 +2257,10 @@ class Discord:
 		if self.bridge.cmd_msg_recv_filter(nick := self.conf.irc_nick_sys, prefix + msg): return
 		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
 
+	def cmd_sync_guild_tracking(self):
+		# Only needed with discord_only_track_irc_joined selective tracking
+		self.session.ws_req_guild_sync()
+
 	def cmd_typing(self, cc, nick):
 		self.bridge.cmd_typing(cc, nick)
 
@@ -2795,7 +2807,8 @@ class DiscordSession:
 	def ws_req_guild_sync(self):
 		'Fetches a list of threads and enables message events in large guilds (>10K users)'
 		for gid, gg in self.st_da.guilds.items():
-			if gid == 1 or gg.get('sync_enabled'): continue # 1 = "me" pseudo-guild
+			if gid == 1 or gg.get('synced'): continue # 1 = "me" pseudo-guild
+			if self.conf.discord_only_track_irc_joined and not gg.get('sync_req'): continue
 			chan_req = list( (cc.id, [[0, 99]]) for cc in # to pick any text-ish channel
 				gg.chans.values() if cc.ct in [cc.ct.text, cc.ct.news, cc.ct.forum] )
 			if not chan_req: continue
@@ -3055,7 +3068,7 @@ class DiscordSession:
 			if 'properties' in g: g = adict(g.pop('properties'), **g)
 			gg = gs_new.setdefault( g.id,
 				self.st_da.guilds.get(g.id, adict(id=g.id, chans=dict())) )
-			if init: gg.sync_enabled = False # needs to be re-sent after reconnect
+			if init: gg.synced = False # req_sync needs to be re-sent after reconnect
 			if g.id not in self.st_da.guilds:
 				prefix = self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
 				self.log.debug('New guild: gid={} prefix={} name={!r}', g.id, prefix, g.name)
@@ -3072,7 +3085,7 @@ class DiscordSession:
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 			for cid, cc in self.st_da.guilds[gid].chans.items():
 				if cid in gs_vcs[gid]: cc.vc_active = True
-		if not init: self.ws_req_guild_sync() # triggered separately there
+		if not init: self.ws_req_guild_sync() # triggered separately on init
 
 	def op_ev_guilds_emojis(self, emojis):
 		return dict(
@@ -4197,8 +4210,9 @@ class RDIRCD:
 		return sorted(chan_nicks.values())
 
 	def cmd_chan_map(self):
-		'''Returns cached adict of {chan-name: {name, topic, did, ts_created}},
-			updating misc minor .st_br.* maps used elsewhere in the process.'''
+		'''Returns cached irc_name_dict of {irc-chan-name:
+			{name, topic, did, ts_created}}, updating misc minor .st_br.*
+			maps and running callbacks needed for any changes in the process.'''
 		if cm0 := self.st_br.chan_map: cm = cm0
 		else:
 			cache_drop = ft.partial(self.st_br.update, chan_map=None)
@@ -4215,9 +4229,26 @@ class RDIRCD:
 		return cm
 
 	def cmd_chan_map_sync(self, cm=None):
-		'Sends IRC topic updates, marks channels as working/removed'
+		'''Sends IRC topic updates, marks channels as working/removed,
+			enables discord msg delivery if it is configured to be selective.'''
 		if not cm: cm = self.cmd_chan_map()
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
+		self.cmd_chan_map_sync_tracking(cm=cm)
+
+	def cmd_chan_map_sync_tracking(self, c=None, cm=None):
+		'''Requests receiving messages for discords with any
+			irc-joined channels, when selective tracking is enabled.'''
+		if not self.conf.discord_only_track_irc_joined: return
+		cm = cm or self.st_br.chan_map
+		chans = [c] if c else list(filter(None, ( cm.get(name) for name in
+			set(it.chain.from_iterable(conn.st_irc.chans for conn in self.irc_conns.values())) )))
+		for c in chans:
+			gg = c.get('gg') or c.get('cc', dict()).get('gg')
+			if not gg or gg.get('sync_req'): continue
+			self.log.debug( 'Enabling selective msg-reception'
+				' for guild_id [ {} ] due to joined irc-channel: {}', gg.id, c.name )
+			gg.sync_req = True
+		self.discord.cmd_sync_guild_tracking()
 
 	def _cmd_chan_map_build(self, cache_track):
 		# Name-keys returned here are used in irc_name_dict, so don't need casemapping
@@ -4251,7 +4282,7 @@ class RDIRCD:
 			getattr(self.st_br, f'gid_{k}_chan')[gi and gi.gg.id] = name
 			if not name: return
 			topic = _topic_fmt(kc) if not gi else _topic_fmt(f'{kc}_guild', gi)
-			yield (name, adict( name=name, topic=topic,
+			yield (name, adict( name=name, topic=topic, gg=gi and gi.gg,
 				bt=getattr(self.c_bc_type, k), ts_created=sys_chan_ts ))
 		yield from _agg_chan('mon')
 		yield from _agg_chan('nc')
