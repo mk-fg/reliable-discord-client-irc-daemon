@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.19' # git-version: py-str
+	version = '25.01.20' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2795,9 +2795,9 @@ class DiscordSession:
 	def ws_req_guild_sync(self):
 		'Fetches a list of threads and enables message events in large guilds (>10K users)'
 		for gid, gg in self.st_da.guilds.items():
-			if gid == 1: continue # "me" pseudo-guild
-			chan_req = list( (cc.id, [[0, 99]])
-				for cc in gg.chans.values() if cc.ct == cc.ct.text )
+			if gid == 1 or gg.get('sync_enabled'): continue # 1 = "me" pseudo-guild
+			chan_req = list( (cc.id, [[0, 99]]) for cc in # to pick any text-ish channel
+				gg.chans.values() if cc.ct in [cc.ct.text, cc.ct.news, cc.ct.forum] )
 			if not chan_req: continue
 			# It doesn't seem to matter what channels= are sent in request_sync_chan -
 			#   all threads are returned regardless, along with GUILD_MEMBER_LIST_UPDATE and such
@@ -3071,6 +3071,7 @@ class DiscordSession:
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 			for cid, cc in self.st_da.guilds[gid].chans.items():
 				if cid in gs_vcs[gid]: cc.vc_active = True
+		if not sync: self.ws_req_guild_sync()
 
 	def op_ev_guilds_emojis(self, emojis):
 		return dict(
