@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.20' # git-version: py-str
+	version = '25.01.21' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2887,7 +2887,7 @@ class DiscordSession:
 				user_name=md.user.username,
 				user_n=md.user.discriminator,
 				read_state_last=1 )
-			self.op_ev_guilds(md.get('guilds'), sync=True)
+			self.op_ev_guilds(md.get('guilds'), init=True)
 			self.op_ev_chans(self.st_da.me.id, md.get('private_channels'), sync=True)
 			self.log.debug( 'New session id: {} gw=[ {} ]',
 				self.st_da.session_id, md.get('resume_gateway_url') )
@@ -3044,7 +3044,7 @@ class DiscordSession:
 		if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
 			gid, f'Discord channel deleted: {self.discord.irc_chan_name(cc)}' )
 
-	def op_ev_guilds(self, guilds, sync=False):
+	def op_ev_guilds(self, guilds, init=False):
 		gs_new, gs_chans, gs_vcs = {1: self.st_da.me}, dict(), cs.defaultdict(set)
 		for g in force_list(guilds):
 			if g.get('unavailable'): continue # can be sent in "ready" event
@@ -3055,6 +3055,7 @@ class DiscordSession:
 			if 'properties' in g: g = adict(g.pop('properties'), **g)
 			gg = gs_new.setdefault( g.id,
 				self.st_da.guilds.get(g.id, adict(id=g.id, chans=dict())) )
+			if init: gg.sync_enabled = False # needs to be re-sent after reconnect
 			if g.id not in self.st_da.guilds:
 				prefix = self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
 				self.log.debug('New guild: gid={} prefix={} name={!r}', g.id, prefix, g.name)
@@ -3066,12 +3067,12 @@ class DiscordSession:
 			if 'channels' in g: gs_chans[g.id, 'c'] = g.channels # missing in guild_update evs
 			if 'threads' in g: gs_chans[g.id, 't'] = g.threads # only "joined" ones are listed here!
 			gs_vcs[g.id].update(vs.get('channel_id') for vs in g.get('voice_states') or list())
-		dict_update(self.st_da.guilds, gs_new, sync=sync)
+		dict_update(self.st_da.guilds, gs_new, sync=init)
 		for (gid, sk), chans in sorted(gs_chans.items()):
 			self.op_ev_chans(gid, chans, sync=sk == 'c')
 			for cid, cc in self.st_da.guilds[gid].chans.items():
 				if cid in gs_vcs[gid]: cc.vc_active = True
-		if not sync: self.ws_req_guild_sync()
+		if not init: self.ws_req_guild_sync() # triggered separately there
 
 	def op_ev_guilds_emojis(self, emojis):
 		return dict(
