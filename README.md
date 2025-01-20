@@ -1288,10 +1288,10 @@ discord that is open, and not all joined ones, which doesn't work for rdircd,
 where everything needs to be sent to an IRC client.
 
 Normally that doesn't seem to be an issue, and requesting discord to deliver
-messages for all joined discords works, but apparently not when there's just
+messages for all joined "servers" works, but apparently not when there's just
 too many of them - reportedly not with >200 joined discords, for instance.
 
-Setting `only-track-irc-joined = yes` in \[discord\] section can help
+Setting `only-track-irc-joined = yes` config option in \[discord\] section can help
 with this use-case, only selectively enabling delivery of messages for discords
 where at least some IRC channel is joined (incl. per-discord monitor/leftover ones).
 
@@ -1299,8 +1299,10 @@ This can allow either using only relevant-enough discords from rdircd,
 or maybe even connecting to multiple rdircd instances side-by-side,
 joining different discord channels on each of them, to work around the issue that way.
 
-This option can also be useful to lower amount of network traffic from discords
+Option can also be useful to lower amount of network traffic from discords
 that you don't want to leave, but don't care to keep up with via IRC either.
+"Unsubscribing" from specific discords when leaving last IRC channel on those
+is not implemented - just restart rdircd if that's ever needed.
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection

@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.22' # git-version: py-str
+	version = '25.01.23' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -174,10 +174,10 @@ class RDIRCDConfigBase:
 	discord_name_preference_order = 'nick display login'
 
 	# Makes rdircd only request discord sending messages
-	#  for discords, channels of which are joined/monitored in IRC client in some way.
+	#  for servers, channels of which are joined/monitored in IRC client in some way.
 	# This might be needed with large number of discords on the account, and either
-	#  all traffic in those is unnecessary, or discord starts rate-limiting it in some way.
-	# Most discord clients only receive messages of a single discord, not all of them.
+	#  tracking all those being unnecessary, or if discord starts rate-limiting msgs in some way.
+	# Most discord clients only receive messages for one discord at a time, not all of them.
 	discord_only_track_irc_joined = False
 
 	# discord_msg_mention_re should match only discord user mentions.
