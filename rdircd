@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.23' # git-version: py-str
+	version = '25.01.24' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2413,8 +2413,8 @@ class DiscordSession:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
-		self.ws_closed, self.ws_closed_clean = asyncio.Event(), asyncio.Event()
-		self.ws_closed_clean.set()
+		self.ws_state = adict(closed=asyncio.Event(), usable=asyncio.Event())
+		self.ws_state.usable.set() # cleared/restored by ws_close
 		self.rate_limits = adict()
 		st_guilds = {1: adict(id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict())}
 		self.st_da = adict( guilds=st_guilds, me=st_guilds[1],
@@ -2597,7 +2597,7 @@ class DiscordSession:
 				await self.ws_close()
 				break
 			ts0 = loop.time()
-			await self.ws_closed.wait()
+			await self.ws_state.closed.wait()
 			if not self.ws_enabled: break
 			ts_diff = loop.time() - ts0
 			if ts_diff > interval:
@@ -2613,15 +2613,15 @@ class DiscordSession:
 
 	async def ws_connect(self):
 		if self.ws_ctx: return
-		if not self.ws_closed_clean.is_set():
+		if not self.ws_state.usable.is_set():
 			self.log.warning('BUG: ws_connect issued before old websocket is closed')
-			await self.ws_closed_clean.wait()
+			await self.ws_state.usable.wait()
 		self.state('connecting.init')
 		self.ws_ctx = ctx = cl.AsyncExitStack()
 		self.ws, self.ws_tasks = None, StacklessContext(self.log)
 		self.ws_handlers, self.ws_nonces = dict(), dict()
 		ctx.push_async_callback(self.ws_close)
-		self.ws_closed.clear()
+		self.ws_state.closed.clear()
 		for cache in True, False:
 			if cache:
 				if not self.conf.discord_gateway: continue
@@ -2654,8 +2654,8 @@ class DiscordSession:
 				if cache: continue # try fetching new gw url
 			else: break
 		else: self.ws = None
-		if self.ws_closed.is_set():
-			self.ws_closed.clear() # to have it do cleanup again
+		if self.ws_state.closed.is_set():
+			self.ws_state.closed.clear() # to have it do cleanup again
 			await self.ws_close()
 			raise DiscordSessionError('Close-command issued while connecting')
 		if not self.ws:
@@ -2751,6 +2751,7 @@ class DiscordSession:
 			self.ws_close_later()
 
 	def ws_send(self, op, d):
+		if not self.ws_state.usable.is_set(): return # just started closing
 		msg_data = json.dumps(dict(op=op, d=d))
 		self.log_ws.debug( ' >> text {}',
 			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
@@ -2764,14 +2765,14 @@ class DiscordSession:
 	def ws_close(self):
 		# Makes sure that only one ws_close_task()
 		#  is scheduled at a time, and only if needed
-		if ( self.ws_closed.is_set()
-			or not self.ws_closed_clean.is_set() ): return asyncio.sleep(0)
-		self.ws_closed_clean.clear()
+		if ( self.ws_state.closed.is_set()
+			or not self.ws_state.usable.is_set() ): return asyncio.sleep(0)
+		self.ws_state.usable.clear()
 		return self.ws_close_task()
 
 	async def ws_close_task(self):
 		try:
-			if self.ws_closed.is_set():
+			if self.ws_state.closed.is_set():
 				return self.log.warning('BUG: ws_close with websocket already closed')
 			self.log_ws.debug('--- -close-', extra=('---', 'close'))
 			self.state('closing')
@@ -2782,8 +2783,8 @@ class DiscordSession:
 			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
 			self.st_da.disconnect_ts = time.monotonic()
 			self.state('disconnected')
-			self.ws_closed.set()
-		finally: self.ws_closed_clean.set()
+			self.ws_state.closed.set()
+		finally: self.ws_state.usable.set()
 
 
 	### Gateway Websocket request wrappers (rare)
@@ -2938,7 +2939,7 @@ class DiscordSession:
 		loop = asyncio.get_running_loop()
 		self.st_da.hb_ts_ack = hb_ts = loop.time() + interval
 		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
-		while not self.ws_closed.is_set():
+		while not self.ws_state.closed.is_set():
 			self.ws_send(self.c.heartbeat, self.st_da.get('seq'))
 			ts = loop.time()
 			if self.st_da.hb_ts_ack < ts - interval*2:
