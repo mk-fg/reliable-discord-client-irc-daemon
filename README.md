@@ -931,17 +931,19 @@ Default regexps look something like this (check [--conf-dump-defaults] jic):
 
 ``` ini
 [discord]
-msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)\s*$
+msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)?\s*$
 msg-del-re = ^\s*//del\s*$
 ```
 
-They match sed/perl/irc-like follow-up amendment lines like `s/spam/ham/`, and
-`//del` line, which will never be sent to discord, only used as internal commands.
+They match sed/perl/irc-like follow-up amendment lines like `s/spam/ham`
+(closing character at the end is optional in default regexp), and `//del` line,
+which will never be sent to discord, only used as internal commands.
 
-(`s|/some/path|/other/path|` and
+(`s| /some/path | /other/path |` and
 `s:cat /dev/input/mouse0 | hexdump:hexdump </dev/input/mouse0:`
 syntaxes are also allowed by default edit-regexp, just like with [sed], for
-easier handling of common stuff like paths, which can have these chars in them)
+easier handling of common stuff like paths, which can have these chars in them,
+and closing character allows including trailing spaces in replacement)
 
 Both commands matched by these operate on last message sent by rdircd to the
 same discord channel, with `//del` simply removing that last message, and edit
