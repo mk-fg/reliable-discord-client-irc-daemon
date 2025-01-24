@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.26' # git-version: py-str
+	version = '25.01.27' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2731,8 +2731,8 @@ class DiscordSession:
 			elif msg_type == aiohttp.WSMsgType.closed: break
 			elif msg_type == aiohttp.WSMsgType.error:
 				self.log_ws.debug('err {}', msg, extra=('err', msg))
-				if isinstance(msg.data, ClientConnectionError): self.log.info(
-					'ws connection error, reconnecting: {}', err_fmt(msg.data) )
+				if isinstance(msg.data, aiohttp.ClientConnectionError):
+					self.log.info('ws connection error, reconnecting: {}', err_fmt(msg.data))
 				else: self.log.error('ws protocol error, aborting: {}', msg)
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
