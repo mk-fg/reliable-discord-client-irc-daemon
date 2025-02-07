@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.01.27' # git-version: py-str
+	version = '25.02.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -382,6 +382,8 @@ class RDIRCDConfigBase:
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
+
+	del _re_chk, _parse_td_str # macros for conversions below
 
 
 doc_control_chan_cmds = r'''
@@ -3387,7 +3389,7 @@ class DiscordSession:
 			if act != 'media' and re.search(
 					r'\b(https?://|(www\.|m\.)?youtube\.|youtu\.be)\b', line ): # URL or YT-domain
 				# Some embeds can come in both original msg and edits, deduped via embed_info
-				while len(self.st_da.embed_info) >= self.conf.discord_embed_info_buffer:
+				while (n := len(self.st_da.embed_info)) and n >= self.conf.discord_embed_info_buffer:
 					del self.st_da.embed_info[next(iter(self.st_da.embed_info.keys()))]
 				self.st_da.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
 				self.st_da.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
