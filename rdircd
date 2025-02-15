@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.0' # git-version: py-str
+	version = '25.02.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4523,7 +4523,10 @@ class RDIRCD:
 		if rm:
 			if key not in conf: return send(f'ERROR: No such filter [ {key} ]')
 			del conf[key]
-		else: conf[key] = conf_make(pat)
+		else:
+			try: conf[key] = conf_make(pat)
+			except Exception as err: return send(
+				f'ERROR: Failed to parse regexp-filter [ {pat!r} ]: {err_fmt(err)}' )
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save: return send(f'Updated runtime filters (not saved to ini): {upd}')
 		try: p = self.conf.update_file_section(sec, {key: None if rm else pat})
