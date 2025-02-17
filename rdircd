@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.2' # git-version: py-str
+	version = '25.02.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4943,7 +4943,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
 		else: conf_paths = self._conf_path_list
-		conf_file = configparser.ConfigParser(
+		conf_file = configparser.ConfigParser( interpolation=None,
 			delimiters='=', allow_no_value=True, empty_lines_in_values=False )
 		conf_file.optionxform = lambda k: k
 		conf_file.read(conf_paths)
