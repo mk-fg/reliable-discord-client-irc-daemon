@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.1' # git-version: py-str
+	version = '25.02.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -961,7 +961,8 @@ def parse_iso8601( spec, tz_default=dt.timezone.utc, validate=False,
 		'%Y-%m-%d %H:%M:%S.%f' )
 	return ts.replace(tzinfo=tz).timestamp()
 
-def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None, short=False):
+def ts_iso8601( ts, ms=3, to_str=True,
+		human=False, strip_date=None, short=False, add_tz=False ):
 	if not isinstance(ts, dt.datetime):
 		ts = ( dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
 			if not human else dt.datetime.fromtimestamp(ts) )
@@ -980,6 +981,18 @@ def ts_iso8601(ts, ms=3, to_str=True, human=False, strip_date=None, short=False)
 					if tss.strftime('%Y-%m-%d') == d0: ts_fmt = ts_fmt[9:]
 		ts = ts.strftime(ts_fmt)
 		if short and ts.endswith(':00'): ts = ts[:-3]
+		if add_tz:
+			if not (ts_tz := dt.datetime.now().astimezone()).tzinfo: pass
+			elif (tzo := ts_tz.strftime('%Z')) and (tzo[0] not in '-+'): ts += f' {tzo}'
+			elif sys.version_info[:2] >= (3, 12): ts += ts_tz.strftime(' %:z')
+			else:
+				tzo = ts_tz.utcoffset(); ts += ' -' if tzo.days < 0 else ' +'
+				hh, mm = divmod(tzo, dt.timedelta(hours=1))
+				mm, ss = divmod(mm, dt.timedelta(minutes=1))
+				ts += f'{hh:02d}:{mm:02d}'
+				if ss or ss.microseconds:
+					ts += f':{ss.seconds:02d}'
+					if ss.microseconds: ts += f'.{ss.microseconds:06d}'
 		return ts
 	if short: ms = 0
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
@@ -3445,6 +3458,9 @@ class DiscordSession:
 						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
 					if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
 					lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
+				elif ts := em.get('timestamp'):
+					ts = ts_iso8601(parse_iso8601(ts), human=True, short=True, add_tz=True)
+					lines.append(f'Timestamp (local time) :: {ts}')
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 				else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
 			if emt in ['video', 'gifv']:
@@ -5218,6 +5234,7 @@ def main_test(cmd, conf):
 				self.st_da = self.st_br = st
 				self.conf, self.log = conf, get_logger('xxx')
 				self.discord = self.bridge = self # all-in-one mock object
+				self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
 
 		ev = adict(json.loads(pl.Path(arg).read_bytes() if arg else sys.stdin.read()))
 		guild_id, chan_id, msg_id = ev.d.guild_id, ev.d.channel_id, ev.d.id
