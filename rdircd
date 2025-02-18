@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.3' # git-version: py-str
+	version = '25.02.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -733,6 +733,18 @@ def str_cut(s, max_len, len_bytes=False, repr_fmt=False, ext=' ...[{s_len}]'):
 			n = max_len - len(ext_tpl.encode())
 			s = s.encode()[:n].decode(errors='ignore') + ext.format(s_len=s_len)
 	return s
+
+def str_wrap(s, w_lwm, w_hwm, **wrap_kws):
+	'Same as textwrap.wrap, but makes lines of similar length in lwm-hwm range'
+	outs, wrap_kws = list(), dict(
+		dict(tabsize=2, break_long_words=False, break_on_hyphens=False), **wrap_kws )
+	for n in range(w_lwm, w_hwm):
+		out = textwrap.wrap(s, n, **wrap_kws)
+		outs.append((ol := len(out), sum( abs(len(a) - len(b)) + sum(
+				max(0, w_hwm - (len(sl) + 4 + sl.count(' ')*2)) for sl in [a, b] )
+			for a, b in it.pairwise(out) ), out))
+		if ol == 1: break
+	return sorted(outs)[0][-1]
 
 def data_repr(data):
 	pp = getattr(data_repr, '_pp', None)
@@ -3458,11 +3470,25 @@ class DiscordSession:
 						r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
 					if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
 					lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
-				elif ts := em.get('timestamp'):
-					ts = ts_iso8601(parse_iso8601(ts), human=True, short=True, add_tz=True)
-					lines.append(f'Timestamp (local time) :: {ts}')
 				elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
+				elif fields := em.get('fields'): # can be one-word, so try to group them
+					inline, em_len = list(), self.conf.discord_embed_info_len
+					for fd in fields:
+						k, v = (fd.name or '').strip(), (fd.value or '').strip()
+						if not (k and v): kv = k or v
+						else:
+							kv = (f'{k} = ' if ' ' in k else f'{k}=')+(f'[ {v} ]' if ' ' in v else v)
+							if len(kv) > em_len * 0.4: kv = lines.append(f'{k} :: {v}')
+						if kv: inline.append('\ue790'.join(kv.replace('\n', ' // ').split()))
+					if inline:
+						w_max = round(min(160, (em_len - 10) / 2))
+						w_min = round(max(70, min(120, (em_len - 10) / 3)))
+						lines = list( line.replace(' ', ' :: ').replace('\ue790', ' ')
+							for line in str_wrap(' '.join(inline), w_min, w_max) ) + lines
 				else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
+				if ts := em.get('timestamp'):
+					ts = ts_iso8601(parse_iso8601(ts), human=True, short=True, add_tz=True)
+					lines.append(f'Timestamp :: {ts}')
 			if emt in ['video', 'gifv']:
 				host = (em.get('provider') or dict()).get('name')
 				if host == 'YouTube' and not em_src: info = ['-clip-', title, desc]
