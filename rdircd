@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.7' # git-version: py-str
+	version = '25.02.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3444,8 +3444,10 @@ class DiscordSession:
 		for em in embeds:
 			emt, title, desc = ((em.get(k) or '') for k in ['type', 'title', 'description'])
 			meta_add, meta_skip, em_src = dict(), dict(), em.get('author', dict()).get('name') or ''
-			if emt == 'rich': lines.extend( # complo
-				self.op_msg_media_info_rich(em, title, desc, em_src, meta_add, meta_skip) )
+			if emt == 'rich':
+				if not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
+				else: lines.extend(
+					self.op_msg_media_info_rich(em, title, desc, em_src, meta_add, meta_skip) )
 			if emt in ['video', 'gifv']:
 				host = (em.get('provider') or dict()).get('name')
 				if host == 'YouTube' and not em_src: info = ['-clip-', title, desc]
@@ -3508,7 +3510,7 @@ class DiscordSession:
 					media.clear()
 				else: lines.append(f'X msg :: {em_src} :: {desc}')
 			elif title: lines.append(f'X acc :: {title} [ {desc} ]')
-			for mt, url in media.items(): meta_skip[mt] = None; lines.append(f' {mt} :: {url}')
+			for mt, url in media.items(): meta_skip[mt] = lines.append(f' {mt} :: {url}')
 		elif ( (url := em.get(meta_skip.get('image', 'image')))
 				and (url := url.get('url') or url.get('proxy_url')) ):
 			lines.append(f'Image :: {url}'); meta_add['title'] = 'title'
@@ -3519,7 +3521,6 @@ class DiscordSession:
 				r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
 			if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
 			lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
-		elif not {'video', 'thumbnail', 'provider'}.difference(em.keys()): emt = 'video'
 		elif fields := em.get('fields'): # can be one-word, so try to group them
 			inline, em_len = list(), self.conf.discord_embed_info_len
 			for fd in fields:

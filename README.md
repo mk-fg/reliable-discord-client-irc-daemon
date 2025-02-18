@@ -1609,6 +1609,7 @@ Here are some random commands to try out in #rdircd.control channel:
 - `rx THX discord: people spamming edits = (?i)^<(person1|person2)> #THX\.\S+ :: \[edit\]`
 - `rx NSC: don't care about deletes = ^\S+ #NSC\.\S+ :: --- message was deleted ::`
 - `rx NSC/THX: disable reactions here = ^\S+ #(NSC|THX)\.\S+ :: --- reacts:`
+- `rx thread cleanups = ^<core> %\S+ :: --- \[[^\]]+\] Discord channel deleted: #\S+.=\w{4}\.`
 
 - Enable rule-hit counters to check whether these rules are still relevant later:\
     `set discord-match-counters '1d 2d 4d 1w 2w 1mo 2mo runtime'`
