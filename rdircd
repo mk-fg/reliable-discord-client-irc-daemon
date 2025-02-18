@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.5' # git-version: py-str
+	version = '25.02.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3504,12 +3504,11 @@ class DiscordSession:
 				if url: media[mt] = url
 			if em_src:
 				if media and re.search(r'^\s*https://t\.co/\S+\s*$', desc):
-					lines.extend(f'Twitter {mt} :: {em_src} :: {url}' for mt, url in media.items())
+					lines.extend(f'X {mt} :: {em_src} :: {url}' for mt, url in media.items())
 					media.clear()
-				else: lines.append(f'Twitter msg :: {em_src} :: {desc}')
-			elif title: lines.append(f'Twitter acc :: {title} [ {desc} ]')
-			for mt, url in media.items():
-				meta_skip[mt] = None; lines.append(f' {mt} :: {url}')
+				else: lines.append(f'X msg :: {em_src} :: {desc}')
+			elif title: lines.append(f'X acc :: {title} [ {desc} ]')
+			for mt, url in media.items(): meta_skip[mt] = None; lines.append(f' {mt} :: {url}')
 		elif ( (url := em.get(meta_skip.get('image', 'image')))
 				and (url := url.get('url') or url.get('proxy_url')) ):
 			lines.append(f'Image :: {url}'); meta_add['title'] = 'title'
@@ -3540,7 +3539,6 @@ class DiscordSession:
 			ts = ts_iso8601(parse_iso8601(ts), human=True, short=True, add_tz=True)
 			lines.append(f'Timestamp :: {ts}')
 		return lines
-
 
 	def op_msg_parse_snapshots(self, snapshots, gg):
 		res = adict(lines=list(), tags=dict(), media=list(), warn=list())
