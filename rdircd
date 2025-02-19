@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.9' # git-version: py-str
+	version = '25.02.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3905,6 +3905,30 @@ class RDIRCD:
 		await asyncio.sleep(delay)
 		ctypes.string_at(0) # should reliably crash the process
 
+	def systemd_fdstore_irc(self, fd=None):
+		'Stores/retrieves named "irc" fd from systemd, returns fd on success'
+		if not fd:
+			sd_pid, sd_fds = (os.environ.get(f'LISTEN_{k}', '') for k in 'PID FDS'.split())
+			if sd_pid.isdigit() and int(sd_pid) == os.getpid():
+				if not (sd_fds.isdigit() and int(sd_fds) > 0): return # clean start without fds
+			elif sd_pid: return self.log.debug('systemd LISTEN_PID does match rdircd')
+			else: return
+		elif not os.environ.get('NOTIFY_SOCKET'): return # not using systemd in any way
+		try: import systemd.daemon as sdd # https://github.com/systemd/python-systemd
+		except ImportError: return self.log.warning(
+			'systemd env-vars are set, but unable to import python-systemd module' )
+		if not fd:
+			sd_fds = dict((name, n) for n, name in sdd.listen_fds_with_names().items())
+			if not (fd := sd_fds.get('irc')): return
+			self.log.debug('Reusing IRC socket from LISTEN_FDS')
+			sdd.notify('READY=1', True)
+		elif os.environ.get('FDSTORE'): # FileDescriptorStoreMax=0 default-disables it
+			try: sdd.notify('READY=1\nFDSTORE=1\nFDNAME=irc', True, fds=[fd])
+			except Exception as err: return self.log.warning( # can be unsupported
+				'Failed to store IRC socket with systemd: {}', err_fmt(err) )
+			else: self.log.debug('Stored IRC socket to systemd fdstore')
+		return fd
+
 	def uid( self, t, v, kh=None,
 			hash_len=None, alias_key='{kh}', alias_default=None ):
 		'''Return unique id (kh/key-hash) for specific object type-key and value.
@@ -3932,9 +3956,12 @@ class RDIRCD:
 			self.log.debug('Priming segfault timer ({:,d} min)...', mins_to_segfault)
 			self.tasks.add(self.segfault_after_delay(mins_to_segfault * 60))
 
+		ircd = ( dict(sock=socket.fromfd( ircd_fdstore,
+				self.conf.irc_host_af, socket.SOCK_STREAM, proto=socket.IPPROTO_TCP ))
+			if (ircd_fdstore := self.systemd_fdstore_irc()) else dict(
+				host=self.conf.irc_host, port=self.conf.irc_port, family=self.conf.irc_host_af ) )
 		ircd = await (loop := asyncio.get_running_loop()).create_server(
-			IRCProtocol.factory_for_bridge(self),
-			self.conf.irc_host, self.conf.irc_port, family=self.conf.irc_host_af,
+			IRCProtocol.factory_for_bridge(self), **ircd,
 			start_serving=False, reuse_port=True, ssl=self.conf.irc_tls )
 		async with cl.AsyncExitStack() as ctx:
 			self.log.debug('Initializing discord...')
@@ -3947,12 +3974,15 @@ class RDIRCD:
 			else: self.log.debug('Note: discord session auto-connect disabled')
 
 			self.log.debug('Starting ircd...')
-			await ctx.enter_async_context(ircd)
+			if not ircd_fdstore:
+				s, = ircd.sockets
+				ircd_fdstore = self.systemd_fdstore_irc(s.fileno())
 			await ircd.start_serving()
 			try: await asyncio.Future() # run forever
-			except asyncio.CancelledError:
-				ircd.close()
+			finally:
+				if not ircd_fdstore: ircd.close()
 				for conn in self.irc_conns.values(): conn.transport.close()
+				if not ircd_fdstore: await ircd.wait_closed()
 			self.log.debug('Finished')
 
 	async def run_async(self):

@@ -15,6 +15,7 @@ Table of Contents
 - [Misc Feature Info](#hdr-misc_feature_info)
 
     - [Multiple Config Files](#hdr-multiple_config_files)
+    - [Systemd Integration]
     - [Private Chats](#hdr-private_chats)
     - [Channel Commands](#hdr-channel_commands)
     - [#rdircd.monitor and #rdircd.leftover channels]
@@ -52,6 +53,7 @@ Table of Contents
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
 [WARNING]: #hdr-warning
+[Systemd Integration]: #hdr-systemd_integration
 [#rdircd.monitor and #rdircd.leftover channels]:
   #hdr-rdircd.monitor_and_rdircd.leftover_channels
 [People's names on discord]: #hdr-people_s_names_on_discord
@@ -266,11 +268,13 @@ You have been warned! :)
 
 * [Python 3.8+](https://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
+* (Optional) [python-systemd] - only if using tweaks mentioned in [Systemd Integration] below.
 
 On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
 as python port there doesn't seem to have [hashlib.scrypt] in its stdlib.
 
+[python-systemd]: https://github.com/systemd/python-systemd
 [scrypt module]: https://github.com/holgern/py-scrypt/
 [hashlib.scrypt]: https://docs.python.org/3/library/hashlib.html#hashlib.scrypt
 
@@ -357,9 +361,9 @@ rdircd % ./rdircd --debug -c rdircd.ini
 ```
 
 For setting up daemon/script to run on OS boot, [rdircd.service] systemd unit file
-can be used in most Linux environments (edit ExecStart= options and paths there),
-or otherwise probably via init.d script, or maybe in "screen" session as a
-last resort ad-hoc option.
+can be used in most Linux environments (maybe edit ExecStart= options and paths there,
+and see also [Systemd Integration] below), or otherwise probably via init.d script,
+or maybe in "screen" or "tmux" session as a last-resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
 To update the script later, if needed, replace it with a latest version,
@@ -492,6 +496,41 @@ Sending SIGHUP to the script or `reload` command in control-channel should
 load and apply values from all config files in the same order.
 Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
+
+<a name=hdr-systemd_integration></a>
+### Systemd Integration
+
+[rdircd.service] systemd unit file in the repository can be used as a template
+for running rdircd with [systemd] init daemon, which is used by most linux distros.
+
+Edit `User=rdircd`, `WorkingDirectory=`, `ReadWritePaths=` and `ExecStart=`
+lines there to adjust it for local setup, i.e. which user/uid should be used to
+run it, where configuration files are stored, script path and its command line,
+as well as any other options as-needed.
+
+In addition to that, if [python-systemd] bindings module is installed (e.g.
+`python -c 'import systemd'` doesn't print ImportError), then extra bits of
+integration can be enabled in that unit file:
+
+- `Type=notify` can be used (instead of `Type=exec`) to inform systemd when
+  rdircd have started and is listening on IRC socket, to order other unit files
+  (e.g. IRC client or bouncer) after it's actually ready to accept connections.
+
+  `AF_UNIX` has to be added to `RestrictAddressFamilies=` line if it is used as well.
+
+- `FileDescriptorStoreMax=1` can be set with `Type=notify` to use systemd
+  [File Descriptor Store] protocol to preserve IRC listening socket between
+  rdircd restarts.
+
+  It will still disconnect all IRC clients on restart, but if those reconnect
+  immediately afterwards, they won't get "Connection Refused" error and will be
+  able to connect, as open IRC socket doesn't change or go away.
+
+All of this is optional, systemd python module is only checked if `Type=notify`
+or fdstore mechanisms are detected on startup from systemd-set environment variables.
+
+[systemd]: https://systemd.io/
+[File Descriptor Store]: https://systemd.io/FILE_DESCRIPTOR_STORE/
 
 <a name=hdr-private_chats></a>
 ### Private Chats
