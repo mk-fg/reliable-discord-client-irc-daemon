@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.11' # git-version: py-str
+	version = '25.02.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3983,13 +3983,12 @@ class RDIRCD:
 			else: self.log.debug('Note: discord session auto-connect disabled')
 
 			self.log.debug('Starting ircd...')
-			if not ircd_fdstore:
-				s, = ircd.sockets
-				ircd_fdstore = self.systemd_fdstore_irc(s.fileno())
+			if not ircd_fdstore: ircd_fdstore = self.systemd_fdstore_irc(ircd.sockets[0].fileno())
 			await ircd.start_serving()
 			try: await asyncio.Future() # run forever
-			finally:
+			finally: # makes sure client can't reconnect to this closing instance first
 				if not ircd_fdstore: ircd.close()
+				else: loop.remove_reader(ircd.sockets[0].fileno())
 				for conn in self.irc_conns.values(): conn.transport.close()
 				if not ircd_fdstore: await ircd.wait_closed()
 			self.log.debug('Finished')
