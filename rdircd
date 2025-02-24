@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.10' # git-version: py-str
+	version = '25.02.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2270,10 +2270,14 @@ class Discord:
 			f'-----== Discord {"channel" if not cc.tid else "thread"}'
 			f' renamed: {name_old} -> {self.irc_chan_name(cc)} ==-----' ))
 
-	def cmd_chan_thread(self, cc):
+	def cmd_chan_thread_new(self, cc):
+		# These are special from channel create/del cmd_guild_events - sent to thread-parent chans
 		# Idea behind tag prefix is to allow sending msgs from parent channel to a prefixed thread
 		self.bridge.cmd_msg_discord( cc,
 			line=f'[{cc.tid}] --- Thread channel created: {self.irc_chan_name(cc)}' )
+	def cmd_chan_thread_del(self, cc):
+		self.bridge.cmd_msg_discord( cc,
+			line=f'[{cc.tid}] --- Thread channel deleted: {self.irc_chan_name(cc)}' )
 
 	def cmd_guild_event(self, gid, msg, ev_hash=''):
 		'Report non-discord-channel event in global/guild monitor channels, e.g. user bans'
@@ -3082,9 +3086,15 @@ class DiscordSession:
 
 	def op_ev_del_chan(self, m):
 		if not (gg := self.st_da.guilds.get(gid := m.get('guild_id') or 1)): return
-		self.log.debug('Channel delete event: guild={} chan={}', gid, chan := m.id)
-		if cc := gg.chans.pop(chan, None): self.discord.cmd_guild_event(
-			gid, f'Discord channel deleted: {self.discord.irc_chan_name(cc)}' )
+		chan = (cc := gg.chans.pop(m.id, None)) and self.discord.irc_chan_name(cc)
+		if not cc or not cc.tid:
+			self.log.debug( 'Channel delete event'
+				' [id={} gid={}]: {}', m.id, gid, chan or '-no-channel-info-for-id-' )
+			if cc: self.discord.cmd_guild_event(gid, f'Discord channel deleted: {chan}')
+		else:
+			self.log.debug( 'Deleted thread-channel {}'
+				' [id={} gid={}]: {!r} [ {!r} ]', cc.tid, cc.id, gg.id, cc.name, cc.topic )
+			self.discord.cmd_chan_thread_del(cc)
 
 	def op_ev_guilds(self, guilds, init=False):
 		gs_new, gs_chans, gs_vcs = {1: self.st_da.me}, dict(), cs.defaultdict(set)
@@ -3131,8 +3141,7 @@ class DiscordSession:
 
 		for cc in chans_updated.values():
 			if cc.id in gg.chans or cc.tid: continue # threads are logged separately below
-			self.log.debug( 'New channel [id={} gid={}]:'
-				' {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
+			self.log.debug('New channel [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic)
 
 		dict_update(gg.chans, chans_updated, sync=sync)
 		self.discord.cmd_chan_map_update()
@@ -3141,9 +3150,9 @@ class DiscordSession:
 			# "new_threads" is needed to avoid mentioning them on every (re-)connect
 			# Notification is also needed in case msgs from these to parent chan are disabled
 			for cc in new_threads:
-				self.log.debug( 'New thread-channel'
-					' [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic )
-				self.discord.cmd_chan_thread(cc)
+				self.log.debug( 'New thread-channel {}'
+					' [id={} gid={}]: {!r} [ {!r} ]', cc.tid, cc.id, gg.id, cc.name, cc.topic )
+				self.discord.cmd_chan_thread_new(cc)
 		for ren_func in rename_list: ren_func() # these msgs go to old chans
 
 	def op_ev_chans_process(self, gg, chans):
