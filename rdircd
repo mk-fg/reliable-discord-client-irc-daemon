@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.17' # git-version: py-str
+	version = '25.02.18' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -57,7 +57,6 @@ class RDIRCDConfigBase:
 	irc_motd_file_path = '' # file path to read for motd command
 	irc_names_timeout = '1d' # time since last activity to "forget" channel /names
 	irc_names_join = True # send irc-join msgs, for new channel users within names-timeout
-	irc_join_hosts = False # send "nick!host" in irc-join msgs - needed for irrsi client specifically
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
 
@@ -331,7 +330,6 @@ class RDIRCDConfigBase:
 		filters='unmonitor', replacements='send-replacements' )
 	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
-		irc_join_hosts=['names_join_hosts'],
 		irc_disable_reacts_msgs=['disable_reactions'] )
 	_conf_old_found = dict() # old -> new
 
@@ -1501,6 +1499,10 @@ class IRCProtocol:
 	chan_name = staticmethod(
 		lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:] )
 
+	def src_irc(self, nick, user=''): return f'{nick}!{user or nick}@{self.st_irc.host}'
+	def src_discord(self, nick): return f'{nick}!{nick}@discord'
+	def src_sys(self): return self.src_irc(self.conf.irc_nick_sys)
+	def src_self(self): return self.src_irc(self.st_irc.nick, self.st_irc.user)
 
 	def recv_cmd_ping(self, server, server_dst=None):
 		# See https://gitlab.com/gitterHQ/irc-bridge/-/issues/34#note_190986152
@@ -1544,7 +1546,7 @@ class IRCProtocol:
 			return self.send(433, nick, ':Nickname is already in use')
 		self.st_irc.nick = nick
 		if self.st_irc.auth and self.st_irc.nick:
-			self.send(f':{self.st_irc.nick} NICK {nick}')
+			self.send(f':{self.src_self()} NICK {nick}')
 		self.check_auth_done()
 
 	def check_auth_done(self):
@@ -1626,9 +1628,7 @@ class IRCProtocol:
 		name = c.name if c else self.chan_name(chan)
 		# topic=None will always be updated on cmd_chan_list_sync
 		self.st_irc.chans[name] = adict(topic=c and c.topic)
-		join_src = self.st_irc.nick
-		if self.conf.irc_join_hosts: join_src += '!{self.st_irc.user}@{self.st_irc.host}'
-		self.send(f':{join_src} JOIN {chan}')
+		self.send(f':{self.src_self()} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
 		self.send(0, f'MODE {chan} +v {self.st_irc.nick}')
@@ -1642,7 +1642,7 @@ class IRCProtocol:
 				self.send(442, chan, ':You are not on that channel')
 			else:
 				del self.st_irc.chans[name]
-				self.send(f':{self.st_irc.nick} PART {chan}')
+				self.send(f':{self.src_self()} PART {chan}')
 
 	async def recv_cmd_topic(self, chan, topic=None):
 		if not (c := self.req_chan_info(chan)):
@@ -1663,7 +1663,7 @@ class IRCProtocol:
 
 	def send_topic_update(self, chan, topic):
 		topic = str_cut(topic.strip(), self.conf.irc_len_topic, len_bytes=True)
-		self.send(f':{self.conf.irc_nick_sys} TOPIC {chan} :{topic}')
+		self.send(f':{self.src_sys()} TOPIC {chan} :{topic}')
 
 	def recv_cmd_names(self, chan):
 		for chan in chan.split(','): self.send_names(chan)
@@ -1716,10 +1716,10 @@ class IRCProtocol:
 		self.send_feats()
 
 	def recv_cmd_privmsg(self, target, text):
-		self.cmd_msg_from_irc(self.st_irc.nick, target, text, from_self=True)
+		self.cmd_msg_from_irc(target, text, from_self=True)
 
 	def recv_cmd_notice(self, target, text):
-		self.cmd_msg_from_irc(self.st_irc.nick, target, text, notice=True, from_self=True)
+		self.cmd_msg_from_irc(target, text, notice=True, from_self=True)
 
 	def cmd_chan_list_sync(self, cm):
 		for name, ch in self.st_irc.chans.items():
@@ -1729,11 +1729,11 @@ class IRCProtocol:
 			self.send_topic_update(chan := self.chan_spec(name), topic)
 			ch.topic = topic
 			if name in cm: continue
-			self.send(f':{self.conf.irc_nick_sys} NOTICE {chan} :{self.nx_chan_warn}')
+			self.send(f':{self.src_sys()} NOTICE {chan} :{self.nx_chan_warn}')
 			self.send(403, chan, ':No such channel')
 			# Doesn't actually removes channels, as they get rename-notification there
 
-	def cmd_msg_from_irc(self, src, target, text, notice=False, from_self=False):
+	def cmd_msg_from_irc(self, target, text, notice=False, from_self=False):
 		'''Handler for messages posted from IRC.
 			With notice=True message is only handled in irc, without proxying it to discord.'''
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
@@ -1741,29 +1741,32 @@ class IRCProtocol:
 			chan, name = target, self.chan_name(target)
 			if (c := self.req_chan_info(chan, check=not notice)) is False:
 				if notice: return # not supposed to generate responses
-				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
+				self.send( f':{self.src_sys()} NOTICE {chan} :WARNING:'
 					' there is no corresponding discord channel, msgs here are discarded' )
 			if not c: return
 			if from_self and c.bt not in [c.bt.proxy, c.bt.sys]:
-				self.send( f':{self.conf.irc_nick_sys} NOTICE {chan} :WARNING:'
+				self.send( f':{self.src_sys()} NOTICE {chan} :WARNING:'
 					' this is read-only channel, msgs posted here are not proxied to discord' )
 			for conn in self.bridge.cmd_chan_conns(name): # mirror to other clients
 				if from_self and conn is self: continue
 				if name not in conn.st_irc.chans: self.cmd_join(chan) # from chan_auto_join_re
-				conn.send(f':{src} {msg_type} {chan} :{text}')
+				conn.send(f':{self.src_self()} {msg_type} {chan} :{text}')
 			if not notice: self.bridge.irc_msg(self, chan, text)
 		else:
 			if not (conn := self.bridge.cmd_conn(target)):
 				if not notice: self.send(401, target, ':No such nick/channel')
-			else: conn.send(f':{src} {msg_type} {target} :{text}')
+			else: conn.send(f':{self.src_self()} {msg_type} {target} :{text}')
 
-	def cmd_msg_self(self, text, src=None, notice=True):
-		'Send direct message to this IRC client and nick'
-		if not src: src = self.conf.irc_nick_sys
+	def cmd_msg_self(self, text, notice=True):
+		'Send direct message to this IRC client and nick from rdircd'
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
-		self.send(f':{src} {msg_type} {self.st_irc.nick} :{text}')
+		self.send(f':{self.src_sys()} {msg_type} {self.st_irc.nick} :{text}')
 
-	def cmd_msg_chan(self, src, chan, text, notice=False, joined=False):
+	def cmd_msg_chan_sys(self, chan, text, notice=True):
+		'Same as cmd_msg_chan, but an error/notice from irc_nick_sys'
+		self.cmd_msg_chan(self.conf.irc_nick_sys, chan, text, notice=notice)
+
+	def cmd_msg_chan(self, nick, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
 			Message is never filtered/dropped here for reliability/sanity reasons.'''
 		msg_type = 'PRIVMSG' if not notice else 'NOTICE'
@@ -1771,24 +1774,23 @@ class IRCProtocol:
 		if ( name not in self.st_irc.chans and
 				self.conf._irc_chan_auto_join_re.search(name) ):
 			self.cmd_join(chan)
-		if ( self.conf.irc_names_join and src and joined
-				and not notice and not irc_name_eq(src, self.st_irc.nick) ):
-			join_src = src if not self.conf.irc_join_hosts else f'{src}!discord/{src}'
-			self.send(f':{join_src} JOIN {chan}') # !host part is needed for irssi
-		self.send(f':{src} {msg_type} {chan} :{text}')
-		self.st_irc.typing_repeat.active.pop((src, chan), None)
+		if ( self.conf.irc_names_join and joined
+				and not notice and not irc_name_eq(nick, self.st_irc.nick) ):
+			self.send(f':{self.src_discord(nick)} JOIN {chan}')
+		self.send(f':{self.src_discord(nick)} {msg_type} {chan} :{text}')
+		self.st_irc.typing_repeat.active.pop((nick, chan), None)
 
-	def cmd_typing(self, src, chan, repeated=False):
+	def cmd_typing(self, nick, chan, repeated=False):
 		interval, timeout = self.conf.irc_typing_interval, self.conf.irc_typing_timeout
 		if 'message-tags' not in self.st_irc.caps or interval <= 0: return
 		chan = self.chan_spec(chan)
-		self.send(f'@+typing=active :{src} TAGMSG {chan}')
+		self.send(f'@+typing=active :{self.src_discord(nick)} TAGMSG {chan}')
 		if repeated: return
 		if timeout and timeout > interval and (
 				not (task := (st := self.st_irc.typing_repeat).task) or task.done() ):
 			st.task = self.bridge.cmd_delay(self.cmd_typing_repeat_task)
 		else: st.wakeup.set()
-		st.active[src, chan] = True
+		st.active[nick, chan] = True
 
 	async def cmd_typing_repeat_task(self):
 		st, last_delay = self.st_irc.typing_repeat, False
@@ -4073,8 +4075,7 @@ class RDIRCD:
 
 	async def irc_cmd_topic(self, conn, name, line=''):
 		chan = conn.chan_spec(name)
-		notice_cmd = ft.partial(
-			conn.cmd_msg_chan, self.conf.irc_nick_sys, chan, notice=True )
+		notice_cmd = ft.partial(conn.cmd_msg_chan_sys, chan)
 		cmd = line.split(None, 1)
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd(doc_topic_cmds.strip())
@@ -4192,8 +4193,7 @@ class RDIRCD:
 			return self.cmd_chan_sys(sys_type, conn, chan, line)
 		if not (line := self.irc_msg_translate_preq(line)).strip(): return
 		if not self.irc_msg_queue:
-			conn.cmd_msg_chan( self.conf.irc_nick_sys,
-				chan, f'ERR {{irc-msg-queue-failed}}: {line}', notice=True )
+			conn.cmd_msg_chan_sys(chan, f'ERR {{irc-msg-queue-failed}}: {line}')
 		else: self.irc_msg_queue.put_nowait(
 			adict(conn=conn, chan=chan, name=name, line=line) )
 
@@ -4240,14 +4240,13 @@ class RDIRCD:
 						await self.discord.cmd_msg_send(info.cc, line)
 
 				except IRCBridgeSignal as err:
-					m.conn.cmd_msg_chan( self.conf.irc_nick_sys,
-						m.chan, f'ERR {{{err}}}: {self._repr(m.line)}', notice=True )
+					m.conn.cmd_msg_chan_sys(m.chan, f'ERR {{{err}}}: {self._repr(m.line)}')
 					while True: # flush queue to ensure ordering
 						try: m = self.irc_msg_queue.get_nowait()
 						except asyncio.QueueEmpty: break
 						if m is StopIteration: break
-						m.conn.cmd_msg_chan( self.conf.irc_nick_sys,
-							m.chan, f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True )
+						m.conn.cmd_msg_chan_sys( m.chan,
+							f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True )
 					if m is StopIteration: break
 
 		finally: self.irc_msg_queue = None
@@ -4426,7 +4425,7 @@ class RDIRCD:
 
 	def cmd_chan_sys_control(self, conn, chan, line_raw):
 		if not (line := line_raw.strip().lower().split()): return
-		cmd, send = line[0], ft.partial(conn.cmd_msg_chan, self.conf.irc_nick_sys, chan)
+		cmd, send = line[0], ft.partial(conn.cmd_msg_chan_sys, chan, notice=False)
 		if cmd in ['h', 'help']:
 			return send(doc_fmt_lines(
 				self._cmd_chan_sys_status(conn.st_irc.ts) + '\n'
@@ -4698,7 +4697,7 @@ class RDIRCD:
 		line_src, line = line, line.strip().lower().split()
 		pt_n, pt_cut = (self.conf.get(f'debug_chan_proto_{k}') for k in ['tail', 'cut'])
 		if not line: return
-		send = ft.partial(conn.cmd_msg_chan, self.conf.irc_nick_sys, chan)
+		send = ft.partial(conn.cmd_msg_chan_sys, chan, notice=False)
 		if line[0] in ['h', 'help', 'st', 'status']:
 			level = proto_log_info = '???'
 			proto_log_shared = ['no', 'yes'][bool(log_proto_root.propagate)]
@@ -4756,8 +4755,7 @@ class RDIRCD:
 
 	def cmd_log(self, line):
 		if not (name := self.irc_chans_sys.get('ø_debug')): return # before chan_map init
-		for conn in self.cmd_chan_conns(name):
-			conn.cmd_msg_chan(self.conf.irc_nick_sys, name, line)
+		for conn in self.cmd_chan_conns(name): conn.cmd_msg_chan_sys(name, line)
 
 
 	def cmd_msg_recv_filter(self, nick, msg):
@@ -4823,7 +4821,7 @@ class RDIRCD:
 				line = line.replace(k, v)
 		if nick: nick_discord, nick = nick, self.irc_name(nick)
 		else:
-			nick_discord = nick = self.conf.irc_nick_sys
+			nick_discord = nick = self.conf.irc_nick_sys # used for e.g. guild events
 			if notice is None: notice = True
 		if not notice:
 			if self.conf.irc_prefix_all_private and cc.private:
