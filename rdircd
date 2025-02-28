@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.15' # git-version: py-str
+	version = '25.02.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -57,7 +57,7 @@ class RDIRCDConfigBase:
 	irc_motd_file_path = '' # file path to read for motd command
 	irc_names_timeout = '1d' # time since last activity to "forget" channel /names
 	irc_names_join = True # send irc-join msgs, for new channel users within names-timeout
-	irc_names_join_hosts = False # send "nick!host" in irc-join msgs - for irrsi client specifically
+	irc_join_hosts = False # send "nick!host" in irc-join msgs - needed for irrsi client specifically
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
 
@@ -331,6 +331,7 @@ class RDIRCDConfigBase:
 		filters='unmonitor', replacements='send-replacements' )
 	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
+		irc_join_hosts=['names_join_hosts'],
 		irc_disable_reacts_msgs=['disable_reactions'] )
 	_conf_old_found = dict() # old -> new
 
@@ -1626,7 +1627,7 @@ class IRCProtocol:
 		# topic=None will always be updated on cmd_chan_list_sync
 		self.st_irc.chans[name] = adict(topic=c and c.topic)
 		join_src = self.st_irc.nick
-		if self.conf.irc_names_join_hosts: join_src +=' !{self.st_irc.user}@{self.st_irc.host}'
+		if self.conf.irc_join_hosts: join_src +=' !{self.st_irc.user}@{self.st_irc.host}'
 		self.send(f':{join_src} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
@@ -1772,7 +1773,7 @@ class IRCProtocol:
 			self.cmd_join(chan)
 		if ( self.conf.irc_names_join and src and joined
 				and not notice and not irc_name_eq(src, self.st_irc.nick) ):
-			join_src = src if not self.conf.irc_names_join_hosts else f'{src}!discord/{src}'
+			join_src = src if not self.conf.irc_join_hosts else f'{src}!discord/{src}'
 			self.send(f':{join_src} JOIN {chan}') # !host part is needed for irssi
 		self.send(f':{src} {msg_type} {chan} :{text}')
 		self.st_irc.typing_repeat.active.pop((src, chan), None)

@@ -1376,8 +1376,8 @@ As far as I can tell, those are not actually critical and can be ignored,
 but cause seem to be rdircd not sending "user!host" in JOIN messages
 that populate channel userlist, which can be fixed in one of two ways:
 
-- Set `names-join-hosts = yes` under \[irc\] section in the config, or using
-  `set -s irc-names-join-hosts yes` command in #rdircd.control channel.
+- Set `join-hosts = yes` under \[irc\] section in the config, or using
+  `set -s irc-join-hosts yes` command in #rdircd.control channel.
 
     That option is default-disabled because it makes [ERC client] show user@host
     in userlist by default, and maybe also affects other clients in similar way.
