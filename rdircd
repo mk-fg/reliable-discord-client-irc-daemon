@@ -1625,7 +1625,7 @@ class IRCProtocol:
 		name = c.name if c else self.chan_name(chan)
 		# topic=None will always be updated on cmd_chan_list_sync
 		self.st_irc.chans[name] = adict(topic=c and c.topic)
-		self.send(f':{self.st_irc.nick} JOIN {chan}')
+		self.send(f':{self.st_irc.nick}!{self.st_irc.user}@{self.st_irc.host} JOIN {chan}')
 		self.send_topic(chan, c=c)
 		self.send_names(chan, own=True, c=c)
 		self.send(0, f'MODE {chan} +v {self.st_irc.nick}')
