@@ -1494,10 +1494,9 @@ class IRCProtocol:
 	# chan_spec=#casemap(some-channel), chan_name=casemap(some-channel)
 	_csc = lambda c: c.startswith('#')
 	chan_spec_check = staticmethod(_csc)
-	chan_spec = staticmethod(
-		lambda name,_csc=_csc: name if _csc(name) else f'#{name}' )
-	chan_name = staticmethod(
-		lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:] )
+	chan_spec = staticmethod(lambda name,_csc=_csc: name if _csc(name) else f'#{name}')
+	chan_name = staticmethod(lambda chan,_csc=_csc: chan if not _csc(chan) else chan[1:])
+	del _csc
 
 	def src_irc(self, nick, user=''): return f'{nick}!{user or nick}@{self.st_irc.host}'
 	def src_discord(self, nick): return f'{nick}!{nick}@discord'
@@ -4081,9 +4080,8 @@ class RDIRCD:
 		return data_repr(info) if (info := list(info.values())) else '-- no results --'
 
 	async def irc_cmd_topic(self, conn, name, line=''):
-		chan = conn.chan_spec(name)
+		chan, cmd = conn.chan_spec(name), line.split(None, 1)
 		notice_cmd = ft.partial(conn.cmd_msg_chan_sys, chan)
-		cmd = line.split(None, 1)
 		if not line.strip() or cmd[0] in ['h', 'help']:
 			return notice_cmd(doc_topic_cmds.strip())
 		try:
@@ -4160,9 +4158,7 @@ class RDIRCD:
 					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
 				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
 			else: raise IRCBridgeSignal(f'Unrecognized channel-topic cmd: {line}')
-		except IRCBridgeSignal as err:
-			notice_cmd(f'topic-cmd-error: {err}')
-			raise
+		except IRCBridgeSignal as err: notice_cmd(f'topic-cmd-error: {err}'); raise
 
 	async def irc_cmd_info(self, conn, t, id_str):
 		info, t = None, {'#':'channels', '@':'users', '%':'guilds', '*':'snowflake'}[t]
