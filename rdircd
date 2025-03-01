@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.02.18' # git-version: py-str
+	version = '25.03.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1679,23 +1679,22 @@ class IRCProtocol:
 				self.send(353, '=', chan, ':' + ' '.join(name_line)); name_line.clear()
 		self.send(366, chan, ':End of /NAMES list')
 
-	def recv_cmd_mode(self, target, mode=None, mode_args=None):
-		if self.chan_spec_check(target):
-			c = self.req_chan_info(chan := target, check=False)
-			if mode is None:
-				if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
-				if c: chan_ts = int(c.ts_created)
-				else:
-					if self.chan_name(chan) not in self.st_irc.chans:
-						return self.send(403, chan, ':No such channel')
-					chan_ts = int(time.time())
-				if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
-			else:
+	def recv_cmd_mode(self, target, mode='', mode_args=None):
+		if self.chan_spec_check(chan := target):
+			if mode := mode.lstrip('-+'): # irssi waits for "MODE #chan b" query result
+				modes = dict(b=(368, 'Ban'), e=(349, 'Exception'), I=(337, 'Invite-Exception'))
 				for m in mode:
-					if m == 'b':
-						return self.send(368, chan, ':End of Channel Ban List')
-					if m not in ('+', '-'):
-						return self.send(472, m, ':is an unknown mode char to me')
+					if m := modes.get(m): self.send(m[0], chan, f':End of Channel {m[1]} List')
+					else: return self.send(472, m, ':is an unknown mode char to me')
+				return
+			c = self.req_chan_info(chan, check=False)
+			if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
+			if c: chan_ts = int(c.ts_created)
+			else:
+				if self.chan_name(chan) not in self.st_irc.chans:
+					return self.send(403, chan, ':No such channel')
+				chan_ts = int(time.time())
+			if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
 		else:
 			if not irc_name_eq(target, self.st_irc.nick):
 				return self.send(502, ':No access to modes of other users')
