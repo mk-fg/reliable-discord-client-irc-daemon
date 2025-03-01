@@ -1683,13 +1683,20 @@ class IRCProtocol:
 	def recv_cmd_mode(self, target, mode=None, mode_args=None):
 		if self.chan_spec_check(target):
 			c = self.req_chan_info(chan := target, check=False)
-			if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
-			if c: chan_ts = int(c.ts_created)
+			if mode is None:
+				if self.conf.irc_chan_modes: self.send(324, chan, '+cnrt')
+				if c: chan_ts = int(c.ts_created)
+				else:
+					if self.chan_name(chan) not in self.st_irc.chans:
+						return self.send(403, chan, ':No such channel')
+					chan_ts = int(time.time())
+				if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
 			else:
-				if self.chan_name(chan) not in self.st_irc.chans:
-					return self.send(403, chan, ':No such channel')
-				chan_ts = int(time.time())
-			if self.conf.irc_chan_modes: self.send(329, chan, chan_ts)
+				for m in mode:
+					if m == 'b':
+						return self.send(368, chan, ':End of Channel Ban List')
+					if m not in ('+', '-'):
+						return self.send(472, m, ':is an unknown mode char to me')
 		else:
 			if not irc_name_eq(target, self.st_irc.nick):
 				return self.send(502, ':No access to modes of other users')
