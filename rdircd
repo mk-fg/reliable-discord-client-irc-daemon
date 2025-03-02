@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.3' # git-version: py-str
+	version = '25.03.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -243,6 +243,7 @@ class RDIRCDConfigBase:
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
+	discord_embed_info_len_skip_re = r'\bhttps?://\S{3,400}(\s|$)' # skip truncating matching lines
 
 	# Replace attachment URLs with OSC 8 terminal links, if enabled.
 	discord_terminal_links = False
@@ -377,6 +378,8 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_old_upd_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
+	_conv_discord_msg_flag_silent_re = lambda s,v: re.compile(v or '$x')
+	_conv_discord_embed_info_len_skip_re = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
@@ -2153,7 +2156,7 @@ class Discord:
 		cc.last_msg_sent.update(flake=flake_res, line=line)
 
 	def cmd_msg_parse_flags(self, line, flags=0):
-		if m := re.search(self.conf.discord_msg_flag_silent_re, line):
+		if m := self.conf._discord_msg_flag_silent_re.search(line):
 			line = line[:m.start()] + line[m.end():]
 			flags |= self.c_msg_flags.suppress_notifications
 		return line, flags
@@ -3442,8 +3445,9 @@ class DiscordSession:
 				if em_suffs := self.st_da.embed_info.get(f'lines.{m.id}'):
 					for el, suff in it.product(list(media_info), em_suffs):
 						if el.endswith(suff) and el in media_info: media_info.remove(el)
-				line = '\n'.join([line, *(str_cut( line,
-					self.conf.discord_embed_info_len ) for line in media_info)]).strip()
+				el, es = self.conf.discord_embed_info_len, self.conf._discord_embed_info_len_skip_re
+				line = '\n'.join([line, *(( str_cut(line, el)
+					if not es.search(line) else line ) for line in media_info)]).strip()
 				if not (line or any(media_info)): return # deliberately parsed to empty line(s)
 			if not line: return self.log.warning( 'Expected msg media'
 				' info parsed to empty line [ {} ]: {}', m.id, self._repr(m) )
