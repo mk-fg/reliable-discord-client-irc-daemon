@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.1' # git-version: py-str
+	version = '25.03.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -243,7 +243,7 @@ class RDIRCDConfigBase:
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
-	discord_embed_info_len_skip_re = r'\bhttps?://\S{3,400}(\s|$)' # skip truncating matching lines
+	discord_embed_info_len_skip_re = r'\bhttps?://\S{10,400}(\s|$)' # skip truncating matching lines
 
 	# Replace attachment URLs with OSC 8 terminal links, if enabled.
 	discord_terminal_links = False
@@ -3548,6 +3548,7 @@ class DiscordSession:
 			inline, em_len = list(), self.conf.discord_embed_info_len
 			for fd in fields:
 				k, v = (fd.name or '').strip(), (fd.value or '').strip()
+				if k in ['Reblogs', 'Favorites']: continue # mastodon noise
 				if not (k and v): kv = k or v
 				else:
 					kv = (f'{k} = ' if ' ' in k else f'{k}=')+(f'[ {v} ]' if ' ' in v else v)
@@ -3558,6 +3559,8 @@ class DiscordSession:
 				w_min = round(max(70, min(120, (em_len - 10) / 3)))
 				lines = list( line.replace(' ', ' :: ').replace('\ue790', ' ')
 					for line in str_wrap(' '.join(inline), w_min, w_max) ) + lines
+			if msg := ' :: '.join(filter(None, [em_src, title, desc])).replace(r'\.', '.'):
+				lines = [msg] + lines # something like "src :: desc" mastodon msg
 		else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
 		if not lines and set(em.keys()).difference([ # just "Above time in your local time"
 			'type', 'timestamp', 'footer', 'content_scan_version' ]): lines.append('')
