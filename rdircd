@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.5' # git-version: py-str
+	version = '25.03.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -358,6 +358,10 @@ class RDIRCDConfigBase:
 			if err := set(ev_status).difference('back connect away disconnect'.split()):
 				raise ValueError(f'Unrecognized IRC event name: {err.pop()} (in {ev!r})')
 		return ev_status
+
+	def _conv_irc_nick_sys(self, v):
+		if len(v.split()) == 1 and not any(c in v for c in ':@!<>'): return v
+		raise ValueError('irc-nick-sys should be a valid IRC nick: {v!r}')
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
@@ -1503,7 +1507,7 @@ class IRCProtocol:
 
 	def src_irc(self, nick, user=''): return f'{nick}!{user or nick}@{self.st_irc.host}'
 	def src_discord(self, nick): return f'{nick}!{nick}@discord'
-	def src_sys(self): return self.src_irc(self.conf.irc_nick_sys)
+	def src_sys(self): return self.src_irc(self.conf._irc_nick_sys)
 	def src_self(self): return self.src_irc(self.st_irc.nick, self.st_irc.user)
 
 	def recv_cmd_ping(self, server, server_dst=None):
@@ -1769,7 +1773,7 @@ class IRCProtocol:
 
 	def cmd_msg_chan_sys(self, chan, text, notice=True):
 		'Same as cmd_msg_chan, but an error/notice from irc_nick_sys'
-		self.cmd_msg_chan(self.conf.irc_nick_sys, chan, text, notice=notice)
+		self.cmd_msg_chan(self.conf._irc_nick_sys, chan, text, notice=notice)
 
 	def cmd_msg_chan(self, nick, chan, text, notice=False, joined=False):
 		'''Send message to channel that this IRC client is connected to.
@@ -2294,7 +2298,7 @@ class Discord:
 		prefix += f' :: {self.conf.irc_prefix_guild_event}'
 		if gg: prefix += f'[{gg.name}] '
 		if ev_hash: prefix += f'ev.{ev_hash} ' # to tie multiline stuff and updates together
-		if self.bridge.cmd_msg_recv_filter(nick := self.conf.irc_nick_sys, prefix + msg): return
+		if self.bridge.cmd_msg_recv_filter(nick := self.conf._irc_nick_sys, prefix + msg): return
 		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
 
 	def cmd_sync_guild_tracking(self):
@@ -3893,8 +3897,6 @@ class RDIRCD:
 
 	def __init__(self, conf):
 		self.conf, self.log = conf, get_logger('rdircd.bridge')
-		if ' ' in (self.conf.irc_nick_sys or ' '):
-			raise RDIRCDError('Invalid irc-nick-sys value: {self.conf.irc_nick_sys!r}')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
@@ -4827,7 +4829,7 @@ class RDIRCD:
 				line = line.replace(k, v)
 		if nick: nick_discord, nick = nick, self.irc_name(nick)
 		else:
-			nick_discord = nick = self.conf.irc_nick_sys # used for e.g. guild events
+			nick_discord = nick = self.conf._irc_nick_sys # used for e.g. guild events
 			if notice is None: notice = True
 		if not notice:
 			if self.conf.irc_prefix_all_private and cc.private:
@@ -5303,13 +5305,14 @@ def main_test(cmd, conf):
 	if cmd in ['msg-parse', 'msg-parse-base', 'msg-parse-media']:
 		class DiscordStub(RDIRCD, Discord, DiscordSession):
 			st_da = st_br = msg_recv = None
+			irc_conn_new = irc_conn_lost = lambda s,c: None
 			def cmd_user_cache(self, gid, uid, name=None): pass
 			def op_msg_ref(self, msg_id, cc, nick, line, ref=None): pass
 			def cmd_msg_recv( self, cc, nick, line,
 					tags=None, new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
 				self.msg_recv = cc, nick, line, tags, new_msg_flake, nonce, notice, skip_monitor
 			def __init__(self, conf, st):
-				self.st_da = self.st_br = st
+				self.st_da = self.st_br = st; self.irc_conns = adict()
 				self.conf, self.log = conf, get_logger('xxx')
 				self.discord = self.bridge = self # all-in-one mock object
 				self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
