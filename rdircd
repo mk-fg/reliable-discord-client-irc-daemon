@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.6' # git-version: py-str
+	version = '25.03.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -389,7 +389,7 @@ class RDIRCDConfigBase:
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
-	del _re_chk, _parse_td_str # macros for conversions below
+	del _re_chk, _parse_td_str # macros for conversions used above
 
 
 doc_control_chan_cmds = r'''
@@ -3552,7 +3552,8 @@ class DiscordSession:
 			inline, em_len = list(), self.conf.discord_embed_info_len
 			for fd in fields:
 				k, v = (fd.name or '').strip(), (fd.value or '').strip()
-				if k in ['Reblogs', 'Favorites']: continue # mastodon noise
+				if k.lower() in ( 'reblogs favorites reposts likes quotes'
+					' replies' ).split(): continue # common mastodon/bsky noise
 				if not (k and v): kv = k or v
 				else:
 					kv = (f'{k} = ' if ' ' in k else f'{k}=')+(f'[ {v} ]' if ' ' in v else v)
