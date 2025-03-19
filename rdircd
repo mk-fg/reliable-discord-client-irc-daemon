@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.9' # git-version: py-str
+	version = '25.03.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2557,7 +2557,7 @@ class DiscordSession:
 			try:
 				email, pw = (self.get_auth(k) for k in ['email', 'password'])
 				res = await self.req( 'auth/login', m='post',
-					auth=False, json=dict(email=email, password=pw) )
+					auth=False, json=dict(login=email, password=pw) )
 				if res.get('mfa'): raise DiscordAbort(
 					'Multi-factor auth requirement detected, but is not supported by rdircd' )
 				if acts := res.get('required_actions'): # e.g. update_password
