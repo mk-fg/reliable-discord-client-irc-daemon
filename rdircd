@@ -5606,8 +5606,8 @@ def main(args=None, conf=None):
 		p_pem = pl.Path(path_filter(conf.irc_tls_pem_file))
 		if conf.irc_tls_pem_gen_subj and not p_pem.exists():
 			import subprocess as sp
-			p_key, p_crt = (path_filter(p_pem.with_name(
-				p_pem.name + f'.new.{k}' )) for k in ['key', 'crt'])
+			p_key, p_crt = (pl.Path(path_filter(p_pem.with_name(
+				p_pem.name + f'.new.{k}' ))) for k in ['key', 'crt'])
 			try:
 				log.debug('Generating new TLS cert/key file: {}', p_pem)
 				sp.run([ 'openssl', 'req', '-new', '-x509', '-nodes', '-keyout',
