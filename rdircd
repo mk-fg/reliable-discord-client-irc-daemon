@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.8' # git-version: py-str
+	version = '25.03.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -661,8 +661,8 @@ def path_filter(path):
 	# It's not a panacea, esp. with TOCTTOU issue wrt symlinks, just basic sanity-check
 	path = os.path.expanduser(path)
 	if any(re.search(r'(?i)\.pyc?$', p) for p in [path, os.path.realpath(path)]):
-		raise RuntimeError(f'Disallowed using file with .py/.pyc suffix [ {path} ]')
-	return path
+		raise RuntimeError(f'Disallowed using file with .py/.pyc suffix in [ {path} ]')
+	return pl.Path(path)
 
 
 def setup_aiohttp_trace_logging(log):
@@ -832,8 +832,7 @@ def safe_replacement(path, *open_args, mode=None, **open_kws):
 	if mode is None:
 		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
 		except OSError: pass
-	open_kws.update( delete=False,
-		dir=os.path.dirname(path), prefix=os.path.basename(path)+'.' )
+	open_kws.update(delete=False, dir=path.parent, prefix=path.name+'.')
 	if not open_args: open_kws['mode'] = 'w'
 	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
 		try:
@@ -2754,7 +2753,7 @@ class DiscordSession:
 							self._repr(msg_str), extra=('<< ', f'{msg_type} {msg_str}') )
 					if self.conf.ws_dump_file and (chk := self.conf.ws_dump_filter):
 						if chk.get('op') in [msg_op, None] and chk.get('t') in [msg_ev, None]:
-							with open(path_filter(self.conf.ws_dump_file), 'w') as dst: dst.write(msg_str)
+							with path_filter(self.conf.ws_dump_file).open('w') as dst: dst.write(msg_str)
 				for k, h in list(self.ws_handlers.items()):
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
@@ -4674,7 +4673,7 @@ class RDIRCD:
 		cc = ci = cm.get(chan)
 		if ci: cc = ci.get('cc', None)
 		dump = pyaml_dump(dict(chan_info=ci, chan=cc, caches=self.st_br))
-		(p := pl.Path(path_filter(dst_file))).write_text(dump)
+		(p := path_filter(dst_file)).write_text(dump)
 		chan_info = cc.name if cc else f'-no-channel-({chan!r})'
 		send( f'Stored channel-sim data: file=[ {p} ]'
 			f' cc=[ {chan_info} ] data-size=[ {len(dump):,d} B ]' )
@@ -5181,7 +5180,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			try: ts = os.stat(self._state_file.name).st_ctime
 			except OSError: ts = None
 			if ts != self._state_file_ts: self._state_source_flush()
-		if not self._state_file: self._state_file = open(path_filter(self._conf_path), 'rb+')
+		if not self._state_file: self._state_file = path_filter(self._conf_path).open('rb+')
 		if self._state_offsets is None: self._state_offsets = self._state_offsets_read()
 		return self._state_file, self._state_offsets
 
@@ -5459,7 +5458,7 @@ def main(args=None, conf=None):
 	if opts.conf_init:
 		exit_code, conf.irc_uid_seed = 0, host_uid_seed()
 		for n, p in enumerate(conf_user_paths):
-			try: fd = os.open(path_filter(p), os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+			try: fd = os.open(p, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
 			except OSError as err:
 				if err.errno != errno.EEXIST:
 					print( 'Failed to create initial configuration'
@@ -5482,7 +5481,7 @@ def main(args=None, conf=None):
 					empty_vals=True, comments=comms, out=_store_commented_line )
 		if not exit_code:
 			print('\nAll specified configuration files do exist or were created:\n')
-			for p in map(pl.Path, conf_user_paths):
+			for p in conf_user_paths:
 				if str(p.resolve()) == str(p): print(f' - {p}')
 				else: print(f' - {p} [ {p.resolve()} ]')
 			print('\nMake sure to at least set required auth options there, if not done already.')
@@ -5604,11 +5603,11 @@ def main(args=None, conf=None):
 		if (v := getattr(opts, k := f'irc_tls_pem_{k}')) is not None: setattr(conf, k, v)
 	if conf.irc_tls_pem_file:
 		import ssl
-		p_pem = pl.Path(path_filter(conf.irc_tls_pem_file))
+		p_pem = path_filter(conf.irc_tls_pem_file)
 		if conf.irc_tls_pem_gen_subj and not p_pem.exists():
 			import subprocess as sp
-			p_key, p_crt = (pl.Path(path_filter(p_pem.with_name(
-				p_pem.name + f'.new.{k}' ))) for k in ['key', 'crt'])
+			p_key, p_crt = (path_filter(p_pem.with_name(
+				p_pem.name + f'.new.{k}' )) for k in ['key', 'crt'])
 			try:
 				log.debug('Generating new TLS cert/key file: {}', p_pem)
 				sp.run([ 'openssl', 'req', '-new', '-x509', '-nodes', '-keyout',
@@ -5622,7 +5621,7 @@ def main(args=None, conf=None):
 
 	if not conf.irc_uid_seed: # stored to keep it stable in e.g. docker containers
 		if any( re.search(r'^\s*[^\[;#]', line) # old config with non-commented-out values
-				for line in pl.Path(conf._conf_path).read_text().splitlines() ):
+				for line in conf._conf_path.read_text().splitlines() ):
 			# Compatibility: pre-23.09.07 had a bug that always used hostname like this
 			# >32B hostname couldn't have started rdircd with legacy uid, use new one there
 			uid_seed = f'rdircd.{os.uname().nodename}'
@@ -5635,7 +5634,7 @@ def main(args=None, conf=None):
 		try: conf_paths = conf.read_from_file()
 		except Exception as err:
 			return log.error('Failed to reload config(s) on SIGHUP: {}', err_fmt(err))
-		conf_paths = ' '.join(path_names(*map(pl.Path, conf_paths)))
+		conf_paths = ' '.join(path_names(*conf_paths))
 		log.debug('Reloaded config file(s) on SIGHUP [ {} ]', conf_paths)
 
 	async def _run_rdircd():
