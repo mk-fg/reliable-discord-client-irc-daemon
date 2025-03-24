@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.10' # git-version: py-str
+	version = '25.03.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2541,18 +2541,16 @@ class DiscordSession:
 					await asyncio.sleep(float(delay) + self.conf.discord_http_delay_padding)
 					continue
 				elif req_limit <= 0 and req_limit_ts and req_limit_ts > time.time(): continue
-				else:
-					raise DiscordSessionError(
-						'Failed to get API rate-limiting retry delay for http-429 error' )
+				else: raise DiscordSessionError(
+					'Failed to get API rate-limiting retry delay for http-429 error' )
 			break
 		return res
 
 	async def req_auth_token(self):
 		while isinstance(self.auth_token, asyncio.Event): await self.auth_token.wait()
 		if not self.auth_token:
-			if self.auth_token_manual:
-				raise DiscordAbort( 'Authentication token is set'
-					' to be configured manually, but is not specified' )
+			if self.auth_token_manual: raise DiscordAbort(
+				'Authentication token is set to be configured manually, but is not specified' )
 			auth_token_ev = self.auth_token = asyncio.Event()
 			try:
 				email, pw = (self.get_auth(k) for k in ['email', 'password'])
@@ -2567,9 +2565,7 @@ class DiscordSession:
 				self.conf.set('auth_token', res['token'])
 				self.conf.update_file_section('auth', 'token')
 				self.auth_token = self.get_auth('token')
-			except:
-				self.auth_token = None # reset for next attempt
-				raise
+			except: self.auth_token = None; raise # reset for next attempt
 			finally: auth_token_ev.set()
 		return self.auth_token
 
@@ -4201,7 +4197,7 @@ class RDIRCD:
 			return self.cmd_chan_sys(sys_type, conn, chan, line)
 		if not (line := self.irc_msg_translate_preq(line)).strip(): return
 		if not self.irc_msg_queue:
-			conn.cmd_msg_chan_sys(chan, f'ERR {{irc-msg-queue-failed}}: {line}')
+			conn.cmd_msg_chan_sys(chan, f'Discarded {{irc-msg-queue-failed}}: {line}')
 		else: self.irc_msg_queue.put_nowait(
 			adict(conn=conn, chan=chan, name=name, line=line) )
 
@@ -4248,13 +4244,14 @@ class RDIRCD:
 						await self.discord.cmd_msg_send(info.cc, line)
 
 				except IRCBridgeSignal as err:
-					m.conn.cmd_msg_chan_sys(m.chan, f'ERR {{{err}}}: {self._repr(m.line)}')
+					m.conn.cmd_msg_chan_sys( m.chan,
+						f'Discarded {{{err}}}: {self._repr(m.line)}' )
 					while True: # flush queue to ensure ordering
 						try: m = self.irc_msg_queue.get_nowait()
 						except asyncio.QueueEmpty: break
 						if m is StopIteration: break
-						m.conn.cmd_msg_chan_sys( m.chan,
-							f'ERR-flush {{{err}}}: {self._repr(m.line)}', notice=True )
+						m.conn.cmd_msg_chan_sys( m.chan, 'Discarded'
+							f' queued msg {{{err}}}: {self._repr(m.line)}', notice=True )
 					if m is StopIteration: break
 
 		finally: self.irc_msg_queue = None
