@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.12' # git-version: py-str
+	version = '25.03.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -208,6 +208,7 @@ class RDIRCDConfigBase:
 
 	discord_msg_old_upd_timestamp = '1d' # add date/time to msg edits older than this, 0 - disable
 	discord_msg_old_upd_ignore = '4d' # completely ignore msg edits older than this, 0 - disable
+	discord_msg_old_del_ignore = '4d' # don't report older msg removals, 0 - disable
 
 	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
 	# "aaa" group is used as a python regexp to match what to replace, "bbb" - replacement.
@@ -380,6 +381,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_old_upd_timestamp = _parse_td_str
 	_conv_discord_msg_old_upd_ignore = _parse_td_str
+	_conv_discord_msg_old_del_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_flag_silent_re = lambda s,v: re.compile(v or '$x')
@@ -3385,6 +3387,9 @@ class DiscordSession:
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
+			if (td := self.conf._discord_msg_old_del_ignore) and ts - msg_ts > td:
+				return self.log.debug( 'Ignoring too-old msg'
+					' deletion [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 			ext = f'[{ts_iso8601(msg_ts, human=True)}]'
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
 			return self.discord.cmd_msg_recv(cc, None, f'message was deleted {ext}', dict(_ev=True))
