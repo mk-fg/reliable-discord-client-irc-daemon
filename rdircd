@@ -17,8 +17,8 @@ import aiohttp
 
 class RDIRCDConfigBase:
 	# This is a regular ini file with key=value lines under couple sections and ;-comments.
-	# String time intervals can be either simple floats (seconds) or stuff like
-	#  "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
+	# String time intervals/deltas can be either simple floats (seconds) or specs
+	#  like "30s", "10min", "1h 20m", "1mo3d5h", etc - see parse_duration func for that.
 	# For values ending with whitespace (like prefixes) in ini config files,
 	#  add backslash ("\") at the end after spaces, for example: prefix-edit = E: \
 	# Values starting with spaces/tabs should be prefixed
@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.03.13' # git-version: py-str
+	version = '25.04.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -206,9 +206,12 @@ class RDIRCDConfigBase:
 	discord_msg_ack_delay = '45m' # delay ACKing last-seen msg, can be lowered for short-lived rdircd
 	discord_msg_ack_always = False # also ACK blocked msgs or when no IRC clients connected
 
-	discord_msg_old_upd_timestamp = '1d' # add date/time to msg edits older than this, 0 - disable
-	discord_msg_old_upd_ignore = '4d' # completely ignore msg edits older than this, 0 - disable
-	discord_msg_old_del_ignore = '4d' # don't report older msg removals, 0 - disable
+	# Ignore edits, embedded info updates, reacts, deletes, etc for old messages.
+	# Should be a list of <event>=<time-delta> values, where <event> part
+	#  can have multiple slash-separated keys. Example: react=2h30m update/delete=1w3d
+	# Supported <event> values: update delete react
+	discord_msg_old_ignore = 'update/delete/react=4d'
+	discord_msg_old_prefix = 'update=1d' # add date/time prefix to events older than this
 
 	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
 	# "aaa" group is used as a python regexp to match what to replace, "bbb" - replacement.
@@ -332,7 +335,9 @@ class RDIRCDConfigBase:
 		filters='unmonitor', replacements='send-replacements' )
 	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
-		irc_disable_reacts_msgs=['disable_reactions'] )
+		irc_disable_reacts_msgs=['disable_reactions'],
+		discord_msg_old_prefix=['discord_msg_old_upd_timestamp'],
+		discord_msg_old_ignore=['discord_msg_old_upd_ignore', 'discord_msg_old_del_ignore'] )
 	_conf_old_found = dict() # old -> new
 
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
@@ -347,18 +352,23 @@ class RDIRCDConfigBase:
 					f' group(s) in regexp for {key} [ {" ".join(missing)} ] {v!r}' )
 			return rx
 		return _conv
-	_parse_td_str = lambda s, v: parse_duration(v)
 
-	def _conv_discord_status_events(self, v):
-		ev_status = dict()
-		for ev in v.split():
-			k, s, v = ev.lower().partition('=')
-			ev_status.update((k, v) for k in k.split('/'))
-			if not getattr(Discord.c_status_protobuf, v, None):
-				raise ValueError(f'Unknown/unsupported discord status: {v} (in {ev!r})')
-			if err := set(ev_status).difference('back connect away disconnect'.split()):
-				raise ValueError(f'Unrecognized IRC event name: {err.pop()} (in {ev!r})')
-		return ev_status
+	def _parse_kv_pairs(keys, val_conv):
+		key_name, keys = keys.split(':', 1); keys = keys.split()
+		def _conv(self, v):
+			kvs = dict()
+			for kv in v.split():
+				ks, s, vs = kv.lower().partition('=')
+				if err := set(ks := ks.split('/')).difference(keys):
+					raise ValueError(f'Unrecognized {key_name} name: {err.pop()} (in {k!r})')
+				for k in ks:
+					if not (v := val_conv(vs)):
+						raise ValueError(f'Unknown/unsupported value: {vs!r}')
+					kvs[k] = v
+			return kvs
+		return _conv
+
+	_parse_td_str = lambda s,v: parse_duration(v)
 
 	def _conv_irc_nick_sys(self, v):
 		if len(v.split()) == 1 and not any(c in v for c in ':@!<>'): return v
@@ -378,10 +388,12 @@ class RDIRCDConfigBase:
 	_conv_discord_user_mention_cache_timeout = _parse_td_str
 	_conv_discord_media_info_timeout = _parse_td_str
 	_conv_discord_terminal_links_re = _re_chk('discord-terminal-links-re', ['name'])
+	_conv_discord_status_events = _parse_kv_pairs(
+		'IRC event: back connect away disconnect',
+		lambda v: getattr(Discord.c_status_protobuf, v, None) and v )
+	_conv_discord_msg_old_ignore = _conv_discord_msg_old_prefix = \
+		_parse_kv_pairs('msg-related event: update delete react', lambda v: parse_duration(v))
 	_conv_discord_msg_ack_delay = _parse_td_str
-	_conv_discord_msg_old_upd_timestamp = _parse_td_str
-	_conv_discord_msg_old_upd_ignore = _parse_td_str
-	_conv_discord_msg_old_del_ignore = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
 	_conv_discord_msg_flag_silent_re = lambda s,v: re.compile(v or '$x')
@@ -391,7 +403,7 @@ class RDIRCDConfigBase:
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
-	del _re_chk, _parse_td_str # macros for conversions used above
+	del _re_chk, _parse_td_str, _parse_kv_pairs # func-macros for conversions above
 
 
 doc_control_chan_cmds = r'''
@@ -3370,10 +3382,11 @@ class DiscordSession:
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
 		nick, ts = m.get('author'), time.time()
 		msg_ev, msg_ts = None, self.discord.flake_parse(m.id)
+		old_pre, old_skip = self.conf._discord_msg_old_prefix, self.conf._discord_msg_old_ignore
 		if msg_is_update := act == 'update':
 			# Sometimes discord sends completely empty msg-updates
 			if not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']): return
-			if (td := self.conf._discord_msg_old_upd_ignore) and ts - msg_ts > td:
+			if (td := old_skip.get('update')) and ts - msg_ts > td:
 				return self.log.debug( 'Ignoring too-old msg'
 					' update [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 		gg = self.st_da.guilds.get(m.get('guild_id', 1))
@@ -3387,12 +3400,14 @@ class DiscordSession:
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
-			if (td := self.conf._discord_msg_old_del_ignore) and ts - msg_ts > td:
+			pre, ext = '', f'[{ts_iso8601(msg_ts, human=True)}]'
+			if (td := old_skip.get('delete')) and ts - msg_ts > td:
 				return self.log.debug( 'Ignoring too-old msg'
 					' deletion [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
-			ext = f'[{ts_iso8601(msg_ts, human=True)}]'
+			if (td := old_pre.get('delete')) and ts - msg_ts > td: pre = '[old-msg] '
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
-			return self.discord.cmd_msg_recv(cc, None, f'message was deleted {ext}', dict(_ev=True))
+			return self.discord.cmd_msg_recv( cc, None,
+				f'{pre}message was deleted {ext}', dict(_ev=True) )
 		if not m.get('content') and m.get('call'):
 			msg_ev, m.content = 'vc', 'voice-chat: incoming audio/video call notification'
 
@@ -3429,7 +3444,7 @@ class DiscordSession:
 		if line: self.op_msg_ref(m.id, cc, nick, line, ref=ref)
 		if msg_is_update:
 			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
-			if (td := self.conf._discord_msg_old_upd_timestamp) and ts - msg_ts > td:
+			if (td := old_pre.get('update')) and ts - msg_ts > td:
 				tags['_prefix'] += f'[old-msg {ts_iso8601(msg_ts, human=True, short=True)}] '
 		elif reply := self.op_msg_parse_reply(m, gg):
 			reply_line, reply_tags = reply
@@ -3826,9 +3841,15 @@ class DiscordSession:
 		try: u = m.member.user
 		except KeyError: nick = None # notice from irc_nick_sys
 		else: self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(m))
-		ext = f'[{ts_iso8601(self.discord.flake_parse(m.message_id), human=True)}]'
-		if ref := self.op_msg_ref_get(m.message_id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
-		self.discord.cmd_msg_recv(cc, nick, f'reacts: {act}{emo} {ext}', dict(_ev=True))
+		ts, msg_ts = time.time(), self.discord.flake_parse(msg_id := m.message_id)
+		pre, ext = '', f'[{ts_iso8601(msg_ts, human=True)}]'
+		td_pre, td_skip = (getattr( self.conf,
+			f'_discord_msg_old_{k}', dict() ).get('react') for k in ['prefix', 'ignore'])
+		if td_skip and ts - msg_ts > td_skip:
+			return self.log.debug('Ignoring too-old react-event {}: msg_id={}', ext, msg_id)
+		if td_pre and ts - msg_ts > td_pre: pre = '[old-msg] '
+		if ref := self.op_msg_ref_get(msg_id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
+		self.discord.cmd_msg_recv(cc, nick, f'{pre}reacts: {act}{emo} {ext}', dict(_ev=True))
 
 	def op_gift_code(self, m):
 		if not ( (gg := self.st_da.guilds.get(m.get('guild_id', 1)))
@@ -4311,7 +4332,7 @@ class RDIRCD:
 		chan_nicks = irc_name_dict.value_map(
 			str_attrs((st := conn.st_irc).nick, real=st.real_name, host=st.host)
 			for conn in self.cmd_chan_conns(name) if conn.st_irc.nick )
-		for nick_discord, nick in (users := info.cc.get('users', dict())).items():
+		for nick_discord, nick in (users := info.cc.users).items():
 			if not nick: nick = users[nick_discord] = self.irc_name(nick_discord)
 			chan_nicks.add(str_attrs(nick, real=nick_discord, host=f'discord/{nick}'))
 		return sorted(chan_nicks.values())
