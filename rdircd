@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.0' # git-version: py-str
+	version = '25.04.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2947,13 +2947,8 @@ class DiscordSession:
 		md, resume, ts = m.get('d'), False, time.monotonic()
 		ts_start = tuple(self.st_da.get(k) for k in ['session_ts', 'connect_ts'])
 		if md and md.get('session_id'):
-			self.st_da.update(
-				session_id=md.session_id,
-				session_ts=ts,
-				user_id=md.user.id,
-				user_name=md.user.username,
-				user_n=md.user.discriminator,
-				read_state_last=1 )
+			self.st_da.update( session_id=md.session_id,
+				session_ts=ts, user=md.user, read_state_last=1 )
 			self.op_ev_guilds(md.get('guilds'), init=True)
 			self.op_ev_chans(self.st_da.me.id, md.get('private_channels'), sync=True)
 			self.log.debug( 'New session id: {} gw=[ {} ]',
@@ -3219,10 +3214,11 @@ class DiscordSession:
 				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
 				if not cc.names.old: new_threads.append(cc)
 			elif cc_private:
-				cc.users.timeout = 2**32 # persistent list of users here
-				for n, u in enumerate(users := c.get('recipients') or list()):
+				cc.users_static, cc.users.timeout = dict(), 2**32 # persistent list of users here
+				(users := c.get('recipients') or list()).append(self.st_da.user)
+				for n, u in enumerate(users):
 					self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(u))
-					users[n] = nick, None # gets resolved to irc nick on first use
+					cc.users_static[u.id], users[n] = u, (nick, None) # irc nick resolved on first use
 				dict_update(cc.users, users, sync=True)
 				name_kws = dict(
 					id=(name_hash := str_hash(c.id, 8)),
@@ -3838,9 +3834,10 @@ class DiscordSession:
 			if act == 'add': act, emo = '', f'+{emo}'
 			elif act == 'remove': act, emo = '', f'-{emo}'
 			else: emo = f' {emo}'
-		try: u = m.member.user
-		except KeyError: nick = None # notice from irc_nick_sys
-		else: self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(m))
+		try: nick, user_id = m, m.member.user.id # private chats only have m.user_id
+		except KeyError: nick = cc.get('users_static', dict()).get(user_id := m.get('user_id'))
+		if nick: self.discord.cmd_user_cache(
+			gg.id, user_id, nick := self.discord.user_name(nick) )
 		ts, msg_ts = time.time(), self.discord.flake_parse(msg_id := m.message_id)
 		pre, ext = '', f'[{ts_iso8601(msg_ts, human=True)}]'
 		td_pre, td_skip = (getattr( self.conf,
@@ -3875,7 +3872,7 @@ class DiscordSession:
 	def op_voice_st_user(self, m):
 		if not (gg := self.st_da.guilds.get(m.get('guild_id', 1))): return
 
-		ev, vcs, user_id = set(), gg.get('vcs', dict()), gg.get('user_id')
+		ev, vcs, user_id = set(), gg.get('vcs', dict()), m.get('user_id')
 		if not (cc := gg.chans.get(m.get('channel_id'))): # "user left" event
 			if cc := gg.chans.get(vcs.pop(user_id, None)): ev.add('user-left')
 			else: return # can't tell where user was if wasn't cached
@@ -3909,7 +3906,7 @@ class DiscordSession:
 		# ws_req_users_query() can be used to get non-cached uid, but seems unnecessary
 		if nick := m.get('member'): nick = self.discord.user_name(nick)
 		else: nick = self.discord.cmd_user_cache(gg.id, m.user_id)
-		if m.user_id == self.st_da.user_id: return # echo of own typing msgs
+		if m.user_id == self.st_da.user.id: return # echo of own typing msgs
 		self.discord.cmd_typing(cc, nick or '???')
 
 
