@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.1' # git-version: py-str
+	version = '25.04.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -336,8 +336,8 @@ class RDIRCDConfigBase:
 	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
 		irc_disable_reacts_msgs=['disable_reactions'],
-		discord_msg_old_prefix=['discord_msg_old_upd_timestamp'],
-		discord_msg_old_ignore=['discord_msg_old_upd_ignore', 'discord_msg_old_del_ignore'] )
+		discord_msg_old_prefix=['msg_old_upd_timestamp'],
+		discord_msg_old_ignore=['msg_old_upd_ignore', 'msg_old_del_ignore'] )
 	_conf_old_found = dict() # old -> new
 
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
@@ -353,14 +353,15 @@ class RDIRCDConfigBase:
 			return rx
 		return _conv
 
-	def _parse_kv_pairs(keys, val_conv):
+	def _parse_kv_pairs(keys, val_conv, val_flat=False):
 		key_name, keys = keys.split(':', 1); keys = keys.split()
 		def _conv(self, v):
 			kvs = dict()
 			for kv in v.split():
-				ks, s, vs = kv.lower().partition('=')
-				if err := set(ks := ks.split('/')).difference(keys):
-					raise ValueError(f'Unrecognized {key_name} name: {err.pop()} (in {k!r})')
+				k, s, vs = kv.lower().partition('=')
+				if val_flat and not s: k, vs = '/'.join(keys), k # for migration from old values
+				if err := set(ks := k.split('/')).difference(keys):
+					raise ValueError(f'Unrecognized {key_name} name: {err.pop()} (in {v!r})')
 				for k in ks:
 					if not (v := val_conv(vs)):
 						raise ValueError(f'Unknown/unsupported value: {vs!r}')
@@ -391,8 +392,8 @@ class RDIRCDConfigBase:
 	_conv_discord_status_events = _parse_kv_pairs(
 		'IRC event: back connect away disconnect',
 		lambda v: getattr(Discord.c_status_protobuf, v, None) and v )
-	_conv_discord_msg_old_ignore = _conv_discord_msg_old_prefix = \
-		_parse_kv_pairs('msg-related event: update delete react', lambda v: parse_duration(v))
+	_conv_discord_msg_old_ignore = _conv_discord_msg_old_prefix = _parse_kv_pairs(
+		'msg-related event: update delete react', lambda v: parse_duration(v), val_flat=True )
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
