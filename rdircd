@@ -12,7 +12,7 @@ import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
 import pickle, hashlib, base64, random, textwrap, unicodedata, string, ast
 import logging, logging.handlers
 
-import aiohttp
+import aiohttp # https://aiohttp.readthedocs.io/
 
 
 class RDIRCDConfigBase:
@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.2' # git-version: py-str
+	version = '25.04.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3216,10 +3216,10 @@ class DiscordSession:
 				if not cc.names.old: new_threads.append(cc)
 			elif cc_private:
 				cc.users_static, cc.users.timeout = dict(), 2**32 # persistent list of users here
-				(users := c.get('recipients') or list()).append(self.st_da.user)
-				for n, u in enumerate(users):
+				for n, u in enumerate(users := c.get('recipients') or list()):
 					self.discord.cmd_user_cache(gg.id, u.id, nick := self.discord.user_name(u))
 					cc.users_static[u.id], users[n] = u, (nick, None) # irc nick resolved on first use
+				cc.users_static[self.st_da.user.id] = self.st_da.user
 				dict_update(cc.users, users, sync=True)
 				name_kws = dict(
 					id=(name_hash := str_hash(c.id, 8)),
