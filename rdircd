@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.5' # git-version: py-str
+	version = '25.04.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -209,8 +209,8 @@ class RDIRCDConfigBase:
 	# Ignore edits, embedded info updates, reacts, deletes, etc for old messages.
 	# Should be a list of <event>=<time-delta> values, where <event> part
 	#  can have multiple slash-separated keys. Example: react=2h30m update/delete=1w3d
-	# Supported <event> values: update delete react
-	discord_msg_old_ignore = 'update/delete/react=4d'
+	# Missing or 0-values to never ignore event. Supported <event>s: update delete react poll
+	discord_msg_old_ignore = 'update/delete/react=4d poll=0'
 	discord_msg_old_prefix = 'update=1d' # add date/time prefix to events older than this
 
 	# discord_msg_edit_re is a regexp to match follow-up last-message edits, e.g. s/aaa/bbb/.
@@ -363,7 +363,7 @@ class RDIRCDConfigBase:
 				if err := set(ks := k.split('/')).difference(keys):
 					raise ValueError(f'Unrecognized {key_name} name: {err.pop()} (in {v!r})')
 				for k in ks:
-					if not (v := val_conv(vs)):
+					if (v := val_conv(vs)) is None:
 						raise ValueError(f'Unknown/unsupported value: {vs!r}')
 					kvs[k] = v
 			return kvs
@@ -393,7 +393,7 @@ class RDIRCDConfigBase:
 		'IRC event: back connect away disconnect',
 		lambda v: getattr(Discord.c_status_protobuf, v, None) and v )
 	_conv_discord_msg_old_ignore = _conv_discord_msg_old_prefix = _parse_kv_pairs(
-		'msg-related event: update delete react', lambda v: parse_duration(v), val_flat=True )
+		'msg-related event: update delete react poll', lambda v: parse_duration(v), val_flat=True )
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
 	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
@@ -3392,9 +3392,10 @@ class DiscordSession:
 		if msg_is_update := act == 'update':
 			# Sometimes discord sends completely empty msg-updates
 			if not set(m).difference(['id', 'flags', 'channel_id', 'guild_id']): return
-			if (td := old_skip.get('update')) and ts - msg_ts > td:
-				return self.log.debug( 'Ignoring too-old msg'
-					' update [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+			td = old_skip.get(['update', 'poll'][any(
+				em.get('type') == 'poll_result' for em in (m.get('embeds') or list()) )])
+			if td and ts - msg_ts > td: return self.log.debug(
+				'Ignoring too-old msg update [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
 		gg = self.st_da.guilds.get(m.get('guild_id', 1))
 		if not cc:
 			if gg: cc = gg.chans.get(m.channel_id)
