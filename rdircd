@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.7' # git-version: py-str
+	version = '25.04.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1211,12 +1211,17 @@ class TimedCacheDict(cs.UserDict):
 		return k in self.data and (time.monotonic() - self.ts.get(k, 0)) <= self.timeout
 	def __getitem__(self, k): return self.cache(k)
 	def __setitem__(self, k, v): return self.cache(k, v)
+
 	def iter_oldest(self):
 		'Iterator for all cached (time-delta, key, val) in oldest-first order'
 		ts = time.monotonic()
 		for k, ts0 in sorted(self.ts.items(), key=lambda kv: kv[1]):
 			if (td := ts - ts0) >= self.timeout: continue
 			with cl.suppress(KeyError): yield td, k, self.cache(k)
+
+	def check_bump(self, k, _v=_no_value):
+		'Same as "key in TimedCacheDict" check, but bumps timeout with bump_on_get'
+		return self.get(k, _v) is not _v
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -4880,7 +4885,7 @@ class RDIRCD:
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
-			joined = cc.users.get(nick_discord, ...) is ...
+			joined = not cc.users.check_bump(nick_discord)
 			cc.users[nick_discord] = nick
 			for conn in conns_joined:
 				for n, line in enumerate(line.splitlines()):
