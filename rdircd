@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.6' # git-version: py-str
+	version = '25.04.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4880,7 +4880,8 @@ class RDIRCD:
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
-			joined, cc.users[nick_discord] = not cc.users.get(nick_discord), nick
+			joined = cc.users.get(nick_discord, ...) is ...
+			cc.users[nick_discord] = nick
 			for conn in conns_joined:
 				for n, line in enumerate(line.splitlines()):
 					conn.cmd_msg_chan( nick, name,
