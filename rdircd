@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.8' # git-version: py-str
+	version = '25.04.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3121,7 +3121,7 @@ class DiscordSession:
 		if not cc and (tp_cid := m.get('parent_id')): # probably shouldn't happen
 			tp_info = (cc := gg.chans.get(tp_cid, '')) and f' in {cc.name!r} [ {cc.topic!r} ]'
 			self.log.debug( 'Deleted untracked thread-channel'
-				' [id={} gid={} parent_id={}]{}', cc.id, gg.id, tp_cid, tp_info )
+				' [id={} gid={} parent_id={}]{}', m.id, gg.id, tp_cid, tp_info )
 		elif not cc or not cc.tid:
 			self.log.debug( 'Channel delete event'
 				' [id={} gid={}]: {}', m.id, gid, chan or '-no-channel-info-for-id-' )
