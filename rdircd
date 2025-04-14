@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.10' # git-version: py-str
+	version = '25.04.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -201,6 +201,7 @@ class RDIRCDConfigBase:
 	discord_user_query_timeout = 60.0
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
 	discord_media_info_timeout = '30m' # ignore no-author attachment updates for old msgs
+	discord_msg_history_fetch_limit = 300 # limit on fetching channel history noise
 
 	discord_msg_ack = True # send ACKs for received (and not filtered-out) msgs in private chans
 	discord_msg_ack_delay = '45m' # delay ACKing last-seen msg, can be lowered for short-lived rdircd
@@ -999,12 +1000,11 @@ def parse_iso8601( spec, tz_default=dt.timezone.utc, validate=False,
 	else: tz = tz_default
 	ts_list = list(m.groups()[:5])
 	if not ts_list[3]: ts_list[3] = ts_list[4] = 0
-	ts_list = [ *map(int, ts_list),
-		int(m.group('s') or 0), int(m.group('us') or 0) ]
-	ts = dt.datetime.strptime(
-		'{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{:06d}'.format(*ts_list),
-		'%Y-%m-%d %H:%M:%S.%f' )
-	return ts.replace(tzinfo=tz).timestamp()
+	us = f'{m.group("us") or 0}000000'[:6]
+	ts_list = [*map(int, ts_list), int(m.group('s') or 0), us]
+	return dt.datetime.strptime(
+		'{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{}'.format(*ts_list),
+		'%Y-%m-%d %H:%M:%S.%f' ).replace(tzinfo=tz).timestamp()
 
 def ts_iso8601( ts, ms=3, to_str=True,
 		human=False, strip_date=None, short=False, add_tz=False ):
@@ -2094,9 +2094,10 @@ class Discord:
 
 	async def cmd_history(self, cc, ts, lwm=70, hwm=90):
 		if not self.st_eris.enabled: return list()
+		if (n := self.conf.discord_msg_history_fetch_limit) <= 0: n = 2**32
 		ts += 0.001 # make sure to exclude ts itself
-		msg_list, flake = list(), self.flake_build(ts)
-		while True:
+		msg_list, flake, limit = list(), self.flake_build(ts), n
+		while n > 0:
 			msg_batch = await self.conn_req(
 				f'channels/{cc.id}/messages',
 				params=dict(after=flake, limit=hwm), nc=list() )
@@ -2108,8 +2109,12 @@ class Discord:
 				self.cmd_user_cache(cc.gg.id, m.author.id, nick := self.user_name(m.author))
 				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
+				if (n := n - 1) <= 0: break # fetch batches are larger to include non-msg noise
 				if int(m.id) > int(flake): flake = m.id
 			if flake == flake_last or len(msg_list) < lwm: break
+		if n <= 0: msg_list.append(adict(
+			line=f'<...stopped history-fetch after configured message-limit [ {limit:,d} ]...>',
+			nick=None, tags=dict(), ts=self.flake_parse(m.id)-1 ))
 		return sorted(msg_list, key=op.itemgetter('ts'))
 
 	async def cmd_info_dump(self, info_url):
@@ -4513,7 +4518,7 @@ class RDIRCD:
 		if not ( (conn or self.irc_conns) and (cc := cc or c.get('cc'))
 			and (gg := cc.get('gg')) and self.conf.watch.get_keys(cc.id)
 			and (ts := self.conf.state_watch(cc.id) or ts) ): return
-		if (cc_ts := self.discord.flake_parse(cc.get('last_msg'))) and cc_ts <= ts:
+		if (cc_ts := self.discord.flake_parse(cc.get('last_msg'))) and cc_ts - ts < 0.01:
 			return self.log.debug( 'No new watched-chan history from [ {} ]:'
 				' id={} gid={} name={}', ts_iso8601(ts), cc.id, gg.id, cc.name )
 		self.log.debug( 'Checking watched-chan history from [ {} ] to [ {} ]: id={} gid={}'
