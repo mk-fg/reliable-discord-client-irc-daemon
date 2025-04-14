@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.13' # git-version: py-str
+	version = '25.04.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1007,7 +1007,7 @@ def parse_iso8601( spec, tz_default=None, validate=False,
 		'%Y-%m-%d %H:%M:%S.%f' ).replace(tzinfo=tz).timestamp()
 
 def ts_iso8601( ts, ms=3, to_str=True,
-		human=False, strip_date=None, short=False, add_tz=False ):
+		human=True, short=True, strip_date=None, add_tz=False ):
 	if not isinstance(ts, dt.datetime):
 		ts = ( dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc)
 			if not human else dt.datetime.fromtimestamp(ts) )
@@ -1039,12 +1039,15 @@ def ts_iso8601( ts, ms=3, to_str=True,
 					ts += f':{ss.seconds:02d}'
 					if ss.microseconds: ts += f'.{ss.microseconds:06d}'
 		return ts
-	if short: ms = 0
-	ts_ext = f'{ts.microsecond:06d}'[:ms]
-	ts_ext = f'.{ts_ext}' if ms and int(ts_ext) else ''
+	if short or (human and not ts.microsecond): ms = 0
+	ts_ext = f'.{ts.microsecond:06d}'[:ms+1] if ms else ''
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
-def convert_iso8601_str(ts, human=True, short=True):
+ts_iso8601_ms = ft.partial(ts_iso8601, short=False) # precise
+ts_iso8601_log = ft.partial(ts_iso8601, human=False) # short, no spaces
+ts_iso8601_fixed = ft.partial(ts_iso8601, human=False, short=False) # fixed-width
+
+def ts_iso8601_conv(ts, human=True, short=True): # str -> str
 	if not ts: return '???'
 	try: return ts_iso8601(parse_iso8601(ts), human=human, short=short)
 	except Exception as err:
@@ -3401,8 +3404,8 @@ class DiscordSession:
 		ev_info = [m.get('name')]
 		if ts0:
 			ts0, ts1 = ((v and parse_iso8601(v)) for v in [ts0, ts1])
-			ts_ext, ts_ext_span = f'{ts_iso8601(ts0, human=True, short=True)}', list()
-			if ts1: ts_ext += f' - {ts_iso8601(ts1, human=True, short=True, strip_date=ts0)}'
+			ts_ext, ts_ext_span = f'{ts_iso8601(ts0)}', list()
+			if ts1: ts_ext += f' - {ts_iso8601(ts1, strip_date=ts0)}'
 			if abs(ts0 - time.time()) > 30: ts_ext_span.append(repr_duration(ts0, time.time()))
 			if ts1: ts_ext_span.append(f'lasts {repr_duration(ts1, ts0, ext=False)}')
 			if ts_ext_span: ts_ext += f' [{", ".join(ts_ext_span)}]'
@@ -3435,7 +3438,7 @@ class DiscordSession:
 			td = old_skip.get(['update', 'poll'][any(
 				em.get('type') == 'poll_result' for em in (m.get('embeds') or list()) )])
 			if td and ts - msg_ts > td: return self.log.debug(
-				'Ignoring too-old msg update [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+				'Ignoring too-old msg update [{}]: id={}', ts_iso8601_log(msg_ts), m.id )
 		gg = self.st_da.guilds.get(m.get('guild_id', 1))
 		if not cc:
 			if gg: cc = gg.chans.get(m.channel_id)
@@ -3447,10 +3450,10 @@ class DiscordSession:
 			prefix = cc.tid if prefix else self.discord.irc_chan_name(cc)
 			self.op_msg(m, act, cc=cc.parent, tid_prefix=f'{tid_prefix}{prefix} :: ')
 		if act == 'delete':
-			pre, ext = '', f'[{ts_iso8601(msg_ts, human=True)}]'
+			pre, ext = '', f'[{ts_iso8601_ms(msg_ts)}]'
 			if (td := old_skip.get('delete')) and ts - msg_ts > td:
 				return self.log.debug( 'Ignoring too-old msg'
-					' deletion [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+					' deletion [{}]: id={}', ts_iso8601_log(msg_ts), m.id )
 			if (td := old_pre.get('delete')) and ts - msg_ts > td: pre = '[old-msg] '
 			if ref := self.op_msg_ref_get(m.id, cc): ext = f':: {ext} <{ref.nick}> {ref.line}'
 			return self.discord.cmd_msg_recv( cc, None,
@@ -3470,7 +3473,7 @@ class DiscordSession:
 				if ref := self.op_msg_ref_get(m.id, cc): nick, line_cache = ref.nick, ref.line
 				elif msg_is_update and ts - msg_ts > self.conf._discord_media_info_timeout:
 					return self.log.debug( 'Ignoring no-author update (media/embeds)'
-						' of an old msg [{}]: id={}', ts_iso8601(msg_ts, short=True), m.id )
+						' of an old msg [{}]: id={}', ts_iso8601_log(msg_ts), m.id )
 				else: return self.log.warning('Unhandled no-author msg [{}]: {}', act, self._repr(m))
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 		if snapshots := m.get('message_reference') and m.get('message_snapshots'):
@@ -3492,7 +3495,7 @@ class DiscordSession:
 		if msg_is_update:
 			tags['_prefix'] = tags.get('_prefix', '') + self.conf.irc_prefix_edit
 			if (td := old_pre.get('update')) and ts - msg_ts > td:
-				tags['_prefix'] += f'[old-msg {ts_iso8601(msg_ts, human=True, short=True)}] '
+				tags['_prefix'] += f'[old-msg {ts_iso8601(msg_ts)}] '
 		elif reply := self.op_msg_parse_reply(m, gg):
 			reply_line, reply_tags = reply
 			line = f'{reply_line}\n{line.strip()}'; tags.update(reply_tags)
@@ -3686,7 +3689,7 @@ class DiscordSession:
 				if cmd: line += f' :: {cmd}'.rstrip()
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
 				tags['_ev'], line = 'vc', f'{mt.name.replace("_", "-")}: {line!r}'
-				if ts := m.get('timestamp'): line += f' [ {convert_iso8601_str(ts)} ]'
+				if ts := m.get('timestamp'): line += f' [ {ts_iso8601_conv(ts)} ]'
 			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
 				if line: self.log.warning('Unexpected msg text [{!r}]: {}', mt, self._repr(m))
@@ -3737,7 +3740,7 @@ class DiscordSession:
 				if closed := res.get('is_finalized'): ext.append('closed')
 				for qa in res.get('answer_counts') or list(): res[str(qa.get('id'))] = qa
 			if not closed and (ts := poll.get('expiry')):
-				ext.append(f'until {convert_iso8601_str(ts)}')
+				ext.append(f'until {ts_iso8601_conv(ts)}')
 			if ext: line = (line or f'{pre}-no-question-') + f' [ {", ".join(ext)} ]'
 			for qa in poll.get('answers') or list():
 				if aid := str(qa.pop('answer_id', '')):
@@ -3890,7 +3893,7 @@ class DiscordSession:
 		if nick: self.discord.cmd_user_cache(
 			gg.id, user_id, nick := self.discord.user_name(nick) )
 		ts, msg_ts = time.time(), self.discord.flake_parse(msg_id := m.message_id)
-		pre, ext = '', f'[{ts_iso8601(msg_ts, human=True)}]'
+		pre, ext = '', f'[{ts_iso8601_ms(msg_ts)}]'
 		td_pre, td_skip = (getattr( self.conf,
 			f'_discord_msg_old_{k}', dict() ).get('react') for k in ['prefix', 'ignore'])
 		if td_skip and ts - msg_ts > td_skip:
@@ -4208,7 +4211,7 @@ class RDIRCD:
 						notice_cmd('Recorded per-run last-forwarded-msg timestamps:')
 						for n, (v, k) in enumerate(state_list):
 							n = len(state_list) - n - nd # 1 is always pre-restart state, 0 for current run
-							notice_cmd(f'  [{n}] {k} = {ts_iso8601(v, human=True)}')
+							notice_cmd(f'  [{n}] {k} = {ts_iso8601_ms(v)}')
 					return
 				if state in ['watch', 'unwatch']:
 					if not (info := self.irc_discord_info(name)):
@@ -4242,11 +4245,11 @@ class RDIRCD:
 				if ts:
 					if not (info := self.irc_discord_info(name)):
 						raise IRCBridgeSignal(f'Not a discord channel: {chan}')
-					notice_cmd(f'--- Replaying messages since {ts_iso8601(ts, human=True)}')
+					notice_cmd(f'--- Replaying messages since {ts_iso8601_ms(ts)}')
 					msg_list = await self.discord.cmd_history(info.cc, ts)
 					if not msg_list: return notice_cmd('--- no messages')
 					for m in msg_list:
-						line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
+						line = f'[{ts_iso8601(m.ts)}] {m.line}'
 						self.cmd_msg_discord(info.cc, m.nick, line, tags=m.tags, conn=conn)
 					return notice_cmd(f'--- end of replay [{len(msg_list)}]')
 				raise IRCBridgeSignal(f'Invalid log-cmd parameters: {line}')
@@ -4257,9 +4260,8 @@ class RDIRCD:
 		info, t = None, {'#':'channels', '@':'users', '%':'guilds', '*':'snowflake'}[t]
 		if t == 'snowflake':
 			if ts := self.discord.flake_parse(id_str):
-				ts_dt = ts_iso8601(ts, human=True, short=True)
 				ts_rel = repr_duration(ts, time.time())
-				info = f'Date/time: {ts_dt} [{ts_rel}]'
+				info = f'Date/time: {ts_iso8601(ts)} [{ts_rel}]'
 			else: info = 'Error: unrecognized snowflake format'
 			id_str = f'{t}/{id_str}'
 		elif not self.discord.st_eris.online:
@@ -4519,16 +4521,16 @@ class RDIRCD:
 			and (gg := cc.get('gg')) and self.conf.watch.get_keys(cc.id)
 			and (ts := self.conf.state_watch(cc.id) or ts) ): return
 		if (cc_ts := self.discord.flake_parse(cc.get('last_msg'))) and cc_ts - ts < 0.01:
-			return self.log.debug( 'No new watched-chan history from [ {} ]:'
-				' id={} gid={} name={}', ts_iso8601(ts), cc.id, gg.id, cc.name )
-		self.log.debug( 'Checking watched-chan history from [ {} ] to [ {} ]: id={} gid={}'
-			' name={}', ts_iso8601(ts), cc_ts and ts_iso8601(cc_ts) or '', cc.id, gg.id, cc.name )
+			return self.log.debug( 'No new watched-chan history from {}:'
+				' id={} gid={} name={}', ts_iso8601_fixed(ts), cc.id, gg.id, cc.name )
+		self.log.debug( 'Checking watched-chan history from {} to {}: id={} gid={} name={}',
+			ts_iso8601_fixed(ts), cc_ts and ts_iso8601_fixed(cc_ts) or '', cc.id, gg.id, cc.name )
 		if not (msg_list := await self.discord.cmd_history(cc, ts)): return
 		notice_cmd = lambda line: self.cmd_msg_discord(cc, line=line, conn=conn)
 		notice_cmd( '--- Auto-replaying messages since'
-			f' last join {ts_iso8601(ts, human=True)} [{len(msg_list)}]' )
+			f' last join {ts_iso8601_ms(ts)} [{len(msg_list)}]' )
 		for m in msg_list:
-			line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
+			line = f'[{ts_iso8601(m.ts)}] {m.line}'
 			self.cmd_msg_discord(cc, m.nick, line, tags=m.tags, conn=conn)
 		notice_cmd(f'--- end of replay [{len(msg_list)}]')
 		if not self.irc_conns: return
@@ -5392,7 +5394,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def _state_set(self, t, k, ts, sync=False):
 		if t not in self._state_keep: raise ValueError(t)
-		k, v = f'{t}.{k}', ts_iso8601(ts)
+		k, v = f'{t}.{k}', ts_iso8601_fixed(ts)
 		if k not in self.state:
 			self.update_file_section('state', {k: v})
 			self.state[k] = ts
@@ -5675,7 +5677,7 @@ def main(args=None, conf=None):
 	if opts.conf_dump_state:
 		print('State timestamps:')
 		for v, k in sorted((v,k) for k,v in conf.state.items()):
-			print(f'  {k}: {ts_iso8601(v, human=True)}')
+			print(f'  {k}: {ts_iso8601_ms(v)}')
 		return
 
 	if opts.test is not None: return main_test(opts.test, conf)
