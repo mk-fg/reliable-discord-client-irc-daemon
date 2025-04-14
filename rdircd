@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.9' # git-version: py-str
+	version = '25.04.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -341,7 +341,7 @@ class RDIRCDConfigBase:
 	_conf_old_found = dict() # old -> new
 
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
-	#   renames, send_repls, unmon_filters, recv_filters
+	#   renames, send_repls, unmon_filters, recv_filters, watch
 
 	def _re_chk(key, groups, v_def=re.compile('$x')):
 		def _conv(self, v):
@@ -459,7 +459,14 @@ Commands:
     "re"/"subst" patterns work same as in python's re.sub() function.
     If last "-> subst" part is omitted, "<block!>" value will be used.
     Run without arguments to print current contents of that config section.
-    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ'''
+    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ
+
+  watch [-r|--rm] [ chan... ]
+    [alias: w] list or add/remove "watched" channels, for which to
+     query-replay message history on rdircd restart or IRC disconnect/reconnect.
+    Works same as "/topic log watch" and "/t log unwatch" channel-commands do.
+    Configuration file key, IRC channel name or discord channel-id can be used.
+    Always stores changes to a writable configuration file.'''
 
 doc_control_chan_dev_cmds = '''
 Developer-commands for breaking and testing stuff:
@@ -518,7 +525,10 @@ doc_topic_cmds = '''
     Timestamp examples: 2019-01-05T2:00, 2019-01-08 12:30:00, 2h, 1d 5h 30m, 1mo5d.
     Relative timespan units: y/yr/year, mo/month,
       w/week, d/day, h/hr/hour, m/min/minute, s/sec/second.
-  log list - list recorded state ids/timestamps, most recent one last.
+  log list - list last-forwarded-msg state ids/times for last rdircd runs,
+    which can be used as a reference if something goes wrong with it or irc client.
+  log watch - mark discord channel/chat to query/replay history on restart/reconnect.
+  log unwatch - opposite of "watch", removes <W> tag from the topic.
 ---'''
 
 doc_fmt_lines = lambda s,**kws: '\n'.join(
@@ -975,8 +985,10 @@ class StacklessContext:
 def parse_iso8601( spec, tz_default=dt.timezone.utc, validate=False,
 		_re=re.compile( r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
-	if not (m := _re.search(spec)): raise ValueError(spec)
-	if validate: return
+	if not (m := _re.search(spec)):
+		if not isinstance(validate, bool): return validate # invalid-fallback value
+		raise ValueError(spec)
+	if validate is True: return
 	if m.group('tz'):
 		tz = m.group('tz')
 		if tz == 'Z': tz = dt.timezone.utc
@@ -1029,7 +1041,7 @@ def ts_iso8601( ts, ms=3, to_str=True,
 		return ts
 	if short: ms = 0
 	ts_ext = f'{ts.microsecond:06d}'[:ms]
-	if ms and int(ts_ext): ts_ext = f'.{ts_ext}'
+	ts_ext = f'.{ts_ext}' if ms and int(ts_ext) else ''
 	return ts.strftime('%Y-%m-%dT%H:%M:%S') + ts_ext + 'Z'
 
 def convert_iso8601_str(ts, human=True, short=True):
@@ -1136,10 +1148,8 @@ class adict(cs.UserDict):
 		return data
 
 	def __init__(self, *args, **kws):
-		self.attrs = dict()
-		self._track_keys = self._track_cb = None
-		super().__init__(*args, **kws)
-		self._make(self)
+		self.attrs = dict(); self._track_keys = self._track_cb = None
+		super().__init__(*args, **kws); self._make(self)
 
 	def _make(self, v):
 		if v is self: v.update((k, self._make(v)) for k,v in v.items())
@@ -1153,13 +1163,12 @@ class adict(cs.UserDict):
 		if keys:
 			self._track_keys = set(keys.split())
 			for k in self._track_keys:
-				if type(d := self.get(k)) is adict: d._track(cb=cb)
+				if isinstance(d := self.get(k), adict): d._track(cb=cb)
 		self._track_cb = cb
-	def _track_check(self, k):
+	def _track_check(self, k, v=None):
 		if not (cb := self._track_cb): return
-		if self._track_keys:
-			if k not in self._track_keys: return
-			elif type(d := self.get(k)) is adict: d._track(cb=cb)
+		if self._track_keys and k not in self._track_keys: return
+		if isinstance(v, adict): v._track(cb=cb)
 		cb()
 
 	def __getattr__(self, k):
@@ -1175,12 +1184,22 @@ class adict(cs.UserDict):
 		if not k.startswith('ø_'): del self[k]
 		else: del self.attrs[k[2:]]
 
+	def __setitem__(self, k, v): super().__setitem__(k, v); self._track_check(k, v)
+	def __delitem__(self, k): super().__delitem__(k); self._track_check(k)
+
+class adict_rev(adict):
+	'adict with methods to lookup keys by value'
+	__slots__ = adict.__slots__ + ('_rev',)
+	def __init__(self, *args, **kws):
+		self._rev = cs.defaultdict(set); super().__init__(*args, **kws)
 	def __setitem__(self, k, v):
 		super().__setitem__(k, v)
-		self._track_check(k)
-	def __delitem__(self, k):
-		super().__delitem__(k)
-		self._track_check(k)
+		if k not in (d := self._rev[v]): d.add(k)
+	def __delitem__(self, k, _nx=object()):
+		v = self.get(k, _nx); super().__delitem__(k); self._rev[v].discard(k)
+	def get_keys(self, v, ordered=False):
+		if not ordered: return list(self._rev[v])
+		ks = self._rev[v]; return list(k for k in self if k in ks)
 
 class TimedCacheDict(cs.UserDict):
 	'dict that has values expire and get removed on timeout'
@@ -1332,6 +1351,7 @@ class IRCProtocol:
 		host, port = tr.get_extra_info('peername')[:2]
 		conn_id = tuple_hash([host, port], 3)
 		self.st_irc.ts = time.monotonic()
+		self.st_irc.ts_watch = self.conf.state_fwd()
 		self.log_proto = get_logger(f'proto.irc.{conn_id}')
 		self.log_proto.debug( '--- -conn- {} {} {}',
 			host, port, conn_id, extra=('---', f'conn {host} {port}') )
@@ -1650,7 +1670,10 @@ class IRCProtocol:
 		if not cm: cm = self.bridge.cmd_chan_map()
 		c = self.req_chan_info(chan, cm=cm, check=False)
 		if c is False: return self.send(403, chan, ':No such channel')
-		elif c: self.bridge.cmd_chan_map_sync_tracking(c, cm)
+		elif c:
+			self.bridge.cmd_chan_map_sync_tracking(c, cm)
+			if cm.ø_online:
+				self.bridge.cmd_chan_watch_replay(self.st_irc.ts_watch, c=c, conn=self)
 		name = c.name if c else self.chan_name(chan)
 		# topic=None will always be updated on cmd_chan_list_sync
 		self.st_irc.chans[name] = adict(topic=c and c.topic)
@@ -2066,8 +2089,12 @@ class Discord:
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
 		return list(self.bridge.cmd_chan_map()) # to trigger re-caching, if needed
 
-	async def cmd_history(self, gg, cc, ts, lwm=70, hwm=90):
+	def cmd_chan_watch_replay(self, ts, cc):
+		self.bridge.cmd_chan_watch_replay(ts, cc=cc)
+
+	async def cmd_history(self, cc, ts, lwm=70, hwm=90):
 		if not self.st_eris.enabled: return list()
+		ts += 0.001 # make sure to exclude ts itself
 		msg_list, flake = list(), self.flake_build(ts)
 		while True:
 			msg_batch = await self.conn_req(
@@ -2075,10 +2102,10 @@ class Discord:
 				params=dict(after=flake, limit=hwm), nc=list() )
 			flake_last = flake
 			for m in map(adict, msg_batch or list()):
-				line, tags = self.session.op_msg_parse(m, gg)
+				line, tags = self.session.op_msg_parse(m, cc.gg)
 				if not line: continue # joins/parts/pins and such
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
-				self.cmd_user_cache(gg.id, m.author.id, nick := self.user_name(m.author))
+				self.cmd_user_cache(cc.gg.id, m.author.id, nick := self.user_name(m.author))
 				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
 				if int(m.id) > int(flake): flake = m.id
@@ -2157,7 +2184,7 @@ class Discord:
 			cc = cc.threads.get(str_norm(c_tid))
 			if not cc: raise IRCBridgeSignal(f'no-such-thread {c_tid}')
 
-		nonce = self.flake_build(time.time())
+		nonce = self.flake_build(ts := time.time())
 		self.log.debug('MSG:  >> :: {} {} {} :: {}', cc.gg.id, cc.name, nonce, line)
 		try:
 			res = None
@@ -2186,6 +2213,7 @@ class Discord:
 				' msg-id mismatch: {} != {}', flake_gw, flake_res )
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 		cc.last_msg_sent.update(flake=flake_res, line=line)
+		self.conf.state_watch(cc.id, ts, self.bridge.uid_start)
 
 	def cmd_msg_parse_flags(self, line, flags=0):
 		if m := self.conf._discord_msg_flag_silent_re.search(line):
@@ -2849,7 +2877,7 @@ class DiscordSession:
 			if self.ws_tasks: await self.ws_tasks.close()
 			if self.ws: await self.ws.close()
 			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
-			self.st_da.disconnect_ts = time.monotonic()
+			self.st_da.ts_disconnect = time.monotonic()
 			self.state('disconnected')
 			self.ws_state.closed.set()
 		finally: self.ws_state.usable.set()
@@ -2960,10 +2988,11 @@ class DiscordSession:
 
 	def op_ready(self, m):
 		md, resume, ts = m.get('d'), False, time.monotonic()
-		ts_start = tuple(self.st_da.get(k) for k in ['session_ts', 'connect_ts'])
+		ts_start = tuple(self.st_da.get(k) for k in ['ts_session', 'ts_connect'])
+		self.st_da.ts_watch = self.conf.state_fwd()
 		if md and md.get('session_id'):
 			self.st_da.update( session_id=md.session_id,
-				session_ts=ts, user=md.user, read_state_last=1 )
+				ts_session=ts, user=md.user, read_state_last=1 )
 			self.op_ev_guilds(md.get('guilds'), init=True)
 			self.op_ev_chans(self.st_da.me.id, md.get('private_channels'), sync=True)
 			self.log.debug( 'New session id: {} gw=[ {} ]',
@@ -2980,7 +3009,7 @@ class DiscordSession:
 		if resume_url := md.get('resume_gateway_url'):
 			self.conf.discord_gateway = resume_url
 		td_sess, td_conn = ((repr_duration(self.st_da.get(
-			'disconnect_ts' ) or ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_start)
+			'ts_disconnect' ) or ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_start)
 		level = 'warning' if self.conf.discord_ws_reconnect_warn_always else 'debug'
 		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
 		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
@@ -2988,7 +3017,7 @@ class DiscordSession:
 			'' if not (td_sess + td_conn).strip('-') else ' {}sess-lifetime=[{}]{}'.format(
 				'last-' if not resume else '', td_sess,
 				'' if td_conn == td_sess else f' last-conn-duration=[{td_conn}]' ) )
-		self.st_da.connect_ts, self.st_da.disconnect_ts = ts, None
+		self.st_da.ts_connect, self.st_da.ts_disconnect = ts, None
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
 		self.ws_add_handler( self.c.invalid_session,
@@ -3121,14 +3150,14 @@ class DiscordSession:
 		if not cc and (tp_cid := m.get('parent_id')): # probably shouldn't happen
 			tp_info = (cc := gg.chans.get(tp_cid, '')) and f' in {cc.name!r} [ {cc.topic!r} ]'
 			self.log.debug( 'Deleted untracked thread-channel'
-				' [id={} gid={} parent_id={}]{}', m.id, gg.id, tp_cid, tp_info )
+				' [id={} gid={} parent_id={}]{}', m.id, gid, tp_cid, tp_info )
 		elif not cc or not cc.tid:
 			self.log.debug( 'Channel delete event'
 				' [id={} gid={}]: {}', m.id, gid, chan or '-no-channel-info-for-id-' )
 			if cc: self.discord.cmd_guild_event(gid, f'Discord channel deleted: {chan}')
 		else:
 			self.log.debug( 'Deleted thread-channel {}'
-				' [id={} gid={}]: {!r} [ {!r} ]', cc.tid, cc.id, gg.id, cc.name, cc.topic )
+				' [id={} gid={}]: {!r} [ {!r} ]', cc.tid, cc.id, gid, cc.name, cc.topic )
 			self.discord.cmd_chan_thread_event(cc, 'deleted')
 
 	def op_ev_guilds(self, guilds, init=False):
@@ -3177,6 +3206,7 @@ class DiscordSession:
 		for cc in chans_updated.values():
 			if cc.id in gg.chans or cc.tid: continue # threads are logged separately below
 			self.log.debug('New channel [id={} gid={}]: {!r} ({!r})', cc.id, gg.id, cc.name, cc.topic)
+			self.discord.cmd_chan_watch_replay(self.st_da.get('ts_watch'), cc)
 
 		dict_update(gg.chans, chans_updated, sync=sync)
 		self.discord.cmd_chan_map_update()
@@ -4165,23 +4195,37 @@ class RDIRCD:
 				notice_cmd(f'--- end of info')
 			elif cmd[0] == 'log':
 				state = ('1' if len(cmd) == 1 else cmd[1]) if len(cmd) <= 2 else None
-				state_list = sorted((v,k) for k,v in self.conf.state.items())
+				state_list = self.conf.state_fwd(items=True)
 				if state == 'list':
-					if not state_list: notice_cmd('No state timestamps recorded yet.')
+					if not state_list: notice_cmd('No last-forwarded-msg timestamps stored.')
 					else:
-						notice_cmd('Recorded state timestamps:')
+						nd = bool(self.conf.state_fwd(self.uid_start))
+						notice_cmd('Recorded per-run last-forwarded-msg timestamps:')
 						for n, (v, k) in enumerate(state_list):
-							n = len(state_list) - n - 1
-							notice_cmd(f'  [{n}] {k} = {ts_iso8601(v)}')
+							n = len(state_list) - n - 1 - nd # 1 is always pre-restart state
+							notice_cmd(f'  [{n}] {k} = {ts_iso8601(v, human=True)}')
 					return
+				if state in ['watch', 'unwatch']:
+					if not (info := self.irc_discord_info(name)):
+						raise IRCBridgeSignal(f'Not a discord channel: {chan}')
+					wk, wc = self.conf.watch.get_keys(info.cc.id), state == 'watch'
+					if wc and not wk: self.conf.watch.update(upd := {name: info.cc.id})
+					elif not wc and wk:
+						for k in (upd := dict.fromkeys(wk)): del self.conf.watch[k]
+					else:
+						wc = 'already enabled' if wc else 'not enabled'
+						return notice_cmd(f'History watch/replay is {wc} for this channel')
+					self.conf.update_file_section('watch', upd)
+					if wc: self.conf.state_watch(info.cc.id, time.time())
+					wc = 'enabled' if wc else 'disabled'
+					return notice_cmd(f'History watch/replay {wc} for this channel')
 				ts = None
-				if state.isdigit():
-					n = -1 - int(state)
-					if not self.conf.state_get(self.uid_start): n += 1
-					if not n: return
+				if state.lstrip('-+').isdigit():
+					n = -1 - int(abs(state))
+					if not self.conf.state_fwd(self.uid_start): n += 1
 					try: ts, k = state_list[n]
 					except IndexError: raise IRCBridgeSignal(f'No state with index {state}')
-				elif state in self.conf.state:
+				elif state in self.conf.state: # arbitrary key for any state from items/config
 					try: ts = self.conf.state[state]
 					except KeyError: raise IRCBridgeSignal(f'No state {state!r}')
 				else:
@@ -4193,9 +4237,9 @@ class RDIRCD:
 				if ts:
 					if not (info := self.irc_discord_info(name)):
 						raise IRCBridgeSignal(f'Not a discord channel: {chan}')
-					notice_cmd(f'--- Replaying new messages since {ts_iso8601(ts)}')
-					msg_list = await self.discord.cmd_history(info.gg, info.cc, ts)
-					if not msg_list: return notice_cmd('--- no new messages')
+					notice_cmd(f'--- Replaying messages since {ts_iso8601(ts, human=True)}')
+					msg_list = await self.discord.cmd_history(info.cc, ts)
+					if not msg_list: return notice_cmd('--- no messages')
 					for m in msg_list:
 						line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
 						self.cmd_msg_discord(info.cc, m.nick, line, tags=m.tags, conn=conn)
@@ -4306,13 +4350,14 @@ class RDIRCD:
 
 
 	def cmd_delay(self, delay, func=None):
-		'Runs asyncio task after an optional delay, waiting/monitoring it for errors'
+		'Runs async task after an optional delay, waiting/monitoring it for errors.'
 		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
+			elif delay == 'chan_map': delay = 1.0
 			else: raise ValueError(delay)
-		if delay: return self.tasks.add(asyncio.sleep(delay), func)
-		else: return self.tasks.add(aio_await_wrap(func))
+		return ( self.tasks.add(asyncio.sleep(delay), func)
+			if delay else self.tasks.add(aio_await_wrap(func)) )
 
 	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
@@ -4356,8 +4401,7 @@ class RDIRCD:
 			maps and running callbacks needed for any changes in the process.'''
 		if cm0 := self.st_br.chan_map: cm = cm0
 		else:
-			cache_drop = ft.partial(self.st_br.update, chan_map=None)
-			cache_track = lambda d, keys=None: d._track(keys, cb=cache_drop)
+			cache_track = lambda d,*a,**k: d._track(*a, cb=self.cmd_chan_map_flush, **k)
 			cm_list = list(self._cmd_chan_map_build(cache_track))
 			cm = self.st_br.chan_map = irc_name_dict(cm_list)
 			if len(cm) < len(cm_list):
@@ -4368,6 +4412,13 @@ class RDIRCD:
 		cm.ø_online = self.discord.st_eris.online
 		if not cm0 and cm.ø_online: self.cmd_chan_map_sync(cm)
 		return cm
+
+	def cmd_chan_map_flush(self):
+		'Schedule channel-map rebuild/recache in a moment'
+		# Sync is scheduled for topic updates or something eventful like that
+		if self.st_br.chan_map is None: return
+		self.st_br.chan_map = None
+		self.cmd_delay('chan_map', self.cmd_chan_map_sync)
 
 	def cmd_chan_map_sync(self, cm=None):
 		'''Sends IRC topic updates, marks channels as working/removed,
@@ -4393,6 +4444,7 @@ class RDIRCD:
 
 	def _cmd_chan_map_build(self, cache_track):
 		# Name-keys returned here are used in irc_name_dict, so don't need casemapping
+		cache_track(self.conf.watch)
 		cache_track(self.discord.st_da.guilds)
 		gg_uid = lambda gg,**kws: self.uid('guild', gg.id, kh=gg.get('kh'), **kws)
 		gg_info = list(
@@ -4441,6 +4493,7 @@ class RDIRCD:
 				cache_track(cc, 'name topic pos nsfw')
 				tags, name = '', gi.name_fmt.format(
 					prefix=gi.prefix, name=self.irc_name(cc.name) )
+				if self.conf.watch.get_keys(cc.id): tags += '<W> '
 				if cc.nsfw: tags += '[nsfw] '
 				if cc.ct is cc.ct.voice: tags += '[voice] '
 				elif cc.ct is cc.ct.stage: tags += '[stage] '
@@ -4453,6 +4506,28 @@ class RDIRCD:
 				yield (name, adict(
 					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
 					name=name, topic=topic, ts_created=gi.gg.ts_joined ))
+
+	def cmd_chan_watch_replay(self, *args, **kws):
+		self.cmd_delay(self._cmd_chan_watch_replay(*args, **kws))
+	async def _cmd_chan_watch_replay(self, ts=None, c=None, cc=None, conn=None):
+		if not ( (conn or self.irc_conns) and (cc := cc or c.get('cc'))
+			and (gg := cc.get('gg')) and self.conf.watch.get_keys(cc.id)
+			and (ts := self.conf.state_watch(cc.id) or ts) ): return
+		if (cc_ts := self.discord.flake_parse(cc.get('last_msg'))) and cc_ts <= ts:
+			return self.log.debug( 'No new watched-chan history from [ {} ]:'
+				' id={} gid={} name={}', ts_iso8601(ts), cc.id, gg.id, cc.name )
+		self.log.debug( 'Checking watched-chan history from [ {} ] to [ {} ]: id={} gid={}'
+			' name={}', ts_iso8601(ts), cc_ts and ts_iso8601(cc_ts) or '', cc.id, gg.id, cc.name )
+		if not (msg_list := await self.discord.cmd_history(cc, ts)): return
+		notice_cmd = lambda line: self.cmd_msg_discord(cc, line=line, conn=conn)
+		notice_cmd( '--- Auto-replaying messages since'
+			f' last join {ts_iso8601(ts, human=True)} [{len(msg_list)}]' )
+		for m in msg_list:
+			line = f'[{ts_iso8601(m.ts, human=True)}] {m.line}'
+			self.cmd_msg_discord(cc, m.nick, line, tags=m.tags, conn=conn)
+		notice_cmd(f'--- end of replay [{len(msg_list)}]')
+		if not self.irc_conns: return
+		self.conf.state_watch(cc.id, m.ts, self.uid_start)
 
 
 	def cmd_chan_sys(self, sys_type, conn, chan, line):
@@ -4492,6 +4567,7 @@ class RDIRCD:
 				send('discord: disconnecting')
 				self.discord.disconnect()
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
+			elif cmd in ['watch', 'w']: self._cmd_chan_sys_watch(send, line_raw)
 			elif cmd == 'rx': self._cmd_chan_sys_recv_filters(send, line_raw)
 			elif cmd == 'repl': self._cmd_chan_sys_repl(send, line_raw)
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
@@ -4522,7 +4598,7 @@ class RDIRCD:
 		st, ts = self.discord.st_da, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
 		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=None))
-			for v in [conn_ts, *(st.get(k, '') for k in ('session_ts', 'connect_ts'))] )
+			for v in [conn_ts, *(st.get(k, '') for k in ('ts_session', 'ts_connect'))] )
 		if sess_st != 'ready': conn_td = ''
 		up_td = repr_duration(self.uptime_ts, time.monotonic())
 		up_dt = self.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
@@ -4708,6 +4784,38 @@ class RDIRCD:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		return send(f'Updated [send-replacements] section in config file [ {p.name} ]')
 
+	def _cmd_chan_sys_watch(self, send, line_raw):
+		'Implementation for control-channel "watch" command'
+		upd, rm, line, cm = dict(), False, line_raw.split()[1:], self.cmd_chan_map()
+		err = lambda msg: send(f'ERROR: Watch command failed [ {line_raw} ]: {msg}')
+		if line and line[0] in ['-r', '--rm']: rm, line = True, line[1:]
+		if not line:
+			send(f'Current channel watch-list (<conf-key> = <chan-id>) [{len(self.conf.watch)}]:')
+			for k, v in self.conf.watch.items(): send(f'  {k} = {v}')
+			return
+		for chan in line:
+			if rm and (cid := self.conf.watch.get(chan)): chan = cid # rm all keys for cid
+			elif cc := cm.get(name := IRCProtocol.chan_name(chan)):
+				if rm and not self.conf.watch.get_keys(cc.id):
+					return err(f'discord channel {chan!r} is not on the watch-list')
+				upd[name] = cc.id; continue
+			wk = chan.isdigit() and self.conf.watch.get_keys(chan)
+			if wk and rm: upd.update((k, chan) for k in wk); continue
+			elif wk and not rm: return err(f'channel-id {chan} is already on the watch-list')
+			elif rm and not wk: return err(f'channel {chan!r} is not on the watch-list')
+			elif not chan.isdigit(): return err(f'unknown channel key/name {chan!r}')
+			for name, c in cm.items():
+				if (cc := c.get('cc')) and cc.id == chan: upd[name] = chan; break
+			else: return err(f'channel-id {chan} does not match any discord channels')
+		if rm: upd = upd.fromkeys(upd)
+		else:
+			ts = time.time()
+			for cid in upd.values(): self.conf.state_watch(cid, ts)
+		try: p = self.conf.update_file_section('watch', upd)
+		except OSError as err:
+			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
+		return send(f'Updated [watch] section in config file [ {p.name} ]: {len(upd)} change(s)')
+
 	def _cmd_chan_sys_ccx(self, send, dst_file, chan):
 		cm = self.cmd_chan_map() # should be in caches too
 		cc = ci = cm.get(chan)
@@ -4852,7 +4960,7 @@ class RDIRCD:
 			Returns True if message can be ACKed to discord, if needed/enabled.'''
 		# Must be synchronous wrt all discord data,
 		#  as it can be called right before channel delete/rename.
-		if ts: self.conf.state_set(self.uid_start, ts)
+		if ts and self.irc_conns: self.conf.state_watch(cc.id, ts, self.uid_start)
 		prefix, ev, name = '', '', name_irc or self.st_br.did_chan.get(cc.did)
 		if conn: skip_monitor, conns_joined = True, [conn] # e.g. log-replay for this irc client
 		else:
@@ -4929,14 +5037,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	# ws_dump_filter = adict(op=0, t='READY')
 	ws_dump_file = 'dump.json'
 
-	state_tracked = True
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
 	_debug_chan = _debug_proto = _debug_counts = None
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
 		self.unmon_filters, self.recv_filters = dict(), dict()
-		self.send_repls = cs.defaultdict(list)
+		self.send_repls, self.watch = cs.defaultdict(list), adict_rev()
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -5060,6 +5167,9 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if sec := self.recv_filters:
 			out('\n[recv-regexp-filters]')
 			for k, mx in sec.items(): out(f'{k} = {mx.pat}')
+		if sec := self.watch:
+			out('\n[watch]')
+			for k, cid in sec.items(): out(f'{k} = {cid}')
 
 	def read_from_file(self, *conf_paths):
 		if conf_paths: self._conf_path_list = conf_paths
@@ -5079,12 +5189,12 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				self._conf_old_found[k] = k_new
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
-		self.read(conf_file.getboolean, 'state', 'tracked')
-		self._state_section = conf_file.has_section('state')
-		if self.state_tracked and self._state_section:
-			for k, v in conf_file['state'].items():
-				if k == 'tracked': continue
-				self.state[k] = parse_iso8601(v)
+
+		self.state.clear()
+		if conf_file.has_section('state'): self.state.update(
+			(k, parse_iso8601(v, validate=0)) for k, v in conf_file['state'].items() )
+		self.watch.clear()
+		if conf_file.has_section('watch'): self.watch.update(conf_file['watch'].items())
 
 		self.renames.clear()
 		for new, sk in enumerate(['aliases', sk_new := 'renames']):
@@ -5213,6 +5323,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	###  overwriting short timestamp values without tmp files.
 	### File should be safe to edit manually regardless, due to ctime checks.
 
+	_state_keep = {'bridge-fwd': 5, 'chan-watch': 0} # 0 - keep all
+
 	def _state_source_flush(self):
 		self._state_file = self._state_offsets = None
 
@@ -5247,42 +5359,57 @@ class RDIRCDConfig(RDIRCDConfigBase):
 				# src.readline()
 		return offsets
 
-	def state_get(self, k, t='last-msg'): return self.state.get(f'{t}.{k}')
+	def _state_cleanup(self):
+		keep, keys = dict(self._state_keep.items()), list()
+		for tk in sorted(self.state.keys()):
+			t, s, k = tk.partition('.')
+			if (keep.get(t) is None or ( t == 'chan-watch'
+				and not self.watch.get_keys(k) )): keys.append(tk); continue
+			keep[t] -= 1
+			if keep[t] == 0: del keep[t]
+		if not keys: return
+		src, offsets = self._state_source_get()
+		offsets = sorted(((offsets[k], k) for k in keys), reverse=True)
+		with src, safe_replacement(src.name, 'wb') as dst:
+			src.seek(0)
+			for line in iter(src.readline, b''):
+				if offsets and offsets[-1][0] < src.tell():
+					n, k = offsets.pop(); del self.state[k]; continue
+				dst.write(line)
+		self._state_source_flush()
 
-	def state_set(self, k, ts, t='last-msg', sync=False):
-		if not self.state_tracked: return
-		if not self._state_section: self.update_file_section('state', 'tracked')
+	def _state_get(self, t, k=None, items=False):
+		if k is not None: return self.state.get(f'{t}.{k}')
+		ts_list = sorted((v, k) for k, v in self.state.items() if k.split('.', 1)[0] == t)
+		if items: return ts_list
+		return ts_list[-1][0] if ts_list else None
+
+	def _state_set(self, t, k, ts, sync=False):
+		if t not in self._state_keep: raise ValueError(t)
 		k, v = f'{t}.{k}', ts_iso8601(ts)
 		if k not in self.state:
 			self.update_file_section('state', {k: v})
 			self.state[k] = ts
-			return self.state_cleanup()
+			return self._state_cleanup()
 		if self.state[k] > ts: return
 		src, offsets = self._state_source_get()
 		n, v = offsets[k], v.encode()
 		src.seek(n)
 		parse_iso8601(src.read(len(v)).decode(), validate=True)
-		src.seek(n)
-		src.write(v)
-		src.flush()
+		src.seek(n); src.write(v); src.flush()
 		if sync: os.fdatasync(src.fileno())
 		self.state[k], self._state_file_ts = ts, os.fstat(src.fileno()).st_ctime
 
-	def state_cleanup(self, keep_max=10):
-		keys = sorted((v,k) for k,v in self.state.items())
-		if len(keys) <= keep_max: return
-		src, offsets = self._state_source_get()
-		offsets = sorted( ((offsets[k], k) for v,k in
-			keys[:len(keys) - keep_max]), reverse=True )
-		with src, safe_replacement(src.name, 'wb') as dst:
-			src.seek(0)
-			for line in iter(src.readline, b''):
-				if offsets and offsets[-1][0] < src.tell():
-					n, k = offsets.pop()
-					del self.state[k]
-					continue
-				dst.write(line)
-		self._state_source_flush()
+	def state_fwd(self, k=None, ts=None, **get_kws):
+		if ts: self._state_set('bridge-fwd', k, ts)
+		elif k or get_kws: return self._state_get('bridge-fwd', k, **get_kws)
+		elif v := self._state_get('bridge-fwd'): return v
+		return self._state_get('chan-watch')
+
+	def state_watch(self, k, ts=None, uid=None, **get_kws):
+		if not self.watch.get_keys(k): return uid and self.state_fwd(uid, ts)
+		if ts: self._state_set('chan-watch', k, ts)
+		else: return self._state_get('chan-watch', k, **get_kws)
 
 
 
@@ -5540,9 +5667,9 @@ def main(args=None, conf=None):
 
 	if opts.conf_dump: return conf.pprint('Current configuration options')
 	if opts.conf_dump_state:
-		print('state_timestamps:')
+		print('State timestamps:')
 		for v, k in sorted((v,k) for k,v in conf.state.items()):
-			print(f'  {k}: {ts_iso8601(v)}')
+			print(f'  {k}: {ts_iso8601(v, human=True)}')
 		return
 
 	if opts.test is not None: return main_test(opts.test, conf)

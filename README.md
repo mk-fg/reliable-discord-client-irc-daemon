@@ -24,6 +24,7 @@ Table of Contents
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
     - [Auto-joining channels]
+    - [Channel history]
     - [Discord user mentions and emojis]
     - [Quick edits/deletes for just-sent messages]
     - [@silent messages and other such flags]
@@ -58,6 +59,7 @@ Table of Contents
 [People's names on discord]: #hdr-people_s_names_on_discord
 [Local Name Aliases]: #hdr-local_name_aliases
 [Auto-joining channels]: #hdr-auto-joining_channels
+[Channel history]: #hdr-channel_history
 [Discord user mentions and emojis]:
   #hdr-discord_user_mentions_and_emojis
 [Quick edits/deletes for just-sent messages]:
@@ -235,8 +237,9 @@ You have been warned! :)
   (e.g. voice, user profiles, games library, store, friend lists, etc).
 
 - Discord tracks "read_state" server-side, which is not used here in any way -
-  triggering history replay is only done manually (/t commands in chans),
-  so can sometimes be easy to miss on quiet reconnects.
+  triggering history replay is either done manually (`/t log ...` commands in chans)
+  or automatically for channels marked for that (`/topic log watch` or `watch`
+  in #rdircd.control), so can sometimes be easy to miss on quiet reconnects.
 
 - Does not support discord multifactor authentication mode, but manual-token
   auth can probably work around that - see note on captchas below.
@@ -541,8 +544,9 @@ There is currently no way to create new private chats from rdircd,
 use other clients or WebUI for that (or ask someone to contact you first),
 but once private chat channel is created, it can be used in rdircd as well.
 
-See also [Auto-joining channels] and/or [/join e.g. #rdircd.leftover.me channel]
-to monitor private messages reliably, if needed.
+See also [Auto-joining channels], [Channel history] and/or
+[/join e.g. #rdircd.leftover.me channel] to monitor private messages reliably,
+if needed.
 
 [/join e.g. #rdircd.leftover.me channel]:
   #hdr-rdircd.monitor_and_rdircd.leftover_channels
@@ -877,6 +881,39 @@ for specific discords or channels.
 
 [python "re" syntax]:
   https://docs.python.org/3/library/re.html#regular-expression-syntax
+
+<a name=hdr-channel_history></a>
+### Channel history
+
+Everything on discord is represented as IRC channels (incl. 1-on-1 private chats),
+and commands like `/topic log 2h` can be used in those to check history backlog
+in a one-off manual way - run `/t help` for more info.
+
+Usual IRC method for tracking history in general is by using an [IRC bouncer]
+like [ZNC] in-between server and client, or clients with similar component built-in
+(like [Quassel] or [The Lounge]), which should work with rdircd as well,
+and is probably the best way to do it for most use-cases.
+
+For specific important chats, and if rdircd can't stay reliably connected to
+discord/internet, it's also possible to automatically fetch and replay history
+from discord servers, using `/t log watch` command or `watch` in #rdircd.control channel.
+Channels marked that way have an extra `<W>` tag in topic.
+
+Discord-side backlog is checked when IRC client/bouncer reconnects and rdircd
+reconnects to server, tracking last forwarded messages per-channel (under config
+file \[state\] section, can be printed via `--conf-dump-state`) vs last\_message\_id
+channel timestamps received from discord.
+
+I'd recommend enabling this for private chats or select low-traffic or important channels,
+as with many busy chats, it can end up adding a massive amounts of history-fetch requests
+on unstable network with reconnects, which is not really how discord clients normally work
+(only display one screenful of a channel history that user is looking at).\
+I.e. for chats where backlog is not just usual background noise that no one reads anyway.
+
+[IRC bouncer]: https://ircv3.net/software/clients#bouncers
+[ZNC]: https://znc.in/
+[Quassel]: https://www.quassel-irc.org/
+[The Lounge]: https://thelounge.chat/
 
 <a name=hdr-discord_user_mentions_and_emojis></a>
 ### Discord user mentions and emojis
