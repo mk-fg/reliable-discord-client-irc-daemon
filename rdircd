@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.11' # git-version: py-str
+	version = '25.04.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -464,7 +464,7 @@ Commands:
 
   watch [-r|--rm] [ chan... ]
     [alias: w] list or add/remove "watched" channels, for which to
-     query-replay message history on rdircd restart or IRC disconnect/reconnect.
+     query-replay message history on discord or IRC disconnect/reconnect.
     Works same as "/topic log watch" and "/t log unwatch" channel-commands do.
     Configuration file key, IRC channel name or discord channel-id can be used.
     Always stores changes to a writable configuration file.'''
@@ -2097,7 +2097,7 @@ class Discord:
 		if (n := self.conf.discord_msg_history_fetch_limit) <= 0: n = 2**32
 		ts += 0.001 # make sure to exclude ts itself
 		msg_list, flake, limit = list(), self.flake_build(ts), n
-		while n > 0:
+		while True:
 			msg_batch = await self.conn_req(
 				f'channels/{cc.id}/messages',
 				params=dict(after=flake, limit=hwm), nc=list() )
@@ -2105,14 +2105,14 @@ class Discord:
 			for m in map(adict, msg_batch or list()):
 				line, tags = self.session.op_msg_parse(m, cc.gg)
 				if not line: continue # joins/parts/pins and such
+				if (n := n - 1) < 0: break # fetch batches are larger to include non-msg noise
 				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
 				self.cmd_user_cache(cc.gg.id, m.author.id, nick := self.user_name(m.author))
 				msg_list.append(adict( nick=nick,
 					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
-				if (n := n - 1) <= 0: break # fetch batches are larger to include non-msg noise
 				if int(m.id) > int(flake): flake = m.id
 			if flake == flake_last or len(msg_list) < lwm: break
-		if n <= 0: msg_list.append(adict(
+		if n < 0: msg_list.append(adict(
 			line=f'<...stopped history-fetch after configured message-limit [ {limit:,d} ]...>',
 			nick=None, tags=dict(), ts=self.flake_parse(m.id)-1 ))
 		return sorted(msg_list, key=op.itemgetter('ts'))
@@ -4812,9 +4812,10 @@ class RDIRCD:
 			for name, c in cm.items():
 				if (cc := c.get('cc')) and cc.id == chan: upd[name] = chan; break
 			else: return err(f'channel-id {chan} does not match any discord channels')
-		if rm: upd = upd.fromkeys(upd)
+		if rm:
+			for k in (upd := upd.fromkeys(upd)): del self.conf.watch[k]
 		else:
-			ts = time.time()
+			ts = time.time(); self.conf.watch.update(upd)
 			for cid in upd.values(): self.conf.state_watch(cid, ts)
 		try: p = self.conf.update_file_section('watch', upd)
 		except OSError as err:
