@@ -885,30 +885,34 @@ for specific discords or channels.
 <a name=hdr-channel_history></a>
 ### Channel history
 
-Everything on discord is represented as IRC channels (incl. 1-on-1 private chats),
-and commands like `/topic log 2h` can be used in those to check history backlog
-in a one-off manual way - run `/t help` for more info.
-
 Usual IRC method for tracking history in general is by using an [IRC bouncer]
 like [ZNC] in-between server and client, or clients with similar component built-in
 (like [Quassel] or [The Lounge]), which should work with rdircd as well,
 and is probably the best way to do it for most use-cases.
 
-For specific important chats, and if rdircd can't stay reliably connected to
+Everything on discord is represented as IRC channels in rdircd (incl. 1-on-1 private chats),
+and topic-commands like `/topic log 2h` can be used in those to check server-side history
+backlog in a one-off manual way there - run `/t help` for more info.
+
+For specific important chats, or if rdircd can't stay reliably connected to
 discord/internet, it's also possible to automatically fetch and replay history
 from discord servers, using `/t log watch` command or `watch` in #rdircd.control channel.
 Channels marked that way have an extra `<W>` tag in topic.
 
-Discord-side backlog is checked when IRC client/bouncer reconnects and rdircd
-reconnects to server, tracking last forwarded messages per-channel (under config
-file \[state\] section, can be printed via `--conf-dump-state`) vs last\_message\_id
-channel timestamps received from discord.
+Discord-side backlog for those is automatically checked when IRC client/bouncer
+reconnects and when rdircd reconnects to discord, tracking last forwarded messages
+per-channel (under config file \[state\] section, can be printed via `--conf-dump-state`)
+vs last\_message\_id channel timestamps received from discord.
 
-I'd recommend enabling this for private chats or select low-traffic or important channels,
-as with many busy chats, it can end up adding a massive amounts of history-fetch requests
-on unstable network with reconnects, which is not really how discord clients normally work
-(only display one screenful of a channel history that user is looking at).\
-I.e. for chats where backlog is not just usual background noise that no one reads anyway.
+I'd recommend to avoid using such automatic catch-up for many/busy chats, as it
+can end up adding massive amounts of history-fetch requests on unstable network,
+and is not really how discord clients normally work (only display one screenful
+of a channel history that user is looking at).
+I.e. only set for chats where backlog is not just the usual background noise.
+
+`msg-history-fetch-limit` option can adjust sanity-check limit on fetching such server-side
+backlogs, e.g. to avoid spamming IRC client with 1000s of irrelevant messages when reconnecting
+somewhere after a while.
 
 [IRC bouncer]: https://ircv3.net/software/clients#bouncers
 [ZNC]: https://znc.in/
