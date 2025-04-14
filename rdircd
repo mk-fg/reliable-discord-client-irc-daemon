@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.12' # git-version: py-str
+	version = '25.04.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -518,11 +518,11 @@ doc_topic_cmds = '''
   set {topic...} - set topic, as usual irc /topic command would do.
   info - show some internal guild/channel information, like IDs and such for renames.
   info {user-name...} - query info on user name (or part of it) in this discord.
-  log [state] - replay history since "state" point (default: last rdircd stop).
+  log [state] - replay history since "state" point (default: same as "log 1").
     "state" value can be either a number, state-id, relative or iso8601 timestamp.
     Where number indicates last Nth state recorded in the config (0 - current).
-    E.g. "log 1" (same as just "log") will replay messages in the channel,
-     starting from last ev before last rdircd shutdown (saved under [state] in ini).
+    E.g. "log 1" (same as just "log") will replay messages in the channel
+     from last forwarded msg before last rdircd restart (saved under [state] in ini).
     Timestamp examples: 2019-01-05T2:00, 2019-01-08 12:30:00, 2h, 1d 5h 30m, 1mo5d.
     Relative timespan units: y/yr/year, mo/month,
       w/week, d/day, h/hr/hour, m/min/minute, s/sec/second.
@@ -983,7 +983,7 @@ class StacklessContext:
 	add = add_task
 
 
-def parse_iso8601( spec, tz_default=dt.timezone.utc, validate=False,
+def parse_iso8601( spec, tz_default=None, validate=False,
 		_re=re.compile( r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
 	if not (m := _re.search(spec)):
@@ -997,7 +997,7 @@ def parse_iso8601( spec, tz_default=dt.timezone.utc, validate=False,
 			k = {'+':1,'-':-1}[tz[0]]
 			hh, mm = ((int(n) * k) for n in tz[1:].split(':', 1))
 			tz = dt.timezone(dt.timedelta(hours=hh, minutes=mm), tz)
-	else: tz = tz_default
+	else: tz = tz_default or dt.datetime.now().astimezone().tzinfo
 	ts_list = list(m.groups()[:5])
 	if not ts_list[3]: ts_list[3] = ts_list[4] = 0
 	us = f'{m.group("us") or 0}000000'[:6]
@@ -4207,7 +4207,7 @@ class RDIRCD:
 						nd = bool(self.conf.state_fwd(self.uid_start))
 						notice_cmd('Recorded per-run last-forwarded-msg timestamps:')
 						for n, (v, k) in enumerate(state_list):
-							n = len(state_list) - n - 1 - nd # 1 is always pre-restart state
+							n = len(state_list) - n - nd # 1 is always pre-restart state, 0 for current run
 							notice_cmd(f'  [{n}] {k} = {ts_iso8601(v, human=True)}')
 					return
 				if state in ['watch', 'unwatch']:
@@ -4226,7 +4226,7 @@ class RDIRCD:
 					return notice_cmd(f'History watch/replay {wc} for this channel')
 				ts = None
 				if state.lstrip('-+').isdigit():
-					n = -1 - int(abs(state))
+					n = -1 - abs(int(state))
 					if not self.conf.state_fwd(self.uid_start): n += 1
 					try: ts, k = state_list[n]
 					except IndexError: raise IRCBridgeSignal(f'No state with index {state}')
