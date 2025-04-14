@@ -12,15 +12,15 @@ Table of Contents
     - [Installation](#hdr-installation)
     - [Setup and actual usage](#hdr-setup_and_actual_usage)
 
-- [Misc Feature Info](#hdr-misc_feature_info)
+- [Misc feature info](#hdr-misc_feature_info)
 
-    - [Multiple Config Files](#hdr-multiple_config_files)
-    - [Systemd Integration]
-    - [Private Chats](#hdr-private_chats)
-    - [Channel Commands](#hdr-channel_commands)
+    - [Multiple config files](#hdr-multiple_config_files)
+    - [Systemd integration]
+    - [Private chats](#hdr-private_chats)
+    - [Channel commands](#hdr-channel_commands)
     - [#rdircd.monitor and #rdircd.leftover channels]
     - [People's names on discord]
-    - [Local Name Aliases]
+    - [Local name aliases]
     - [Private messages and friends](#hdr-private_messages_and_friends)
     - [Discord channel threads / forums](#hdr-discord_channel_threads___forums)
     - [Auto-joining channels]
@@ -30,7 +30,7 @@ Table of Contents
     - [@silent messages and other such flags]
     - [Custom replacements/blocks in outgoing messages]
     - [Custom filtering for all received messages]
-    - [Lookup Discord IDs]
+    - [Lookup discord IDs]
     - [Channel name disambiguation]
     - [OSC 8 hyperlinks for terminal IRC clients]
     - [Voice chat activity notifications]
@@ -53,11 +53,11 @@ Table of Contents
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
 [WARNING]: #hdr-warning
-[Systemd Integration]: #hdr-systemd_integration
+[Systemd integration]: #hdr-systemd_integration
 [#rdircd.monitor and #rdircd.leftover channels]:
   #hdr-rdircd.monitor_and_rdircd.leftover_channels
 [People's names on discord]: #hdr-people_s_names_on_discord
-[Local Name Aliases]: #hdr-local_name_aliases
+[Local name aliases]: #hdr-local_name_aliases
 [Auto-joining channels]: #hdr-auto-joining_channels
 [Channel history]: #hdr-channel_history
 [Discord user mentions and emojis]:
@@ -70,7 +70,7 @@ Table of Contents
   #hdr-custom_replacements_blocks_in_outgoing_m.NzCf
 [Custom filtering for all received messages]:
   #hdr-custom_filtering_for_all_received_messages
-[Lookup Discord IDs]: #hdr-lookup_discord_ids
+[Lookup discord IDs]: #hdr-lookup_discord_ids
 [Channel name disambiguation]: #hdr-channel_name_disambiguation
 [OSC 8 hyperlinks for terminal IRC clients]:
   #hdr-osc_8_hyperlinks_for_terminal_irc_clients
@@ -268,7 +268,7 @@ You have been warned! :)
 
 * [Python 3.8+](https://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
-* (Optional) [python-systemd] - only if using tweaks mentioned in [Systemd Integration] below.
+* (Optional) [python-systemd] - only if using tweaks mentioned in [Systemd integration] below.
 
 On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
@@ -362,7 +362,7 @@ rdircd % ./rdircd --debug -c rdircd.ini
 
 For setting up daemon/script to run on OS boot, [rdircd.service] systemd unit file
 can be used in most Linux environments (maybe edit ExecStart= options and paths there,
-and see also [Systemd Integration] below), or otherwise probably via init.d script,
+and see also [Systemd integration] below), or otherwise probably via init.d script,
 or maybe in "screen" or "tmux" session as a last-resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
@@ -469,13 +469,13 @@ and more on particular uses of those below.
 
 
 <a name=hdr-misc_feature_info></a>
-## Misc Feature Info
+## Misc feature info
 
 Notes on various optional and less obvious features are collected here.\
 See "Usage" section for a more general information.
 
 <a name=hdr-multiple_config_files></a>
-### Multiple Config Files
+### Multiple config files
 
 Multiple ini files can be specified with `-c` option, overriding each other in sequence.
 
@@ -498,7 +498,7 @@ Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
 
 <a name=hdr-systemd_integration></a>
-### Systemd Integration
+### Systemd integration
 
 [rdircd.service] systemd unit file in the repository can be used as a template
 for running rdircd with [systemd] init daemon, which is used by most linux distros.
@@ -533,7 +533,7 @@ or fdstore mechanisms are detected on startup from systemd-set environment varia
 [File Descriptor Store]: https://systemd.io/FILE_DESCRIPTOR_STORE/
 
 <a name=hdr-private_chats></a>
-### Private Chats
+### Private chats
 
 ALL chats in rdircd (and discord) are **a channel**.\
 IRC's /q, /query and /msg **cannot be used** in an IRC-typical way.\
@@ -552,7 +552,7 @@ if needed.
   #hdr-rdircd.monitor_and_rdircd.leftover_channels
 
 <a name=hdr-channel_commands></a>
-### Channel Commands
+### Channel commands
 
 In all IRC channels representing a discord channel - send `/topic`
 (or `/t` - shorthand for it often supported in IRC clients) - which
@@ -728,7 +728,7 @@ name on that specific discord, while `/who` command searches all joined discords
   https://support.discord.com/hc/en-us/articles/12620128861463-New-Usernames-Display-Names
 
 <a name=hdr-local_name_aliases></a>
-### Local Name Aliases
+### Local name aliases
 
 (more like "renames" than "aliases", as old names don't continue to work for these)
 
@@ -784,7 +784,7 @@ This should:
 - Rename couple users, referenced by their discord username and id.
 
   `/t info <nick-or-part-of-it>` command in discord channel or similar `/who`
-  irc-command can help to [Lookup Discord IDs], like ones used there.
+  irc-command can help to [Lookup discord IDs], like ones used there.
 
 Currently only listed types of renaming are implemented, for discord prefixes
 and channels, but there are also options under \[irc\] section to set names for
@@ -1181,7 +1181,7 @@ rule(s) are still needed/being-used.
 [python re syntax]: https://docs.python.org/3/howto/regex.html
 
 <a name=hdr-lookup_discord_ids></a>
-### Lookup Discord IDs
+### Lookup discord IDs
 
 Mostly useful for debugging - `/who` command can resolve specified ID
 (e.g. channel_id from protocol logs) to a channel/user/guild info:
@@ -1673,7 +1673,7 @@ Here are some random commands to try out in #rdircd.control channel:
     `set discord-name-preference-order 'login'`
 
     If even ascii logins of specific users get annoying, use `[renames]` in
-    config to change those locally (see [Local Name Aliases] section for more info):
+    config to change those locally (see [Local name aliases] section for more info):
 
     ``` ini
     [renames]
