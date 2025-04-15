@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.17' # git-version: py-str
+	version = '25.04.18' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2106,7 +2106,6 @@ class Discord:
 	async def cmd_history(self, cc, ts, lwm=70, hwm=90):
 		if not self.st_eris.enabled: return list()
 		if (n := self.conf.discord_msg_history_fetch_limit) <= 0: n = 2**32
-		ts += 0.001 # make sure to exclude ts itself
 		msg_list, flake, limit = list(), self.flake_build(ts), n
 		while True:
 			msg_batch = await self.conn_req(
@@ -2117,10 +2116,9 @@ class Discord:
 				line, tags = self.session.op_msg_parse(m, cc.gg)
 				if not line: continue # joins/parts/pins and such
 				if (n := n - 1) < 0: break # fetch batches are larger to include non-msg noise
-				# Note: parse_iso8601(m.timestamp) == flake_parse(m.id)
+				if abs((msg_ts := self.flake_parse(m.id)) - ts) < 0.01: continue
 				self.cmd_user_cache(cc.gg.id, m.author.id, nick := self.user_name(m.author))
-				msg_list.append(adict( nick=nick,
-					line=line.strip(), tags=tags, ts=self.flake_parse(m.id) ))
+				msg_list.append(adict(nick=nick, line=line.strip(), tags=tags, ts=msg_ts))
 				if int(m.id) > int(flake): flake = m.id
 			if flake == flake_last or len(msg_list) < lwm: break
 		if n < 0: msg_list.append(adict(
