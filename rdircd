@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.18' # git-version: py-str
+	version = '25.04.19' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3315,8 +3315,7 @@ class DiscordSession:
 			if c.get('nsfw'): tags.nsfw = ''
 			if c.get('is_spam'): tags.spam = ''
 			if n := c.get('rate_limit_per_user'): tags.msg_rate_limit = repr_duration(n, ext='')
-			if flags := c.get('safety_warnings'):
-				ts = time.time()
+			if (flags := c.get('safety_warnings')) and (ts := time.time()):
 				for w in flags:
 					if ( not (wt := w.get('type')) or w.get(w.dismiss_timestamp)
 						or parse_iso8601(w.get(w.expiry), validate=0) < ts ): continue
@@ -4000,7 +3999,7 @@ class RDIRCD:
 	c_bc_type = enum.Enum('c_bc_type', 'sys mon nc vc proxy')
 
 	def __init__(self, conf):
-		self.conf, self.crash_task, self.log = conf, None, get_logger('rdircd.bridge')
+		self.run_task, self.conf, self.log = None, conf, get_logger('rdircd.bridge')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
@@ -4023,8 +4022,8 @@ class RDIRCD:
 		try: boot_id = str_hash(pl.Path('/proc/sys/kernel/random/boot_id').read_text().strip(), 3)
 		except OSError: boot_id = '---' # can be inaccessible due to sandboxing
 		self.uid_start = f'{str_hash(self.uid_seed, 3)}.{boot_id}.{str_hash(os.urandom(6), 6)}'
-		self.crash_check = self.cmd_delay(self.crash_offline_check)
 		self.cmd_delay(self.irc_msg_queue_proc)
+		self.cmd_delay(self.run_task_crash_offline_check)
 		return self
 
 	async def __aexit__(self, *err):
@@ -4037,15 +4036,16 @@ class RDIRCD:
 		await asyncio.sleep(delay)
 		ctypes.string_at(0) # should reliably crash the process
 
-	async def crash_offline_check(self):
+	async def run_task_crash_offline_check(self):
+		'Exit with error if crash-on-offline-timeout expires without uptime_ts_online bump'
 		while True:
 			if not (timeout := self.conf._discord_crash_on_offline_timeout):
 				await asyncio.sleep(30 * 60); continue # in case it'll get configured later
 			ts_online = self.uptime_ts_online or self.uptime_ts
 			if (delay := timeout - (td := time.monotonic() - ts_online)) <= 0:
-				self.log.error( 'Exiting due to crash-on-offline-timeout'
-					' - offline since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
-				task, self.crash_task = self.crash_task, 7; task.cancel(); break
+				self.log.error( 'Exiting due to crash-on-offline-timeout - offline'
+					' since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
+				task, self.run_task = self.run_task, 7; task.cancel(); break
 			await asyncio.sleep(delay + 1) # downtime should be >timeout by then
 
 	def systemd_fdstore_irc(self, fd=None):
@@ -4130,7 +4130,7 @@ class RDIRCD:
 	async def run_async(self):
 		with cl.suppress(asyncio.CancelledError):
 			async with self: await self.run()
-		return isinstance(code := self.crash_task, int) and code
+		return isinstance(code := self.run_task, int) and code
 
 
 	def irc_conn_new(self, irc):
@@ -5867,7 +5867,7 @@ def main(args=None, conf=None):
 		log_handler.addFilter(log_proto_debug_filter)
 		logging.root.addHandler(log_handler)
 
-		rdircd_task = rdircd.crash_task = asyncio.create_task(rdircd.run_async())
+		rdircd_task = rdircd.run_task = asyncio.create_task(rdircd.run_async())
 		for sig in signal.SIGINT, signal.SIGTERM:
 			loop.add_signal_handler(sig, rdircd_task.cancel)
 		loop.add_signal_handler(signal.SIGHUP, _conf_sighup_reload)
