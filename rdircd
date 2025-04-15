@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.16' # git-version: py-str
+	version = '25.04.17' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -144,6 +144,7 @@ class RDIRCDConfigBase:
 	irc_topic_voice = 'rdircd: read-only voice-chat notifications from all discords/channels'
 	irc_topic_voice_guild = 'rdircd: [ {guild_name} ] read-only voice-chat events for discord'
 	irc_topic_channel = '{guild_name}: {chan_tags}{chan_topic}'
+	irc_topic_hide_tags = '' # space-separated channel tag names to hide in IRC topics
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -386,6 +387,7 @@ class RDIRCDConfigBase:
 	_conv_irc_len_dont_split_re = lambda s,v: re.compile(v or '$x') # $x = never match
 	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s,v: re.compile(v or '$x')
+	_conv_irc_topic_hide_tags = lambda s,v: set(v.replace(*'_-').split())
 	_conv_discord_crash_on_offline_timeout = lambda s,v: v and parse_duration(v)
 	_conv_discord_name_preference_order = lambda s,v: v.lower().split()
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'], None)
@@ -424,7 +426,7 @@ Commands:
   set [-s|--save] [option value] - set config option value,
      saving it to the last ini file if -s/--save is specified.
     Run without args to get full list of options with their current values.
-    Not all values changed this way will have an effect without restart.
+    Some value changes only take effect on discord reconnect or rdircd restart.
 
   reload - re-read configuration from same ini files as on start.
     Updates existing state, so removing values from files won't reset them.
@@ -992,7 +994,7 @@ class StacklessContext:
 def parse_iso8601( spec, tz_default=None, validate=False,
 		_re=re.compile( r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
-	if not (m := _re.search(spec)):
+	if not (m := _re.search(spec or '')):
 		if not isinstance(validate, bool): return validate # invalid-fallback value
 		raise ValueError(spec)
 	if validate is True: return
@@ -2445,6 +2447,8 @@ class DiscordSession:
 		stage = 13
 		forum = 15
 		media = 16
+		lobby = 17
+		private_temp = 18
 
 	class c_msg_type(enum.IntEnum):
 		# Some sequential numbers are unused/reserved/missing
@@ -2489,12 +2493,17 @@ class DiscordSession:
 		media = -1 # internal type, same as "default" but can have empty "content"
 
 	class c_rel_type(enum.IntEnum):
-		none = 0
-		friend = 1
-		blocked = 2
-		friend_req_in = 3
-		friend_req_out = 4
-		friend_implicit = 5
+		none = 0; friend = 1; blocked = 2; friend_req_in = 3; friend_req_out = 4; friend_implicit = 5
+
+	class c_chan_flags(enum.IntEnum):
+		# https://docs.discord.sex/resources/channel#channel-flags
+		# Only flags used to parse channel tags are listed here
+		pinned_thread = 1 << 1; spam = 1 << 5; resources = 1 << 7
+		ai = 1 << 8; to_be_deleted = 1 << 9; no_access = 1 << 17
+
+	class c_chan_warnings(enum.IntEnum):
+		# https://docs.discord.sex/resources/channel#safety-warning-structure
+		stranger = 1; inappropriate = 2; offensive = 3; hacked = 4
 
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo ts everyone other')
 	c_msg_tags_ts_fmts = dict(
@@ -3023,7 +3032,7 @@ class DiscordSession:
 		if resume_url := md.get('resume_gateway_url'):
 			self.conf.discord_gateway = resume_url
 		td_sess, td_conn = ((repr_duration(self.st_da.get(
-			'ts_disconnect' ) or ts, ts0, ext=None) if ts0 else '-') for ts0 in ts_start)
+			'ts_disconnect' ) or ts, ts0, ext='') if ts0 else '-') for ts0 in ts_start)
 		level = 'warning' if self.conf.discord_ws_reconnect_warn_always else 'debug'
 		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
 		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
@@ -3267,7 +3276,7 @@ class DiscordSession:
 					strip=(c_tid.lower() + c_tid.upper()) if len(c_tid) == 1 else '' ))
 				name = self.op_ev_chans_thread_name(c_tid, name, cc_parent.name)
 			else: c_tid = None
-			cc_private = c.type in [ct.private, ct.private_group]
+			cc_private = c.type in [ct.private, ct.private_group, ct.private_temp]
 
 			if c_tid:
 				cc.tid, cc.parent, cc_parent.threads[c_tid] = c_tid, cc_parent, cc
@@ -3303,10 +3312,24 @@ class DiscordSession:
 				name = rename
 			cc.names.base = name # deduped later, or reverted back to this from hashed one
 
+			tags = adict() # ordered, supposed to be filtered into topic
+			tags.update((k, '') for k in 'voice stage forum media'.split() if cc_type is ct[k])
+			if c.get('nsfw'): tags.nsfw = ''
+			if c.get('is_spam'): tags.spam = ''
+			if n := c.get('rate_limit_per_user'): tags.msg_rate_limit = repr_duration(n, ext='')
+			if flags := c.get('safety_warnings'):
+				ts = time.time()
+				for w in flags:
+					if ( not (wt := w.get('type')) or w.get(w.dismiss_timestamp)
+						or parse_iso8601(w.get(w.expiry), validate=0) < ts ): continue
+					tags.update((n.name, '') for n in self.c_chan_warnings if wt & n.value)
+			if flags := c.get('flags'):
+				tags.update((n.name, '') for n in self.c_chan_flags if flags & n.value)
+
 			cc.update(
 				id=c.id, gg=gg, did=f'#{gg.id}-{c.id}', name=name, topic=topic,
 				ct=cc_type, private=cc_private, pos=c.get('position', -1)+1,
-				nsfw=c.get('nsfw'), last_msg_ts=self.discord.flake_parse(c.get('last_message_id')) )
+				tags=tags, last_msg_ts=self.discord.flake_parse(c.get('last_message_id')) )
 			chans_updated[c.id] = cc
 		return chans_updated, new_threads
 
@@ -4519,15 +4542,13 @@ class RDIRCD:
 			cache_track(gi.gg, 'name chans ts_joined')
 			for cc in sorted( gi.gg.chans.values(),
 					key=lambda cc: (cc.get('pos') or 999, cc.name) ):
-				cache_track(cc, 'name topic pos nsfw')
-				tags, name = '', gi.name_fmt.format(
-					prefix=gi.prefix, name=self.irc_name(cc.name) )
+				cache_track(cc, 'name topic pos tags')
+				tags = ''.join( '['+( k.replace(*'_-') +
+					(v and f'={v}') )+'] ' for k, v in cc.tags.items()
+					if k.replace(*'_-') not in self.conf._irc_topic_hide_tags )
 				if self.conf.watch.get_keys(cc.id): tags += '<W> '
-				if cc.nsfw: tags += '[nsfw] '
-				if cc.ct is cc.ct.voice: tags += '[voice] '
-				elif cc.ct is cc.ct.stage: tags += '[stage] '
-				elif cc.ct is cc.ct.forum: tags += '[forum] '
-				elif cc.ct is cc.ct.media: tags += '[media] '
+				name = gi.name_fmt.format(
+					prefix=gi.prefix, name=self.irc_name(cc.name) )
 				topic = ' // '.join(filter(None, map(str.strip, (cc.topic or '').splitlines())))
 				if not topic: topic = f'<no-topic> {cc.name}'
 				topic = _topic_fmt('channel', gi, cid=cc.id, tags=tags, topic=topic)
@@ -4627,7 +4648,7 @@ class RDIRCD:
 		'Implementation for status display in control-channel'
 		st, ts = self.discord.st_da, time.monotonic()
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
-		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=None))
+		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=''))
 			for v in [conn_ts, *(st.get(k, '') for k in ('ts_session', 'ts_connect'))] )
 		if sess_st != 'ready': conn_td = ''
 		up_td = repr_duration(self.uptime_ts, time.monotonic())
