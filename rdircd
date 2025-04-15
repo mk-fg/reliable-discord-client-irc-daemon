@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.15' # git-version: py-str
+	version = '25.04.16' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3305,8 +3305,8 @@ class DiscordSession:
 
 			cc.update(
 				id=c.id, gg=gg, did=f'#{gg.id}-{c.id}', name=name, topic=topic,
-				ct=cc_type, private=cc_private, pos=c.get('position', -1)+1, nsfw=c.get('nsfw'),
-				last_msg=c.get('last_message_id'), last_pin=c.get('last_pin_timestamp') )
+				ct=cc_type, private=cc_private, pos=c.get('position', -1)+1,
+				nsfw=c.get('nsfw'), last_msg_ts=self.discord.flake_parse(c.get('last_message_id')) )
 			chans_updated[c.id] = cc
 		return chans_updated, new_threads
 
@@ -4542,11 +4542,12 @@ class RDIRCD:
 		if not ( (conn or self.irc_conns) and (cc := cc or c.get('cc'))
 			and (gg := cc.get('gg')) and self.conf.watch.get_keys(cc.id)
 			and (ts := self.conf.state_watch(cc.id) or ts) ): return
-		if (cc_ts := self.discord.flake_parse(cc.get('last_msg'))) and cc_ts - ts < 0.01:
+		if (cc_ts := cc.get('last_msg_ts')) and cc_ts - ts < 0.01:
 			return self.log.debug( 'No new watched-chan history from {}:'
 				' id={} gid={} name={}', ts_iso8601_fixed(ts), cc.id, gg.id, cc.name )
-		self.log.debug( 'Checking watched-chan history from {} to {}: id={} gid={} name={}',
-			ts_iso8601_fixed(ts), cc_ts and ts_iso8601_fixed(cc_ts) or '', cc.id, gg.id, cc.name )
+		self.log.debug(
+			'Checking watched-chan history from {} to now: id={} gid={} name={} last-msg={}',
+			ts_iso8601_fixed(ts), cc.id, gg.id, cc.name, cc_ts and ts_iso8601_fixed(cc_ts) or '' )
 		if not (msg_list := await self.discord.cmd_history(cc, ts)): return
 		notice_cmd = lambda line: self.cmd_msg_discord(cc, line=line, conn=conn)
 		notice_cmd( '--- Auto-replaying messages since'
@@ -4988,9 +4989,10 @@ class RDIRCD:
 			conn= limits sending to proxy-chan of one irc conn, e.g. for history-replay.
 			name_irc= is used to set destination irc proxy-channel to use instead of cc.
 			Returns True if message can be ACKed to discord, if needed/enabled.'''
-		# Must be synchronous wrt all discord data,
-		#  as it can be called right before channel delete/rename.
-		if ts and self.irc_conns: self.conf.state_watch(cc.id, ts, self.uid_start)
+		# Must be synchronous wrt all discord data - can be called before chan del/rename
+		if ts:
+			cc.last_msg_ts = ts
+			if self.irc_conns: self.conf.state_watch(cc.id, ts, self.uid_start)
 		prefix, ev, name = '', '', name_irc or self.st_br.did_chan.get(cc.did)
 		if conn: skip_monitor, conns_joined = True, [conn] # e.g. log-replay for this irc client
 		else:
