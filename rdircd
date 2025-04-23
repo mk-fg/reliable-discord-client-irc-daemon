@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.19' # git-version: py-str
+	version = '25.04.20' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3616,6 +3616,10 @@ class DiscordSession:
 	def op_msg_media_info_rich(self, em, title, desc, em_src, meta_add, meta_skip):
 		'Parse type=rich embed, which can be many different things'
 		lines = list()
+		if ( (m := re.search(r'/@([\w.]+)/', url := str_norm(em.get('url', ''))))
+				and desc and f'@{m[1]}@' in em_src
+				and url.startswith(str_norm((em.get('author', dict())).get('url', ''))) ):
+			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon embeds
 		if em.get('footer', dict()).get('text') == 'Twitter':
 			media = dict()
 			for mt in 'image', 'video':
@@ -3655,11 +3659,7 @@ class DiscordSession:
 				w_min = round(max(70, min(120, (em_len - 10) / 3)))
 				lines = list( line.replace(' ', ' :: ').replace('\ue790', ' ')
 					for line in str_wrap(' '.join(inline), w_min, w_max) ) + lines
-			if ( (m := re.search(r'/@([\w.]+)/', url := str_norm(em.get('url', ''))))
-					and desc and f'@{m[1]}@' in em_src
-					and url.startswith(str_norm((em.get('author', dict())).get('url', ''))) ):
-				desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon embeds
-			if msg := ' :: '.join(filter(None, [em_src, title, desc])).replace(r'\.', '.'):
+			if msg := ' :: '.join(filter(None, [em_src, title, desc])):
 				lines = [msg] + lines # something like "src :: desc" mastodon msg
 		else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
 		if not lines and set(em.keys()).difference([ # just "Above time in your local time"
