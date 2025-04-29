@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.24' # git-version: py-str
+	version = '25.04.25' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5010,7 +5010,7 @@ class RDIRCD:
 						nc_conns_skip.add(conn)
 					for line in lines: conn.cmd_msg_chan(nick, name, line, notice=notice)
 
-	def cmd_msg_discord_lines(self, prefix, msg, dedup_key=None):
+	def cmd_msg_discord_lines(self, prefix, msg, dedup=False, dedup_key=None):
 		'Split message into prefixed irc-lines and deduplicate those with earlier ones as-needed'
 		if dedup_key:
 			dd, timeout = self.st_br.line_dedup, self.conf._irc_dedup_interval
@@ -5018,7 +5018,7 @@ class RDIRCD:
 				dd = self.st_br.line_dedup = TimedCacheDict(timeout) if timeout else None
 			if dd is None: dedup_key = None
 		if (msg := msg.splitlines()) != (msg_cut := list( ln for ln in msg
-				if not dedup_key or not dd.replace(tuple_hash(dedup_key+(ln,), 8)) )):
+				if not dedup_key or not dd.replace(tuple_hash(dedup_key+(ln,), 8)) or not dedup )):
 			prefix += self.conf.irc_prefix_cut
 		return (f'{prefix}{ln}' for ln in msg_cut)
 
@@ -5067,9 +5067,9 @@ class RDIRCD:
 		if not skip_chan:
 			joined = not cc.users.check_bump(nick_discord)
 			cc.users[nick_discord] = nick
-			for conn in conns_joined:
-				for n, ln in enumerate(self.cmd_msg_discord_lines(
-						prefix, line, dedup_key=prefix_tag and (name, nick, prefix, notice) )):
+			for n, ln in enumerate(self.cmd_msg_discord_lines(
+					prefix, line, dedup=prefix_tag, dedup_key=(name, nick, notice) )):
+				for conn in conns_joined:
 					conn.cmd_msg_chan(nick, name, ln, notice=notice, joined=joined and not n)
 
 		# Relay message to all relevant monitor/leftover channels
