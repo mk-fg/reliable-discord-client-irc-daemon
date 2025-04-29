@@ -1599,6 +1599,8 @@ prefix-attachment = 🖼️ \
 prefix-uis = ⚙️ \
 prefix-interact = 🤖 \
 prefix-poll = 🗳️.{} \
+prefix-pinned = 📌 \
+prefix-cut = ✂️ \
 ```
 
 Note the "space and backslash" at the end in these options, which is to preserve

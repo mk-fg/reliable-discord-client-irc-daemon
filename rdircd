@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.23' # git-version: py-str
+	version = '25.04.24' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -68,6 +68,7 @@ class RDIRCDConfigBase:
 	irc_prefix_interact = '[cmd] '
 	irc_prefix_poll = '[poll.{}] '
 	irc_prefix_pinned = '[pin] '
+	irc_prefix_cut = '[cut] ' # added when e.g. some msg lines were skipped for deduplication
 	irc_prefix_guild_event = '--- ' # user bans, friend statuses, scheduled guild events, etc
 	irc_prefix_event = '--- ' # user/chan events - reactions, voice-chats, statuses, gifts, etc
 	irc_prefix_all = '' # universal prefix to add to all non-notice incoming messages
@@ -86,6 +87,7 @@ class RDIRCDConfigBase:
 	irc_inline_reply_quote_len = 90 # limits length of replied-to msgs, 0 = disable it
 	irc_ref_quote_len = 70 # len-limit on referenced msgs in reactions and such, 0 = hide those
 	irc_ref_allow_disabling_pings = True # don't ping irc nick if replying user disables it
+	irc_dedup_interval = '10m' # deduplicate lines in quick msg edits/updates, 0 = disable
 
 	irc_private_chat_min_others_to_use_id_name = 2 # for #me.chat.user1+user2+... vs #me.chat.<id>
 	irc_private_chat_name_len = 120 # long userlist-name will truncate usernames, depends on client
@@ -387,6 +389,7 @@ class RDIRCDConfigBase:
 	_conv_irc_len_dont_split_re = lambda s,v: re.compile(v or '$x') # $x = never match
 	_conv_irc_names_timeout = _parse_td_str
 	_conv_irc_chan_auto_join_re = lambda s,v: re.compile(v or '$x')
+	_conv_irc_dedup_interval = _parse_td_str
 	_conv_irc_topic_hide_tags = lambda s,v: set(v.replace(*'_-').split())
 	_conv_discord_crash_on_offline_timeout = lambda s,v: v and parse_duration(v)
 	_conv_discord_name_preference_order = lambda s,v: v.lower().split()
@@ -1252,6 +1255,10 @@ class TimedCacheDict(cs.UserDict):
 	def check_bump(self, k, _v=_no_value):
 		'Same as "key in TimedCacheDict" check, but bumps timeout with bump_on_get'
 		return self.get(k, _v) is not _v
+
+	def replace(self, k, v=None, _v=_no_value):
+		'Get+set value, returning True if equal value was already there'
+		res = self.get(k, _v) == v; self[k] = v; return res
 
 class TimeSeriesBuckets:
 	'''Counts events within intervals with up to "interval / buckets" time-precision.
@@ -4013,7 +4020,7 @@ class RDIRCD:
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.tasks = StacklessContext(self.log)
-		self.st_br = adict( chan_map=None, uid=dict(),
+		self.st_br = adict( chan_map=None, line_dedup=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover/voice channels
 			gid_mon_chan=dict(), gid_nc_chan=dict(), gid_vc_chan=dict(), did_chan=dict(),
@@ -5003,6 +5010,18 @@ class RDIRCD:
 						nc_conns_skip.add(conn)
 					for line in lines: conn.cmd_msg_chan(nick, name, line, notice=notice)
 
+	def cmd_msg_discord_lines(self, prefix, msg, dedup_key=None):
+		'Split message into prefixed irc-lines and deduplicate those with earlier ones as-needed'
+		if dedup_key:
+			dd, timeout = self.st_br.line_dedup, self.conf._irc_dedup_interval
+			if dd is None or dd.timeout != timeout:
+				dd = self.st_br.line_dedup = TimedCacheDict(timeout) if timeout else None
+			if dd is None: dedup_key = None
+		if (msg := msg.splitlines()) != (msg_cut := list( ln for ln in msg
+				if not dedup_key or not dd.replace(tuple_hash(dedup_key+(ln,), 8)) )):
+			prefix += self.conf.irc_prefix_cut
+		return (f'{prefix}{ln}' for ln in msg_cut)
+
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ) -> bool:
 		'''Sends annotated Discord message to all proxy/monitor IRC channels.
@@ -5013,18 +5032,19 @@ class RDIRCD:
 		if ts:
 			cc.last_msg_ts = ts
 			if self.irc_conns: self.conf.state_watch(cc.id, ts, self.uid_start)
-		prefix, ev, name = '', '', name_irc or self.st_br.did_chan.get(cc.did)
+		ev, name = '', name_irc or self.st_br.did_chan.get(cc.did)
 		if conn: skip_monitor, conns_joined = True, [conn] # e.g. log-replay for this irc client
 		else:
 			conns_joined = self.cmd_chan_conns(name) if name else list()
 			if not conns_joined and not self.cmd_conn(): return # no irc clients
 
+		prefix_tag = prefix = ''
 		if tags:
-			mt, prefix = DiscordSession.c_msg_tags, tags.pop('_prefix', prefix)
+			prefix_tag = prefix = tags.pop('_prefix', prefix)
 			if ev := tags.pop('_ev', None): prefix += self.conf.irc_prefix_event
 			for k, (tt, v) in tags.items():
-				if tt == mt.user: v = f'@{self.irc_name(v)}'
-				elif tt == mt.chan:
+				if tt == DiscordSession.c_msg_tags.user: v = f'@{self.irc_name(v)}'
+				elif tt == DiscordSession.c_msg_tags.chan:
 					v = IRCProtocol.chan_spec(self.st_br.did_chan.get(v, v))
 				line = line.replace(k, v)
 		if nick: nick_discord, nick = nick, self.irc_name(nick)
@@ -5048,9 +5068,9 @@ class RDIRCD:
 			joined = not cc.users.check_bump(nick_discord)
 			cc.users[nick_discord] = nick
 			for conn in conns_joined:
-				for n, line in enumerate(line.splitlines()):
-					conn.cmd_msg_chan( nick, name,
-						f'{prefix}{line}', notice=notice, joined=joined and not n )
+				for n, ln in enumerate(self.cmd_msg_discord_lines(
+						prefix, line, dedup_key=prefix_tag and (name, nick, prefix, notice) )):
+					conn.cmd_msg_chan(nick, name, ln, notice=notice, joined=joined and not n)
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
