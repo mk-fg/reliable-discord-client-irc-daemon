@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.25' # git-version: py-str
+	version = '25.04.26' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4990,7 +4990,7 @@ class RDIRCD:
 	def cmd_msg_monitor( self, nick, msg,
 			prefix='', notice=True, gid=None, leftover_skip=None, ev=None ):
 		'Sends message to monitor/leftover IRC channel(s)'
-		lines_n = len(lines := msg.splitlines())
+		lines_n = len(lines := msg.splitlines() if isinstance(msg, str) else msg)
 		m, n = self.conf.irc_len_monitor, self.conf.irc_len_monitor_lines
 		if len(lines) > n: lines = list(line for line in lines if line.strip())
 		lines = list(f'{prefix}{str_cut(s, m, len_bytes=True)}' for s in lines[:n+1])
@@ -5010,7 +5010,7 @@ class RDIRCD:
 						nc_conns_skip.add(conn)
 					for line in lines: conn.cmd_msg_chan(nick, name, line, notice=notice)
 
-	def cmd_msg_discord_lines(self, prefix, msg, dedup=False, dedup_key=None):
+	def cmd_msg_discord_lines(self, msg, dedup=False, dedup_key=None):
 		'Split message into prefixed irc-lines and deduplicate those with earlier ones as-needed'
 		if dedup_key:
 			dd, timeout = self.st_br.line_dedup, self.conf._irc_dedup_interval
@@ -5019,8 +5019,8 @@ class RDIRCD:
 			if dd is None: dedup_key = None
 		if (msg := msg.splitlines()) != (msg_cut := list( ln for ln in msg
 				if not dedup_key or not dd.replace(tuple_hash(dedup_key+(ln,), 8)) or not dedup )):
-			prefix += self.conf.irc_prefix_cut
-		return (f'{prefix}{ln}' for ln in msg_cut)
+			msg_cut = list(f'{self.conf.irc_prefix_cut}{ln}' for ln in msg_cut)
+		return msg_cut
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
 			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ) -> bool:
@@ -5062,15 +5062,16 @@ class RDIRCD:
 			name = f'ERR [ {cc.gg.name} ] {cc.name}'
 		prefix_mon = f'{IRCProtocol.chan_spec(name)} :: {prefix}'
 		if self.cmd_msg_recv_filter(nick, prefix_mon + line): return
+		lines = self.cmd_msg_discord_lines(
+			line, dedup=prefix_tag, dedup_key=(name, nick, notice) )
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
 			joined = not cc.users.check_bump(nick_discord)
 			cc.users[nick_discord] = nick
-			for n, ln in enumerate(self.cmd_msg_discord_lines(
-					prefix, line, dedup=prefix_tag, dedup_key=(name, nick, notice) )):
-				for conn in conns_joined:
-					conn.cmd_msg_chan(nick, name, ln, notice=notice, joined=joined and not n)
+			for conn, (n, ln) in it.product(conns_joined, enumerate(lines)):
+				conn.cmd_msg_chan( nick, name,
+					f'{prefix}{ln}', notice=notice, joined=joined and not n )
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
@@ -5082,7 +5083,7 @@ class RDIRCD:
 					and not self.conf.discord_thread_msgs_in_parent_chan_monitor ):
 				# Skip thread-msg in leftover if it's been sent to joined parent channel
 				conns_joined += self.cmd_chan_conns(cc.parent)
-		self.cmd_msg_monitor( nick, line, prefix_mon,
+		self.cmd_msg_monitor( nick, lines, prefix_mon,
 			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
 		return not skip_chan # ack result for discord
 
