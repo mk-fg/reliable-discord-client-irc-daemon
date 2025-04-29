@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.26' # git-version: py-str
+	version = '25.04.27' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5017,9 +5017,9 @@ class RDIRCD:
 			if dd is None or dd.timeout != timeout:
 				dd = self.st_br.line_dedup = TimedCacheDict(timeout) if timeout else None
 			if dd is None: dedup_key = None
-		if (msg := msg.splitlines()) != (msg_cut := list( ln for ln in msg
-				if not dedup_key or not dd.replace(tuple_hash(dedup_key+(ln,), 8)) or not dedup )):
-			msg_cut = list(f'{self.conf.irc_prefix_cut}{ln}' for ln in msg_cut)
+		if (msg := msg.splitlines()) != (msg_cut := list( ln for ln in msg if not ln.strip()
+				or not (dedup_key and dd.replace(tuple_hash(dedup_key+(ln,), 8)) and dedup) )):
+			msg_cut = list(f'{self.conf.irc_prefix_cut}{ln}' for ln in msg_cut if ln.strip())
 		return msg_cut
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
