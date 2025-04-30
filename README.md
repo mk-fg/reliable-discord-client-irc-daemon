@@ -1865,7 +1865,7 @@ Last updated: 2024-11-26
 
 -   There are some unofficial docs for officially-undocumented APIs and quirks:
 
-    - <https://docs.discord.sex/> - Discord Userdoccers project
+    - <https://docs.discord.food/> - Discord Userdoccers project ([discord-userdoccers on github])
     - <https://luna.gitlab.io/discord-unofficial-docs/> (+ [litecord] api-testing server)
     - <https://github.com/Merubokkusu/Discord-S.C.U.M/tree/master/docs>
     - <https://discord.neko.wtf/> (maintained by [Abaddon] client dev\[s\])
@@ -1946,6 +1946,7 @@ Last updated: 2024-11-26
 [Discord API docs]: https://discord.com/developers/docs/reference
 [discord/discord-api-spec repo]: https://github.com/discord/discord-api-spec/
 [Change Log page of the API docs]: https://discord.com/developers/docs/change-log
+[discord-userdoccers on github]: https://github.com/discord-userdoccers/discord-userdoccers
 [litecord]: https://gitlab.com/litecord/litecord
 [Abaddon]: https://github.com/uowuo/abaddon
 [message formatting tag]: https://discord.com/developers/docs/reference#message-formatting
