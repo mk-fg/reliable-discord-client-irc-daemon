@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.27' # git-version: py-str
+	version = '25.04.28' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2142,7 +2142,7 @@ class Discord:
 		return data_repr(info)
 
 	def cmd_msg_recv( self, cc, nick, line, tags=None,
-			new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
+			new_msg_flake=None, nonce=None, **cmd_msg_discord_kws ):
 		'Relay message from Discord to IRC.'
 		# new_msg_flake is only passed to update channel ts/acks or confirm own msg
 		self.log.debug('MSG: <<  :: {} {} :: {} :: {} {}', cc.gg.id, cc.name, nick, line, tags or '')
@@ -2154,7 +2154,7 @@ class Discord:
 				self.msg_ack(cc.id) # cancels unnecessary ACK to the channel, if any
 				return fut.set_result(new_msg_flake)
 		ack = self.bridge.cmd_msg_discord( cc, nick, line, tags=tags,
-			notice=notice, ts=self.flake_parse(new_msg_flake), skip_monitor=skip_monitor )
+			ts=self.flake_parse(new_msg_flake), **cmd_msg_discord_kws )
 		if self.conf.discord_msg_ack and new_msg_flake and cc.private:
 			if ack or self.conf.discord_msg_ack_always: self.msg_ack(cc.id, new_msg_flake)
 
@@ -3559,7 +3559,7 @@ class DiscordSession:
 		skip_mirrored_msg_in_monitor = (
 			tid_prefix and not self.conf.discord_thread_msgs_in_parent_chan_monitor )
 		self.discord.cmd_msg_recv( cc, nick, line.strip(), tags,
-			new_msg_flake=not msg_is_update and m.id,
+			new_msg_flake=not msg_is_update and m.id, msg_id=m.id,
 			nonce=m.get('nonce'), skip_monitor=skip_mirrored_msg_in_monitor )
 
 	def op_msg_media_info(self, m, force_meta=False):
@@ -5023,7 +5023,7 @@ class RDIRCD:
 		return msg_cut
 
 	def cmd_msg_discord( self, cc, nick=None, line=None, name_irc=None,
-			tags=None, ts=None, conn=None, notice=None, skip_monitor=False ) -> bool:
+			tags=None, ts=None, conn=None, notice=None, skip_monitor=False, msg_id=None ) -> bool:
 		'''Sends annotated Discord message to all proxy/monitor IRC channels.
 			conn= limits sending to proxy-chan of one irc conn, e.g. for history-replay.
 			name_irc= is used to set destination irc proxy-channel to use instead of cc.
@@ -5062,8 +5062,8 @@ class RDIRCD:
 			name = f'ERR [ {cc.gg.name} ] {cc.name}'
 		prefix_mon = f'{IRCProtocol.chan_spec(name)} :: {prefix}'
 		if self.cmd_msg_recv_filter(nick, prefix_mon + line): return
-		lines = self.cmd_msg_discord_lines(
-			line, dedup=prefix_tag, dedup_key=(name, nick, notice) )
+		lines = self.cmd_msg_discord_lines( line,
+			dedup=prefix_tag, dedup_key=msg_id and (msg_id, name, nick, notice) )
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
