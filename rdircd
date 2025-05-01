@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.04.29' # git-version: py-str
+	version = '25.05.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -59,6 +59,7 @@ class RDIRCDConfigBase:
 	irc_names_join = True # send irc-join msgs, for new channel users within names-timeout
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
+	irc_log_protocol_errors = False # log irc protocol issues with ERROR level instead of DEBUG
 
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
@@ -1375,6 +1376,8 @@ class IRCProtocol:
 		self.log_proto.debug( '--- -conn- {} {} {}',
 			host, port, conn_id, extra=('---', f'conn {host} {port}') )
 		self.log = get_logger(f'rdircd.irc.{conn_id}')
+		self.log_proto_err = ( self.log.debug
+			if not self.conf.irc_log_protocol_errors else self.log.error )
 		self.log.debug('Connection from {} {} [{}]', host, port, conn_id)
 		self.transport, self.st_irc.host = tr, host
 		self.send(0, 'NOTICE * :*** rdircd ready')
@@ -1511,11 +1514,11 @@ class IRCProtocol:
 		if isinstance(line_raw, str): line = line_raw
 		else:
 			try: line = line_raw.decode().strip()
-			except UnicodeDecodeError:
-				return self.log.error('Failed to decode line as utf-8: {!r}', self._repr_bin(line_raw))
+			except UnicodeDecodeError: return self.log_proto_err(
+				'Failed to decode line as utf-8: {!r}', self._repr_bin(line_raw) )
 		try: m = self._parse(line)
-		except IRCProtocolLineError:
-			return self.log.error('Line protocol error: {!r}', self._repr_bin(line_raw))
+		except IRCProtocolLineError: return self.log_proto_err(
+			'Line protocol error: {!r}', self._repr_bin(line_raw) )
 		if cmd_cache := self._cmd_cache.get(m.cmd):
 			cmd_func, cmd_ps_n = cmd_cache
 		else:
@@ -1527,16 +1530,16 @@ class IRCProtocol:
 				else: cmd_ps_n = cmd_ps_n - sum(1 for p in args if p.default is not p.empty), cmd_ps_n
 			self._cmd_cache[m.cmd] = cmd_func, cmd_ps_n
 		if not cmd_func:
-			self.log.error('Unhandled cmd: {!r}', self._repr_bin(line_raw))
+			self.log_proto_err('Unhandled cmd: {!r}', self._repr_bin(line_raw))
 			return self.send(421, ':Unknown command')
 		if not self.check_access(m.cmd):
-			return self.log.error('Out-of-order cmd: {!r}', self._repr_bin(line_raw))
+			return self.log_proto_err('Out-of-order cmd: {!r}', self._repr_bin(line_raw))
 		if cmd_ps_n is None: await aio_await_wrap(cmd_func(m))
 		else:
 			(a, b), n = cmd_ps_n, len(m.params)
 			if not a <= n <= b:
-				self.log.error( 'Command/args'
-					' mismatch [{} vs {}-{}]: {!r}', n, a, b, self._repr_bin(line) )
+				self.log_proto_err( 'Command/args mismatch'
+					' [{} vs {}-{}]: {!r}', n, a, b, self._repr_bin(line) )
 				return self.send(461, ':Incorrect command parameters')
 			try: await aio_await_wrap(cmd_func(*m.params))
 			except Exception as err:
