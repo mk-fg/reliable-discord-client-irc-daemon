@@ -242,7 +242,7 @@ You have been warned! :)
   in #rdircd.control), so can sometimes be easy to miss on quiet reconnects.
 
 - Does not support discord multifactor authentication mode, but manual-token
-  auth can probably work around that - see note on captchas below.
+  auth can probably work around that - see [note on captchas below].
 
 - [Slash commands] (for bots) are not supported in any special way,
   but you can probably still send them, if IRC client will pass these through.
@@ -257,6 +257,7 @@ You have been warned! :)
 - Seem to be against Discord guidelines to use it - see WARNING section above for more details.
 
 [Harmony]: https://github.com/nickolas360/harmony
+[note on captchas below]: #hdr-captcha-solving_is_required_to_login_for.ls9P
 [Slash commands]: https://discord.com/developers/docs/interactions/slash-commands
 
 
@@ -1408,30 +1409,33 @@ which will force client to keep reconnecting regardless.
 Don't know why or when it happens, but was reported by some users in this and
 other similar discord clients - see [issue-1] here and links in there.
 
-Fix is same as with [bitlbee-discord] - login via browser, maybe from the same
-IP Address, and put auth token extracted from this browser into configuration
-ini file's \[auth\] section, e.g.:
+Fix is to login via browser, ideally from the same IP Address (as discord "authorizes" those),
+and put auth token extracted from this browser into configuration ini file's \[auth\] section, e.g.:
 
 ``` ini
 [auth]
 token = ...
 ```
 
-See "Usage" in README of [bitlbee-discord] (scroll down on that link) for how to
-extract this token from various browsers.
+See ["Instructions on getting the Discord token for use in rdircd" github gist]
+for how to extract token from a browser, or other [third-party discord clients]
+might also have instructions on that.
 
-Note that you can use multiple configuration files (see `-c/--conf` option) to specify
-this token via separate file, generated in whatever fashion, in addition to main one.
+Extra `token-manual = yes` option should probably be added in that section
+to never try to request, update or refresh this token automatically in any way.
+This option might not be needed, if such captcha-login is only required once,
+and later automatic token requests/updates might work.
 
-Extra `token-manual = yes` option can be added in that section to never
-try to request, update or refresh this token automatically in any way.
-Dunno if this option is needed, or if such captcha-login is only required once,
-and later automatic token requests/updates might work (maybe leave note on
-[issue-1] if you'll test it one way or the other).
+When using `token` + `token-manual` options, email/password options in \[auth\]
+configuration file section are not needed and can be removed.
 
-Never encountered this problem myself so far.
+This way of authorization might also work for accounts that have multi-factor
+authentication enabled (2FA/MFA).
 
 [issue-1]: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/1
+["Instructions on getting the Discord token for use in rdircd" github gist]:
+  https://gist.github.com/TReKiE/8ef1eaceef0d976b64456292120ea3ea
+[third-party discord clients]: #hdr-links
 
 <a name=hdr-debugging_anything_strange_unknown_or_un.NQDm></a>
 ### Debugging anything strange, unknown or unexpected
