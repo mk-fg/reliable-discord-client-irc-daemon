@@ -996,6 +996,10 @@ lookup/replace "emoji" group there using this discord's emojis (case-insensitive
 and either send it translated as `I use 🐧 btw`, or return error notice if such
 emoji isn't available in that discord and not on a list of generic unicode ones.
 
+Some emojis are global and auto-translated to unicode characters, listed in
+`rdircd.unicode-emojis.txt.gz` file, which is normally looked up next to rdircd script,
+but `msg-emoji-unicode-list-file` option allows to set different path or disable using it.
+
 Set `msg-mention-re` / `msg-emoji-re` to an empty value to disable such translations.
 
 <a name=hdr-quick_edits_deletes_for_just-sent_messages></a>
