@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.0' # git-version: py-str
+	version = '25.05.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1531,7 +1531,8 @@ class IRCProtocol:
 			self._cmd_cache[m.cmd] = cmd_func, cmd_ps_n
 		if not cmd_func:
 			self.log_proto_err('Unhandled cmd: {!r}', self._repr_bin(line_raw))
-			return self.send(421, ':Unknown command')
+			return self.send( 421, ':Unknown command [ '
+				+ self._repr_bin(line_raw, max_len=150, ext='...') + ' ]' )
 		if not self.check_access(m.cmd):
 			return self.log_proto_err('Out-of-order cmd: {!r}', self._repr_bin(line_raw))
 		if cmd_ps_n is None: await aio_await_wrap(cmd_func(m))
