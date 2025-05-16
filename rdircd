@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.2' # git-version: py-str
+	version = '25.05.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3648,8 +3648,10 @@ class DiscordSession:
 		lines = list()
 		if ( (m := re.search(r'/@([\w.]+)/', url := str_norm(em.get('url', ''))))
 				and desc and f'@{m[1]}@' in em_src
-				and url.startswith(str_norm((em.get('author', dict())).get('url', ''))) ):
-			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon embeds
+				and url.startswith(str_norm((em.get('author', dict())).get('url', '')))
+				or (desc and re.match(r'https://bsky.app/', url)) ):
+			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon/bsky embeds
+			desc = re.sub(r'(^|\s)\[([^\] ]+)\]\(https?://\2\)(\s|$)', r'\1\2\3', desc) # md links
 		if em.get('footer', dict()).get('text') == 'Twitter':
 			media = dict()
 			for mt in 'image', 'video':
@@ -3663,9 +3665,6 @@ class DiscordSession:
 				else: lines.append(f'X msg :: {em_src} :: {desc}')
 			elif title: lines.append(f'X acc :: {title} [ {desc} ]')
 			for mt, url in media.items(): meta_skip[mt] = lines.append(f' {mt} :: {url}')
-		elif ( (url := em.get(meta_skip.get('image', 'image')))
-				and (url := url.get('url') or url.get('proxy_url')) ):
-			lines.append(f'Image :: {url}'); meta_add['title'] = 'title'
 		elif (url := em.get('url') or '') and (m := re.match(
 				r'https?://(' r'github\.com|gitlab\.com|bitbucket\.org'
 				r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url )):
@@ -3692,6 +3691,10 @@ class DiscordSession:
 			if msg := ' :: '.join(filter(None, [em_src, title, desc])):
 				lines = [msg] + lines # something like "src :: desc" mastodon msg
 		else: lines.append(' :: '.join(filter(None, [em_src, title, desc])))
+		if ( (url := em.get(meta_skip.get('image', 'image')))
+				and (url := url.get('url') or url.get('proxy_url')) ):
+			if not lines: meta_add['title'] = 'title'
+			lines.append(f'Image :: {url}')
 		if not lines and set(em.keys()).difference([ # just "Above time in your local time"
 			'type', 'timestamp', 'footer', 'content_scan_version' ]): lines.append('')
 		return lines
@@ -5575,9 +5578,8 @@ def main_test(cmd, conf):
 		class DiscordStub(RDIRCD, Discord, DiscordSession):
 			st_br = st_eris = st_da = None # to override getters
 			irc_conn_new = irc_conn_lost = lambda s,c: None
-			def cmd_msg_recv( self, cc, nick, line,
-					tags=None, new_msg_flake=None, nonce=None, notice=None, skip_monitor=False ):
-				self.msg_recv = cc, nick, line, tags, new_msg_flake, nonce, notice, skip_monitor
+			def cmd_msg_recv(self, cc, nick, line, tags=None, **kws):
+				self.msg_recv = cc, nick, line, tags, adict(kws)
 			def __init__(self, conf, st):
 				self.st_da = self.st_br = self.st_eris = st; self.irc_conns = adict()
 				self.conf, self.log = conf, get_logger('xxx')
@@ -5612,7 +5614,7 @@ def main_test(cmd, conf):
 				except ValueError: o = act = None
 				discord.op_msg(ev.d, act)
 				if msg := getattr(discord, 'msg_recv', None):
-					cc, nick, lines, tags, flake, nonce, notice, skip_monitor = msg
+					cc, nick, lines, tags, msg_kws = msg
 				else: lines = str_report('--- msg discarded ---')
 			ev_list[n] = adict(lines=lines, tags=tags, ei=discord.st_da.embed_info)
 
