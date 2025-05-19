@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.3' # git-version: py-str
+	version = '25.05.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3143,7 +3143,8 @@ class DiscordSession:
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
 			'presence', 'presences', 'thread_member', 'thread_members', 'stage_instance',
 			'guild_integrations', 'guild_role', 'guild_stickers', 'guild_audit_log_entry',
-			'burst_credit_balance', 'message_poll_vote', 'guild_powerup_entitlements' }: return
+			'burst_credit_balance', 'message_poll_vote', 'guild_powerup_entitlements',
+			'guild_applied_boosts' }: return
 		elif re.search( r'^(guild_scheduled_event'
 			r'|(guild_)?application_command|embedded_activity)_', mt ): return
 		elif re.search( r'^user_(note|'
