@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.4' # git-version: py-str
+	version = '25.05.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3535,7 +3535,7 @@ class DiscordSession:
 		else: self.discord.cmd_user_cache(gg.id, nick.id, nick := self.discord.user_name(m))
 		if snapshots := m.get('message_reference') and m.get('message_snapshots'):
 			# Msg-snapshots here appear as embedded messages, so put into media_info
-			ext = self.op_msg_parse_snapshots(snapshots, gg)
+			ext = self.op_msg_parse_snapshots(m.id, snapshots, gg)
 			for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
 			media_info.extend(ext.lines); media_info.extend(ext.media); media_tags.update(ext.tags)
 
@@ -3700,13 +3700,14 @@ class DiscordSession:
 			'type', 'timestamp', 'footer', 'content_scan_version' ]): lines.append('')
 		return lines
 
-	def op_msg_parse_snapshots(self, snapshots, gg):
+	def op_msg_parse_snapshots(self, msg_id, snapshots, gg):
 		res = adict(lines=list(), tags=adict(), media=list(), warn=list())
 		for n, msg_ref in enumerate(snapshots):
 			msg = msg_ref.pop('message', None)
 			if msg_ref: res.warn.append(
 				f'Extra keys in msg-ref #{n} [ {" ".join(msg_ref.keys())} ]' )
 			if not msg: continue
+			msg.id = msg_id # op_msg_parse might want to use that
 			msg_line, msg_tags = self.op_msg_parse(msg, gg, can_be_empty=True)
 			res.tags.update(msg_tags)
 			if msg_line: res.lines.extend(msg_line.split('\n'))
@@ -3872,7 +3873,7 @@ class DiscordSession:
 		ref_line, ref_tags = self.op_msg_parse(ref, gg, can_be_empty=True)
 		if not ref_line and ( snapshots :=
 				ref.get('message_reference') and ref.get('message_snapshots') ):
-			ext = self.op_msg_parse_snapshots(snapshots, gg)
+			ext = self.op_msg_parse_snapshots(m.id, snapshots, gg)
 			for msg in ext.warn: self.log.warning('{}: {}', msg, self._repr(m))
 			ref_line, ref_tags = '\n'.join(ext.lines), ext.tags
 		if ref_line := str_cut(ref_line, self.conf.irc_inline_reply_quote_len):
