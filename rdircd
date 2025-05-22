@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.6' # git-version: py-str
+	version = '25.05.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3658,13 +3658,15 @@ class DiscordSession:
 		'Parse type=rich embed, which can be many different things'
 		lines = list()
 		if ( (m := re.search(r'/@([\w.]+)/', url := str_norm(em.get('url', ''))))
-				and desc and f'@{m[1]}@' in em_src
+				and desc and f'@{str_norm(m[1])}@' in str_norm(em_src)
 				and url.startswith(str_norm((em.get('author', dict())).get('url', '')))
 				or (desc and re.match(r'https://bsky.app/', url)) ):
 			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon/bsky embeds
-			desc = re.sub( r'(?P<pre>^|\s|[^\w])' r'\[(?P<name>[^\]]+)\]' # md links
-				r'\((?P<url>https?://(?P<link>[^)\s]+))\)' r'(?P<post>\s|[^\w]|$)',
-				self.op_msg_media_info_rich_md_links, desc )
+			while True: # replace all md links
+				desc, n = re.subn( r'(?P<pre>^|\s|[^\w])' r'\[(?P<name>[^\]]+)\]'
+					r'\((?P<url>https?://(?P<link>[^)\s]+))\)' r'(?P<post>\s|[^\w]|$)',
+					self.op_msg_media_info_rich_md_links, desc )
+				if not n: break
 		if em.get('footer', dict()).get('text') == 'Twitter':
 			media = dict()
 			for mt in 'image', 'video':
