@@ -1639,7 +1639,6 @@ Using config like this:
 ``` ini
 [discord]
 terminal-links = yes
-terminal-links-emojis = no
 terminal-links-tpl = {name} :: {url}
 ```
 

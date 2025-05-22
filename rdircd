@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.5' # git-version: py-str
+	version = '25.05.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -269,6 +269,8 @@ class RDIRCDConfigBase:
 		r'^https://cdn\.discordapp\.com/attachments/(?P<hash>[\d/]+/(?P<name>.+?)\?.*)' )
 	# Use links for posted emoji-images instead of long CDN URLs, if enabled.
 	discord_terminal_links_emojis = True
+	# Convert markdown [name](https://...) links from known sources where they're used.
+	discord_terminal_links_md = True
 	# Template for OSC 8 terminal hyperlink. Should have "url" and "name" keys in it.
 	# See also corresponding [irc] len-dont-split-re opt to avoid breaking these links in long msgs.
 	discord_terminal_links_tpl = '\x1b]8;;{url}\x1b\\{name}\x1b]8;;\x1b\\'
@@ -3644,6 +3646,14 @@ class DiscordSession:
 		if not lines: return
 		return list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
 
+	def op_msg_media_info_rich_md_links(self, m):
+		mg = adict(m.groupdict())
+		if not self.conf.discord_terminal_links:
+			if not mg.link.startswith(mg.name.rstrip('.')): return m[0]
+			link = mg.url # for redundant name/link parts
+		else: link = self.conf.discord_terminal_links_tpl.format(name=mg.name, url=mg.url)
+		return mg.pre + link + mg.post
+
 	def op_msg_media_info_rich(self, em, title, desc, em_src, meta_add, meta_skip):
 		'Parse type=rich embed, which can be many different things'
 		lines = list()
@@ -3652,7 +3662,9 @@ class DiscordSession:
 				and url.startswith(str_norm((em.get('author', dict())).get('url', '')))
 				or (desc and re.match(r'https://bsky.app/', url)) ):
 			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon/bsky embeds
-			desc = re.sub(r'(^|\s)\[([^\] ]+)\]\(https?://\2\)(\s|$)', r'\1\2\3', desc) # md links
+			desc = re.sub( r'(?P<pre>^|\s|[^\w])' r'\[(?P<name>[^\]]+)\]' # md links
+				r'\((?P<url>https?://(?P<link>[^)\s]+))\)' r'(?P<post>\s|[^\w]|$)',
+				self.op_msg_media_info_rich_md_links, desc )
 		if em.get('footer', dict()).get('text') == 'Twitter':
 			media = dict()
 			for mt in 'image', 'video':
