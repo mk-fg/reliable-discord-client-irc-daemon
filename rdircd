@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.7' # git-version: py-str
+	version = '25.05.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3648,9 +3648,10 @@ class DiscordSession:
 
 	def op_msg_media_info_rich_md_links(self, m):
 		mg = adict(m.groupdict())
-		if not self.conf.discord_terminal_links:
-			if not mg.link.startswith(mg.name.rstrip('.')): return m[0]
-			link = mg.url # for redundant name/link parts
+		if re.fullmatch(r'#\S+', mg.name): link = mg.name # strip hashtag links
+		elif not self.conf.discord_terminal_links:
+			if mg.link.startswith(mg.name.rstrip('.')): link = mg.url
+			else: return m[0]
 		else: link = self.conf.discord_terminal_links_tpl.format(name=mg.name, url=mg.url)
 		return mg.pre + link + mg.post
 
