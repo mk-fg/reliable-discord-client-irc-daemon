@@ -39,7 +39,6 @@ Table of Contents
     - [Not getting messages in some of 200+ joined discords]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
-    - [Connection lost: SSL ... application data after close notify]
     - [Debugging anything strange, unknown or unexpected]
 
 - [Random tips and tricks](#hdr-random_tips_and_tricks)
@@ -88,8 +87,6 @@ Table of Contents
   #hdr-captcha-solving_is_required_to_login_for.ls9P
 [Debugging anything strange, unknown or unexpected]:
   #hdr-debugging_anything_strange_unknown_or_un.NQDm
-[Connection lost: SSL ... application data after close notify]:
-  #hdr-connection_lost_ssl_..._application_data.YD6i
 [Change message edit/embed/attachment prefixes to shorter emojis]:
   #hdr-change_message_edit_embed_attachment_pre.xxnp
 [Simpler DM and monitor channel names]:
@@ -271,14 +268,13 @@ You have been warned! :)
 ### Requirements
 
 * [Python 3.8+](https://python.org/)
-* [aiohttp]
+* [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 * (Optional) [python-systemd] - only if using tweaks mentioned in [Systemd integration] below.
 
 On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
 as python port there doesn't seem to have [hashlib.scrypt] in its stdlib.
 
-[aiohttp]: https://aiohttp.readthedocs.io/en/stable/
 [python-systemd]: https://github.com/systemd/python-systemd
 [scrypt module]: https://github.com/holgern/py-scrypt/
 [hashlib.scrypt]: https://docs.python.org/3/library/hashlib.html#hashlib.scrypt
@@ -1444,29 +1440,6 @@ authentication enabled (2FA/MFA).
 ["Instructions on getting the Discord token for use in rdircd" github gist]:
   https://gist.github.com/TReKiE/8ef1eaceef0d976b64456292120ea3ea
 [third-party discord clients]: #hdr-links
-
-<a name=hdr-connection_lost_ssl_..._application_data.YD6i></a>
-### Connection lost: SSL ... application data after close notify
-
-Seem to be a bug in python's asyncio wrappers or [aiohttp], mentioned in the
-following aiohttp issues/PRs: [#4526], [#6321], [#9818].
-Completely harmess, just creates noise in the logs sometimes when discord reconnects.
-
-Was an issue in aiohttp 4.0.0+ and seem to be resolved there,
-but happens to me with python 3.13.3 / aiohttp 3.12.4,
-with the same fix to remove that noise as in PRs above:
-
-- Open `/usr/lib/python3.13/site-packages/aiohttp/connector.py`
-- Find `def _release(...` method there.
-- Under `if self._force_close or should_close or protocol.should_close:` check,
-  after `protocol.close()`, add following line: `set_result(protocol.closed, None)`
-
-Haven't reported it separately, as it's inconsequential, already known
-(see links above), and likely will be resolved with aiohttp 4.x release.
-
-[#4526]: https://github.com/aio-libs/aiohttp/issues/4526
-[#6321]: https://github.com/aio-libs/aiohttp/pull/6321
-[#9818]: https://github.com/aio-libs/aiohttp/pull/9818
 
 <a name=hdr-debugging_anything_strange_unknown_or_un.NQDm></a>
 ### Debugging anything strange, unknown or unexpected
