@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.05.8' # git-version: py-str
+	version = '25.06.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -354,7 +354,7 @@ class RDIRCDConfigBase:
 	_conf_old_found = dict() # old -> new
 
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
-	#   renames, send_repls, unmon_filters, recv_filters, watch
+	#   renames, recv_repls, send_repls, unmon_filters, recv_filters, watch
 
 	def _re_chk(key, groups, v_def=re.compile('$x')):
 		def _conv(self, v):
@@ -465,8 +465,8 @@ Commands:
     Run without args to print a list of current filters for these channels.
     Usage example: um -s ignore all #forum threads = glob:*.forum.=*
 
-  repl [-s|--save] [-r|--rm] [ prefix.comment = re [ -> subst ] ]
-    Add/remove regexp-replacements/blocks for outgoing messages.
+  send-repl [-s|--save] [-r|--rm] [ prefix.comment = re [ -> subst ] ]
+    Add/remove regexp-replacements/blocks for outgoing (sent) IRC lines.
     Works similar to "rx" and "unmonitor" commands above,
      but adds/removes stuff for [send-replacements] config file section.
     "prefix.comment" should have a discord prefix - same as IRC channels
@@ -476,6 +476,11 @@ Commands:
     If last "-> subst" part is omitted, "<block!>" value will be used.
     Run without arguments to print current contents of that config section.
     Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ
+
+  recv-repl [-s|--save] [-r|--rm] [ prefix.comment = re [ -> subst ] ]
+    Add/remove regexp-replacements/blocks for incoming (received) IRC lines.
+    These are matched against IRC message contents, as sent to IRC client.
+    Same as "send-repl" command above, but for [recv-replacements] config section.
 
   watch [-r|--rm] [ chan... ]
     [alias: w] list or add/remove "watched" channels, for which to
@@ -2385,7 +2390,7 @@ class Discord:
 		if gg: prefix += f'[{gg.name}] '
 		if ev_hash: prefix += f'ev.{ev_hash} ' # to tie multiline stuff and updates together
 		if self.bridge.cmd_msg_recv_filter(nick := self.conf._irc_nick_sys, prefix + msg): return
-		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gid=gid)
+		self.bridge.cmd_msg_monitor(nick, msg, prefix, notice=True, gg=gg)
 
 	def cmd_sync_guild_tracking(self):
 		# Only needed with discord_only_track_irc_joined selective tracking
@@ -2589,7 +2594,7 @@ class DiscordSession:
 		self.log.debug('Initializing discord session...')
 		try: await asyncio.Future() # run forever
 		except asyncio.CancelledError: pass
-		self.log.debug('Finished')
+		self.log.debug('Finished running rdircd')
 
 	async def run_async(self):
 		async with self: await self.run()
@@ -4672,7 +4677,8 @@ class RDIRCD:
 			elif cmd in ['unmonitor', 'um']: self._cmd_chan_sys_unmonitor(send, line_raw)
 			elif cmd in ['watch', 'w']: self._cmd_chan_sys_watch(send, line_raw)
 			elif cmd == 'rx': self._cmd_chan_sys_recv_filters(send, line_raw)
-			elif cmd == 'repl': self._cmd_chan_sys_repl(send, line_raw)
+			elif cmd == 'send-repl': self._cmd_chan_sys_repl(send, line_raw, 'send')
+			elif cmd == 'recv-repl': self._cmd_chan_sys_repl(send, line_raw, 'recv')
 			elif cmd == 'set': self._cmd_chan_sys_set(send, line, line_raw)
 			elif cmd == 'reload':
 				try: conf_paths = self.conf.read_from_file()
@@ -4851,9 +4857,9 @@ class RDIRCD:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
 		send(f'Updated [{sec}] in config file [ {p.name} ]: {upd}')
 
-	def _cmd_chan_sys_repl(self, send, line_raw):
+	def _cmd_chan_sys_repl(self, send, line_raw, rt):
 		'Implementation for control-channel "repl" command'
-		repls, rm, save = self.conf.send_repls, False, False
+		repls, rm, save = getattr(self.conf, f'{rt}_repls'), False, False
 		try:
 			line = line_raw.split(None, 1)
 			if len(line) == 1: line, opts = '', set()
@@ -4868,13 +4874,13 @@ class RDIRCD:
 		except Exception as err:
 			return send(f'ERROR: Failed to process repl-line [ {line_raw} ]: {err_fmt(err)}')
 		if not key:
-			send('Current replacement/block regexps:')
+			send(f'Current {rt}-replacement/block regexps:')
 			for pre_repls in repls.values():
 				for repl in pre_repls:
 					send(f'  {repl.key} = {repl.val}')
 					if tsb := repl.tsb.get_counts_str(): send(f'    [ rule hits: {tsb} ]')
 			return
-		if not rm: repl = self.conf.make_send_repl(key, line)
+		if not rm: repl = self.conf.make_irc_repl(key, line)
 		for pre_repls in repls.values():
 			for repl_chk in list(pre_repls):
 				if repl_chk.key == key: pre_repls.remove(repl := repl_chk)
@@ -4883,10 +4889,10 @@ class RDIRCD:
 		if not save: return send(f'Updated runtime replacement rules [ {repl.key} ]')
 		try:
 			upd = {repl.key: repl.val if not rm else None}
-			p = self.conf.update_file_section('send-replacements', upd)
+			p = self.conf.update_file_section(f'{rt}-replacements', upd)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
-		return send(f'Updated [send-replacements] section in config file [ {p.name} ]')
+		return send(f'Updated [{rt}-replacements] section in config file [ {p.name} ]')
 
 	def _cmd_chan_sys_watch(self, send, line_raw):
 		'Implementation for control-channel "watch" command'
@@ -5019,6 +5025,21 @@ class RDIRCD:
 		for conn in self.cmd_chan_conns(name): conn.cmd_msg_chan_sys(name, line)
 
 
+	def cmd_msg_recv_lines_proc(self, gg, lines):
+		'Process proxied-from-discord IRC lines with recv_repls regexps and such'
+		lines = list(lines)
+		if repls := self.conf.recv_repls: # apply [recv-replacements]
+			for (m, line), s in it.product(reversed(list(enumerate(lines))), it.chain(
+					repls.get('*', list()),
+					repls.get(self.uid('guild', gg.id, kh=gg.get('kh')), list()) )):
+				if s.sub is not None:
+					lines[m], n = s.re.subn(s.sub, line)
+					if n: s.tsb.event(intervals=self.conf.discord_match_counters)
+				elif s.re.search(line):
+					del lines[m]
+					s.tsb.event(intervals=self.conf.discord_match_counters)
+		return lines
+
 	def cmd_msg_recv_filter(self, nick, msg):
 		if not (recv_rxs := self.conf.recv_filters): return
 		m, recv_msg = False, f'<{nick}> {msg}' # can be multiline, unlike in #monitor
@@ -5035,12 +5056,13 @@ class RDIRCD:
 			' [ {} ]: {}', m[0], str_cut(m[1], self.conf.debug_msg_cut) ) or True
 
 	def cmd_msg_monitor( self, nick, msg,
-			prefix='', notice=True, gid=None, leftover_skip=None, ev=None ):
+			prefix='', notice=True, gg=None, leftover_skip=None, ev=None ):
 		'Sends message to monitor/leftover IRC channel(s)'
 		lines_n = len(lines := msg.splitlines() if isinstance(msg, str) else msg)
 		m, n = self.conf.irc_len_monitor, self.conf.irc_len_monitor_lines
 		if len(lines) > n: lines = list(line for line in lines if line.strip())
-		lines = list(f'{prefix}{str_cut(s, m, len_bytes=True)}' for s in lines[:n+1])
+		lines = self.cmd_msg_recv_lines_proc( gg,
+			(f'{prefix}{str_cut(s, m, len_bytes=True)}' for s in lines[:n+1]) )
 		if len(lines) > n:
 			lines = lines[:n]
 			lines[-1] += f' ... [{len(lines)}/{lines_n} lines]'
@@ -5048,7 +5070,7 @@ class RDIRCD:
 		for ct in 'mon', 'nc', 'vc':
 			if ct == 'vc' and ev != 'vc': continue
 			chans, cache = list(), getattr(self.st_br, f'gid_{ct}_chan')
-			if gid and (name := cache.get(gid)): chans.append(name)
+			if gg.id and (name := cache.get(gg.id)): chans.append(name)
 			if name := cache[None]: chans.append(name)
 			for name in chans:
 				for conn in self.cmd_chan_conns(name):
@@ -5114,11 +5136,11 @@ class RDIRCD:
 
 		# Relay message to direct-proxy IRC channel
 		if not skip_chan:
+			lines = self.cmd_msg_recv_lines_proc(cc.gg, (f'{prefix}{ln}' for ln in lines))
 			joined = not cc.users.check_bump(nick_discord)
 			cc.users[nick_discord] = nick
 			for conn, (n, ln) in it.product(conns_joined, enumerate(lines)):
-				conn.cmd_msg_chan( nick, name,
-					f'{prefix}{ln}', notice=notice, joined=joined and not n )
+				conn.cmd_msg_chan(nick, name, ln, notice=notice, joined=joined and not n)
 
 		# Relay message to all relevant monitor/leftover channels
 		if skip_monitor: return
@@ -5130,7 +5152,7 @@ class RDIRCD:
 			# Skip thread-msg in leftover if it's been sent to joined parent channel
 			conns_joined += self.cmd_chan_conns(cc.parent)
 		self.cmd_msg_monitor( nick, lines, prefix_mon,
-			notice=notice, gid=cc.gg.id, leftover_skip=conns_joined, ev=ev )
+			notice=notice, gg=cc.gg, leftover_skip=conns_joined, ev=ev )
 		return not skip_chan # ack result for discord
 
 	def cmd_typing(self, cc, nick):
@@ -5161,8 +5183,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
-		self.unmon_filters, self.recv_filters = dict(), dict()
-		self.send_repls, self.watch = cs.defaultdict(list), adict_rev()
+		self.send_repls, self.recv_repls = cs.defaultdict(list), cs.defaultdict(list)
+		self.unmon_filters, self.recv_filters, self.watch = dict(), dict(), adict_rev()
 		self.log = get_logger('rdircd.state')
 		for k in dir(self):
 			if k.startswith('_conv_'): k = k[6:]
@@ -5213,7 +5235,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		elif v is float or isinstance(v, float): return lambda *a: float(conf_get(*a))
 
 	rx_pattern_t = cs.namedtuple('regexp', 'rx pat tsb')
-	send_repl_t = cs.namedtuple('repl', 'key val pre re sub comm tsb')
+	rx_repl_t = cs.namedtuple('repl', 'key val pre re sub comm tsb')
 
 	def make_unmon_pattern(self, pat):
 		if ' ' in pat: raise ValueError(f'[unmonitor] pattern cannot have spaces in it: {pat!r}')
@@ -5227,17 +5249,16 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	def make_recv_filter(self, pat):
 		return self.rx_pattern_t(re.compile(pat, re.DOTALL), pat, TimeSeriesBuckets())
 
-	def make_send_repl(self, key, val):
+	def make_irc_repl(self, key, val):
 		try:
 			pre, comm = key.rsplit('.', 1)
 			sub_re, sub = val.split(' -> ', 1)
 			sub_re = re.compile(sub_re)
 			if sub == '<block!>': sub = None
-		except Exception as err:
-			raise ValueError(
-				'[send-replacements] pattern parsing error'
-				f' [ {key!r} = {val!r} ]: {err_fmt(err)}' )
-		return self.send_repl_t(key, val, pre, sub_re, sub, comm, TimeSeriesBuckets())
+		except Exception as err: raise ValueError(
+			'[<send/recv>-replacements] pattern parsing error'
+			f' [ {key!r} = {val!r} ]: {err_fmt(err)}' )
+		return self.rx_repl_t(key, val, pre, sub_re, sub, comm, TimeSeriesBuckets())
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
@@ -5278,6 +5299,10 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			for k, v in sec.items(): out(f'{".".join(k)} = {self.val_to_opt(v)}')
 		if sec := self.send_repls:
 			out('\n[send-replacements]')
+			for repl in it.chain.from_iterable(sec.values()):
+				out(f'{repl.key} = {self.val_to_opt(repl.val)}')
+		if sec := self.recv_repls:
+			out('\n[recv-replacements]')
 			for repl in it.chain.from_iterable(sec.values()):
 				out(f'{repl.key} = {self.val_to_opt(repl.val)}')
 		if sec := self.unmon_filters:
@@ -5328,8 +5353,15 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if not new: self._conf_old_found[sk] = sk_new
 			val_conv = self.opt_to_val_func(str)
 			for k, v in conf_file[sk].items():
-				repl = self.make_send_repl(k, val_conv(v or ''))
+				repl = self.make_irc_repl(k, val_conv(v or ''))
 				self.send_repls[repl.pre].append(repl)
+
+		self.recv_repls.clear()
+		if conf_file.has_section(sk := 'recv-replacements'):
+			val_conv = self.opt_to_val_func(str)
+			for k, v in conf_file[sk].items():
+				repl = self.make_irc_repl(k, val_conv(v or ''))
+				self.recv_repls[repl.pre].append(repl)
 
 		self.unmon_filters.clear(); filters_old = dict()
 		if conf_file.has_section('filters'): # deprecated section

@@ -28,7 +28,7 @@ Table of Contents
     - [Discord user mentions and emojis]
     - [Quick edits/deletes for just-sent messages]
     - [@silent messages and other such flags]
-    - [Custom replacements/blocks in outgoing messages]
+    - [Custom replacements/blocks in incoming/outgoing IRC messages]
     - [Custom filtering for all received messages]
     - [Lookup discord IDs]
     - [Channel name disambiguation]
@@ -66,8 +66,8 @@ Table of Contents
   #hdr-quick_edits_deletes_for_just-sent_messages
 [@silent messages and other such flags]:
   #hdr-silent_messages_and_other_such_flags
-[Custom replacements/blocks in outgoing messages]:
-  #hdr-custom_replacements_blocks_in_outgoing_m.NzCf
+[Custom replacements/blocks in incoming/outgoing IRC messages]:
+  #hdr-custom_replacements_blocks_in_incoming_o.KGob
 [Custom filtering for all received messages]:
   #hdr-custom_filtering_for_all_received_messages
 [Lookup discord IDs]: #hdr-lookup_discord_ids
@@ -1060,17 +1060,22 @@ sending discord push notifications for it, same as with the official client.
 That and similar message flags on incoming messages are not represented
 in any way, as they don't seem to be relevant for an irc client anyway.
 
-<a name=hdr-custom_replacements_blocks_in_outgoing_m.NzCf></a>
-### Custom replacements/blocks in outgoing messages
+<a name=hdr-custom_replacements_blocks_in_incoming_o.KGob></a>
+### Custom replacements/blocks in incoming/outgoing IRC messages
 
-Config can have a \[send-replacements\] section to block or regexp-replace
-parts of messages sent (by you) from IRC on per-discord basis.
+Config can have a \[recv-replacements\] and/or \[send-replacements\] sections
+to block IRC lines, or regexp-replace parts of those received or sent (by you),
+optionally on per-discord basis.
 
-This can be used to add discord-specific tags, unicode shorthands, emojis,
-stickers, block/replace specific links or maybe even words/language before
-proxying msg to discord.
+send-replacements section can be used to add discord-specific tags,
+unicode shorthands, emojis, stickers, block/replace specific links or maybe
+even words/language before proxying msg to discord.
 
-Here's how it can look in the ini file(s):
+Or for \[recv-replacements\], simple use-case can be to e.g. find @-mentions
+and transform those to `<nick>: <msg>` for IRC client, cleanup or sanitize
+messages from non-IRC-friendly noise.
+
+Here's how send-replacements can look in the ini file(s):
 
 ``` ini
 [send-replacements]
@@ -1082,13 +1087,28 @@ guildx.never-mention-rust! = (?i)\brust\b -> <block!>
 guildx.localize-color-word = \bcolor(ed|i\S+)\b -> colour\1
 ```
 
-Where each key has the form of `discord-prefix> "." comment`,
+Where each key has the form of `<discord-prefix>.<comment>`,
 with a special `*` prefix to apply rule to all discords, while values
-are `regexp " -> " <replacement_or_action` with one special `<block!>`
+are `<regexp> -> <replacement_or_action>` with one special `<block!>`
 action-value to block sending msg with error-notice on regexp match.
 "comment" part of the key can be any arbitrary unique string.
 
 So when sending e.g. `test :)` msg on IRC, discord will get `test 😀`.
+
+recv-replacements work in the same way on received IRC message contents:
+``` ini
+[recv-replacements]
+
+*.prefix-highlight-my-nick = .*@(user6943)\b.* -> \1: \0
+*.skip-redundant-gif-info = ^\S+ Gifv (Tenor) :: -> <block!>
+*.replace-standalone-shit-word = \bshit\b -> crap
+
+guildx.ignore-all-msg-edits-here = ^(\S+ :: )?\[edit\] -> <block!>
+gaming.discard-news-image-links-in-monitor = ^#gaming.news :: \S+ Image :: -> <block!>
+```
+
+Note that these replacements work on IRC-lines level, i.e. should match and
+replace/remove specific lines in a multiline discord message, without other context.
 
 Same as with other regex-using options, regexps have python "re" module syntax,
 applied via [re.sub()] function, using raw strings from config value as-is,
@@ -1098,7 +1118,8 @@ Replacements are applied in the same order as specified, but with `*` keys
 preceding per-discord ones, and before processing to add discord tags, so anything
 like @username that can normally be typed in messages can be used there too.
 
-#rdircd.control channel has `repl` command to edit these rules on-the-fly.
+#rdircd.control channel has `recv-repl` and `send-repl` commands
+to edit these rules on-the-fly.
 
 [re.sub()]: https://docs.python.org/3/library/re.html#re.sub
 
@@ -1132,12 +1153,14 @@ Lines in that section have the usual `<key> = <regexp>` form, where `<key>`
 part can be anything (e.g. comment to explain regexp, like in examples above),
 and `<regexp>` value is a regular expression to match against the message in
 `<user> #discord.channel-name :: message text` format like that helper-bot
-msg presented above, and same as can be seen in monitor-channels.
+msg presented above, and similar as it can be seen in monitor-channels.
 
 Any message received from discord will be matched against all regexps in order,
 stopping and discarding the message everywhere on first (any) match.
 So it might be a good idea to write as precise patterns as possible, to avoid
 them matching anything else and dropping unrelated messages accidentally.
+Also note that full discord message is matched here, not specific IRC-lines of it,
+so regexp matching any part of a muliline message will block the whole thing.
 
 Same as with some other conf options, basic knowledge of regular expressions
 might be needed to use such filters - [here's a link to nice tutorial on those]
