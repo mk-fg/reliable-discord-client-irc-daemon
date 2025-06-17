@@ -1089,11 +1089,15 @@ guildx.localize-color-word = \bcolor(ed|i\S+)\b -> colour\1
 
 Where each key has the form of `<discord-prefix>.<comment>`,
 with a special `*` prefix to apply rule to all discords, while values
-are `<regexp> -> <replacement_or_action>` with one special `<block!>`
+are `<regexp> -> <replacement-or-action>` with one special `<block!>`
 action-value to block sending msg with error-notice on regexp match.
-"comment" part of the key can be any arbitrary unique string.
+`<comment>` part of the key can be any arbitrary unique string.
 
-So when sending e.g. `test :)` msg on IRC, discord will get `test 😀`.
+So when sending e.g. `test :)` msg on IRC, discord will get `test 😀`
+
+Replacements are applied in the same order as specified, but with `*` keys
+preceding per-discord ones, and before processing to add discord tags, so anything
+special like @username that can normally be typed in messages can be used there too.
 
 recv-replacements work in the same way on received IRC message contents:
 ``` ini
@@ -1107,16 +1111,14 @@ guildx.ignore-all-msg-edits-here = ^(\S+ :: )?\[edit\] -> <block!>
 gaming.discard-news-image-links-in-monitor = ^#gaming.news :: \S+ Image :: -> <block!>
 ```
 
-Note that these replacements work on IRC-lines level, i.e. should match and
-replace/remove specific lines in a multiline discord message, without other context.
+Note that these replacements work on IRC-lines level, so for a multiline discord
+message they'd replace/remove specific matched line(s), if any.
+See "[Custom filtering for all received messages]" below to filter by rules matching
+entire discord message instead of specific IRC messages (lines) it's translated into.
 
 Same as with other regex-using options, regexps have python "re" module syntax,
 applied via [re.sub()] function, using raw strings from config value as-is,
 without any special escapes or interpretations.
-
-Replacements are applied in the same order as specified, but with `*` keys
-preceding per-discord ones, and before processing to add discord tags, so anything
-like @username that can normally be typed in messages can be used there too.
 
 #rdircd.control channel has `recv-repl` and `send-repl` commands
 to edit these rules on-the-fly.
