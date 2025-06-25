@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.06.1' # git-version: py-str
+	version = '25.06.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2898,9 +2898,11 @@ class DiscordSession:
 		self.ws_close_later()
 
 	async def ws_send_task(self, msg_data):
+		if not (self.ws and self.ws_state.usable.is_set()): return # ws closed/closing by now
 		try: await self.ws.send_str(msg_data)
 		except ConnectionError as err: # not handled by aiohttp in some cases
-			self.log.info('Conn error when trying to send last protocol data: {}', err_fmt(err))
+			if self.ws and self.ws_state.usable.is_set(): # to not spam on closing connection
+				self.log.info('Conn error when trying to send last protocol data: {}', err_fmt(err))
 			self.state('connection.fail')
 			self.ws_close_later()
 
@@ -3668,7 +3670,7 @@ class DiscordSession:
 				and url.startswith(str_norm((em.get('author', dict())).get('url', '')))
 				or (desc and re.match(r'https://bsky.app/', url)) ):
 			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon/bsky embeds
-			for n in range(2): # replace all md links
+			for n in range(2): # replace potentially-overlapping md links
 				desc, n = re.subn( r'(?P<pre>^|\s|[^\w])' r'\[(?P<name>[^\]]+)\]'
 					r'\((?P<url>https?://(?P<link>[^)\s]+))\)' r'(?P<post>\s|[^\w]|$)',
 					self.op_msg_media_info_rich_md_links, desc )
