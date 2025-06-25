@@ -2897,17 +2897,21 @@ class DiscordSession:
 			' to complete within {:.1f}s, closing connection', timeout )
 		self.ws_close_later()
 
+	def ws_send_check(self):
+		'Returns True if sending data on websocket should work currently'
+		return self.ws and not self.ws_state.closed.is_set() and self.ws_state.usable.is_set()
+
 	async def ws_send_task(self, msg_data):
-		if not (self.ws and self.ws_state.usable.is_set()): return # ws closed/closing by now
+		if not self.ws_send_check(): return
 		try: await self.ws.send_str(msg_data)
 		except ConnectionError as err: # not handled by aiohttp in some cases
-			if self.ws and self.ws_state.usable.is_set(): # to not spam on closing connection
-				self.log.info('Conn error when trying to send last protocol data: {}', err_fmt(err))
+			if not self.ws_send_check(): return # already failed, maybe in other ws_send
+			self.log.info('Conn error when trying to send last protocol data: {}', err_fmt(err))
 			self.state('connection.fail')
 			self.ws_close_later()
 
 	def ws_send(self, op, d):
-		if not self.ws_state.usable.is_set(): return # just started closing
+		if not self.ws_send_check(): return
 		msg_data = json.dumps(dict(op=op, d=d))
 		self.log_ws.debug( ' >> text {}',
 			self._repr(msg_data), extra=(' >>', f'text {msg_data}') )
