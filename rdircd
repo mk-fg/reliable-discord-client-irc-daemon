@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.06.0' # git-version: py-str
+	version = '25.06.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3668,7 +3668,7 @@ class DiscordSession:
 				and url.startswith(str_norm((em.get('author', dict())).get('url', '')))
 				or (desc and re.match(r'https://bsky.app/', url)) ):
 			desc = re.sub(r'\\(\W|_)', r'\1', desc) # \-escapes in mastodon/bsky embeds
-			while True: # replace all md links
+			for n in range(2): # replace all md links
 				desc, n = re.subn( r'(?P<pre>^|\s|[^\w])' r'\[(?P<name>[^\]]+)\]'
 					r'\((?P<url>https?://(?P<link>[^)\s]+))\)' r'(?P<post>\s|[^\w]|$)',
 					self.op_msg_media_info_rich_md_links, desc )
