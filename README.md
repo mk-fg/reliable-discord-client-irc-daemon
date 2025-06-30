@@ -46,6 +46,7 @@ Table of Contents
     - [Simpler DM and monitor channel names]
     - [Change message edit/embed/attachment prefixes to shorter emojis]
     - [Use terminal links regexp to format attachment links differently]
+    - [Sending multiline messages](#hdr-sending_multiline_messages)
     - [Cut down on various common noise]
 
 - [Links]
@@ -1082,6 +1083,7 @@ Here's how send-replacements can look in the ini file(s):
 
 *.unicode-smiley = (^| ):\)( |$) -> \1😀\2
 *.twitter-to-nitter = ^(https?://)((mobile|www)\.)?twitter\.com(/.*)?$ -> \1nitter.ir\4
+*.tag-for-multiline-msgs = <br> -> \n
 
 guildx.never-mention-rust! = (?i)\brust\b -> <block!>
 guildx.localize-color-word = \bcolor(ed|i\S+)\b -> colour\1
@@ -1091,15 +1093,20 @@ Where each key has the form of `<discord-prefix>.<comment>`,
 with a special `*` prefix to apply rule to all discords, while values
 are `<regexp> -> <replacement-or-action>` with one special `<block!>`
 action-value to block sending msg with error-notice on regexp match.
-`<comment>` part of the key can be any arbitrary unique string.
 
 So when sending e.g. `test :)` msg on IRC, discord will get `test 😀`
+
+`<comment>` part of the key can be any arbitrary unique string.\
+`\n` in replacement values is turned into an actual newline character,
+so can allow to send multiline messages, e.g. by inserting `<br>` line-separators
+with rule from example above.
 
 Replacements are applied in the same order as specified, but with `*` keys
 preceding per-discord ones, and before processing to add discord tags, so anything
 special like @username that can normally be typed in messages can be used there too.
 
 recv-replacements work in the same way on received IRC message contents:
+
 ``` ini
 [recv-replacements]
 
@@ -1669,6 +1676,26 @@ terminal-links-tpl = {name} :: {url}
 
 ("LCak" bit at the end of "cat-pic.jpg LCak" is hash of the link, so that
 it's possible to tell different "image.jpg" attachments apart at a glance)
+
+<a name=hdr-sending_multiline_messages></a>
+### Sending multiline messages
+
+``` ini
+[send-replacements]
+*.multiline-msg-separator = \n -> \n
+```
+
+This should allow sending e.g. `` ```\n#!/usr/bin/env python\nprint('hello world')\n``` ``
+from IRC, which would translate to a mutiline discord message with a code block.\
+See [section about send/recv replacements] for more info on how it works.
+
+One limitation with these is that IRC messages can have a strict length limit
+depending on client (used to be 255 bytes, but likely more nowadays), so cramming
+too many lines into a single msg can get split by the client and look broken
+on the discord side - maybe test the limits for your particular IRC client
+if using this often.
+
+[section about send/recv replacements]: #hdr-custom_replacements_blocks_in_incoming_o.KGob
 
 <a name=hdr-cut_down_on_various_common_noise></a>
 ### Cut down on various common noise
