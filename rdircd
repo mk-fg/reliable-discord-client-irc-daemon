@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.06.5' # git-version: py-str
+	version = '25.07.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3063,7 +3063,7 @@ class DiscordSession:
 				self.st_da.session_id, md.get('resume_gateway_url') )
 			if isinstance(rs := md.get('read_state'), dict): rs = rs.get('entries')
 			for rs in rs or list():
-				if not (n := rs.get('last_viewed')): continue
+				if not (n := isinstance(rs, dict) and rs.get('last_viewed')): continue
 				self.st_da.read_state_last = max(n, self.st_da.read_state_last)
 			if (act := md.get('required_action')) != self.st_da.req_action:
 				self.st_da.req_action, msg = act, ( 'Discord account is marked'
