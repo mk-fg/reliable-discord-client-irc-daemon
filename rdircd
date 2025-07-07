@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.07.0' # git-version: py-str
+	version = '25.07.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5678,7 +5678,7 @@ def main_test(cmd, conf):
 		for n, ev in enumerate(ev_list, 1):
 			if not ev.lines: continue
 			pre = f'[event-{n}] ' if len(ev_list) > 1 else ''
-			if isinstance(ev.lines, str_report): print('\n{pre}{ev.lines}'); continue
+			if isinstance(ev.lines, str_report): print(f'\n{pre}{ev.lines}'); continue
 			lines = (ev.lines or '').split('\n')
 			print(f'\n{pre}IRC lines:')
 			for line in lines: print('  ' + line)
