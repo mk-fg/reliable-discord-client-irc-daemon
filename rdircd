@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.07.2' # git-version: py-str
+	version = '25.07.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2938,7 +2938,7 @@ class DiscordSession:
 			self.log.info('Connection closed during auth - assuming auth token reject')
 			self.state('session.auth.disconnect')
 			self.ws_state.auth.clear()
-			self.auth_token = self.ws_state.auth_retry.set() # will be fetched on reconnect
+			if not self.ws_auth_fail_check(): self.ws_auth_fail_retry()
 		try:
 			if self.ws_state.closed.is_set():
 				return self.log.warning('BUG: ws_close with websocket already closed')
@@ -2953,6 +2953,23 @@ class DiscordSession:
 			self.state('disconnected')
 			self.ws_state.closed.set()
 		finally: self.ws_state.usable.set()
+
+	def ws_auth_fail_check(self):
+		if not self.ws_state.auth_retry.is_set(): return
+		if self.conf.discord_ws_reconnect_on_auth_fail:
+			fail = self.state('session.fail.reconnect')
+		else:
+			self.log.warning('Session/auth rejected unexpectedly - disabling connection')
+			self.state('session.fail')
+			fail, self.ws_enabled = True, False
+		self.ws_close_later()
+		return fail
+
+	def ws_auth_fail_retry(self):
+		if self.auth_token_manual: return self.log.info(
+			'Auth rejected, but auth token is set to be manual, so just retrying once more' )
+		self.log.info('Auth rejected - updating auth token')
+		self.auth_token = self.ws_state.auth_retry.set()
 
 
 	### Gateway Websocket request wrappers (rare)
@@ -3022,42 +3039,22 @@ class DiscordSession:
 				token=token, session_id=sid, seq=self.st_da.get('seq') ))
 
 	async def op_invalid_session(self, m):
-		st_auth, st_auth_retry = (self.ws_state[k].is_set() for k in ['auth', 'auth_retry'])
-		self.ws_state.auth.clear(); self.ws_state.auth_retry.clear()
-
-		if not st_auth: # likely pw reset or account ban - should try to reconnect normally
+		st_auth = self.ws_state.auth.is_set(); self.ws_state.auth.clear()
+		if not st_auth: # likely pw reset or account ban
 			self.log.warning('Unexpected "invalid session" event - reconnecting')
-			self.state('session.fail')
+			self.state('session.error.reconnect')
 			return self.ws_close_later()
-
-		if st_auth_retry: # auth retry failed
-			if self.conf.discord_ws_reconnect_on_auth_fail:
-				self.state('session.auth-fail-reconnect')
-			else:
-				self.log.warning('Session/auth rejected unexpectedly - disabling connection')
-				self.state('session.fail')
-				self.ws_enabled = False
-			return self.ws_close_later()
-
-		# Failure during initial auth attempt
+		if self.ws_auth_fail_check(): return
 		# "expected to wait a random amount of time -
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
-		self.state('session.error.delay')
 		delay = asyncio.create_task(asyncio.sleep(1 + random.random() * 4))
 		if not m.get('d') and self.st_da.get('session_id'):
 			self.log.info( 'Session/auth rejected (id={}) - trying'
 				' to open new session first', self.st_da.get('session_id', '-')[:6] )
 			self.st_da.session_id = self.st_da.seq = None
-			await delay
-		else:
-			if self.auth_token_manual:
-				self.log.info( 'Auth rejected, but auth token'
-					' is set to be manual, so just retrying once more' )
-			else:
-				self.log.info('Auth rejected - updating auth token')
-				self.auth_token = self.ws_state.auth_retry.set()
-				token = await self.req_auth_token()
-			await delay
+		else: self.ws_auth_fail_retry()
+		self.state('session.error.delay')
+		await delay
 		self.state('session.error')
 		await self.op_hello_auth()
 
