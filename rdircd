@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.07.1' # git-version: py-str
+	version = '25.07.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2571,7 +2571,9 @@ class DiscordSession:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
 		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
-		self.ws_state = adict(closed=asyncio.Event(), usable=asyncio.Event())
+		self.ws_state = adict(
+			auth=asyncio.Event(), auth_retry=asyncio.Event(),
+			closed=asyncio.Event(), usable=asyncio.Event() )
 		self.ws_state.usable.set() # cleared/restored by ws_close
 		self.rate_limits = adict()
 		st_guilds = {1: adict(id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict())}
@@ -2820,7 +2822,7 @@ class DiscordSession:
 		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
 		self.ws_add_handler(self.c.reconnect, self.op_reconnect)
 		self.ws_add_handler(self.c.hello, self.op_hello)
-		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session_retry)
+		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session)
 		self.ws_tasks.add(self.ws_poller())
 		self.ws_tasks.add(self.ws_auth_timeout())
 
@@ -2931,6 +2933,12 @@ class DiscordSession:
 		return self.ws_close_task()
 
 	async def ws_close_task(self):
+		if self.ws_state.auth.is_set():
+			# At least as of 2025-07-08 invalid_session ev doesn't seem to be always sent
+			self.log.info('Connection closed during auth - assuming auth token reject')
+			self.state('session.auth.disconnect')
+			self.ws_state.auth.clear()
+			self.auth_token = self.ws_state.auth_retry.set() # will be fetched on reconnect
 		try:
 			if self.ws_state.closed.is_set():
 				return self.log.warning('BUG: ws_close with websocket already closed')
@@ -2997,6 +3005,7 @@ class DiscordSession:
 		self.state('hello.auth.token')
 		sid = self.st_da.get('session_id')
 		token = await self.req_auth_token()
+		self.ws_state.auth.set()
 		if not sid:
 			self.state('hello.auth.identify')
 			self.ws_add_handler( self.c.dispatch,
@@ -3012,7 +3021,25 @@ class DiscordSession:
 			self.ws_send(self.c.resume, dict(
 				token=token, session_id=sid, seq=self.st_da.get('seq') ))
 
-	async def op_invalid_session_retry(self, m):
+	async def op_invalid_session(self, m):
+		st_auth, st_auth_retry = (self.ws_state[k].is_set() for k in ['auth', 'auth_retry'])
+		self.ws_state.auth.clear(); self.ws_state.auth_retry.clear()
+
+		if not st_auth: # likely pw reset or account ban - should try to reconnect normally
+			self.log.warning('Unexpected "invalid session" event - reconnecting')
+			self.state('session.fail')
+			return self.ws_close_later()
+
+		if st_auth_retry: # auth retry failed
+			if self.conf.discord_ws_reconnect_on_auth_fail:
+				self.state('session.auth-fail-reconnect')
+			else:
+				self.log.warning('Session/auth rejected unexpectedly - disabling connection')
+				self.state('session.fail')
+				self.ws_enabled = False
+			return self.ws_close_later()
+
+		# Failure during initial auth attempt
 		# "expected to wait a random amount of time -
 		#  - between 1 and 5 seconds - then send a fresh Opcode 2 Identify"
 		self.state('session.error.delay')
@@ -3028,29 +3055,14 @@ class DiscordSession:
 					' is set to be manual, so just retrying once more' )
 			else:
 				self.log.info('Auth rejected - updating auth token')
-				self.auth_token = None
+				self.auth_token = self.ws_state.auth_retry.set()
 				token = await self.req_auth_token()
 			await delay
-			self.ws_add_handler( self.c.invalid_session,
-				self.op_invalid_session_fail, replace=True )
 		self.state('session.error')
 		await self.op_hello_auth()
 
-	def op_invalid_session_fail(self, m):
-		if self.conf.discord_ws_reconnect_on_auth_fail:
-			self.state('session.auth-fail-reconnect')
-		else:
-			self.log.warning('Session/auth rejected unexpectedly - disabling connection')
-			self.state('session.fail')
-			self.ws_enabled = False
-		self.ws_close_later()
-
-	def op_invalid_session_event(self, m):
-		self.log.warning('Unexpected "invalid session" event - reconnecting')
-		self.state('session.fail')
-		self.ws_close_later()
-
 	def op_ready(self, m):
+		self.ws_state.auth.clear(); self.ws_state.auth_retry.clear()
 		md, resume, ts = m.get('d'), False, time.monotonic()
 		ts_start = tuple(self.st_da.get(k) for k in ['ts_session', 'ts_connect'])
 		self.st_da.ts_watch = self.conf.state_fwd()
@@ -3084,8 +3096,6 @@ class DiscordSession:
 		self.st_da.ts_connect, self.st_da.ts_disconnect = ts, None
 		self.state('ready')
 		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
-		self.ws_add_handler( self.c.invalid_session,
-			self.op_invalid_session_event, replace=True )
 		self.ws_add_handler(self.c.heartbeat, func=self.op_heartbeat_req)
 		self.ws_tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
 		if not resume: self.ws_req_guild_sync()
