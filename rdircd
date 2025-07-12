@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.07.3' # git-version: py-str
+	version = '25.07.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3774,11 +3774,13 @@ class DiscordSession:
 				else: # new unknown msg type - check how to handle
 					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 					if line: tags._prefix = f'[msg-type={mt!r}] '
-			if mt is mtc.application_command:
+			if mt in [mtc.application_command, mtc.context_menu_command]:
 				pre = self.conf.irc_prefix_interact
 				if cmd := m.get('interaction'):
 					cmd_nick, cmd = self.discord.user_name(cmd), cmd.get('name') or '???'
-					cmd, line = line, f'{pre}<{cmd_nick}> used /{cmd}'
+					if str_norm(cmd) == str_norm(line): line = ''
+					act = 'used' if mt != mtc.context_menu_command else 'context-menu-picked'
+					cmd, line = line, f'{pre}<{cmd_nick}> {act} [{cmd}]'
 				else: cmd, line = line, '{pre}<some-interaction-command>'
 				if cmd: line += f' :: {cmd}'.rstrip()
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
