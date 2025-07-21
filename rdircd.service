@@ -1,7 +1,3 @@
-[Unit]
-StartLimitIntervalSec=2min
-StartLimitBurst=5
-
 [Service]
 Type=exec
 User=rdircd
@@ -9,9 +5,6 @@ WorkingDirectory=/var/lib/rdircd
 ReadWritePaths=/var/lib/rdircd
 ExecStart=rdircd -c config.ini -c state.ini
 ExecReload=kill -HUP $MAINPID
-
-Restart=always
-RestartSec=5
 
 DynamicUser=yes
 ProcSubset=pid
