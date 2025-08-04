@@ -1014,7 +1014,7 @@ Default regexps look something like this (check [--conf-dump-defaults] jic):
 
 ``` ini
 [discord]
-msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.*)(?P=sep)(?P<bbb>.*)(?P=sep)?\s*$
+msg-edit-re = ^\s*s(?P<sep>[/|:])(?P<aaa>.+?)(?P=sep)(?P<bbb>.*?)(?P=sep)?\s*$
 msg-del-re = ^\s*//del\s*$
 ```
 

@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.07.5' # git-version: py-str
+	version = '25.08.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -229,7 +229,7 @@ class RDIRCDConfigBase:
 	# Any msg matched by this regexp is treated as edit for re.sub(), never sent to channel.
 	# If re.sub() with these parameters makes no replacement(s), error notice is generated.
 	# Default regex matches s/A/B/ or s|A|B| or s:A:B: - sed/perl-like regexp-replace expressions.
-	discord_msg_edit_re = r'^\s*s(?P<sep>[/|:])((?P<aaa>.+)(?P=sep)(?P<bbb>.*?)(?P=sep)?\s*$)?'
+	discord_msg_edit_re = r'^\s*s(?P<sep>[/|:])((?P<aaa>.+?)(?P=sep)(?P<bbb>.*?)(?P=sep)?\s*$)?'
 	discord_msg_del_re = r'^\s*//del\s*$' # deletes last-sent msg, if matched, never sent to channel
 
 	# Suppress push notifications for this message and remove regexp-matched part.
