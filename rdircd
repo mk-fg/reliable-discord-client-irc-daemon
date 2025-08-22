@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.08.1' # git-version: py-str
+	version = '25.08.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3167,6 +3167,9 @@ class DiscordSession:
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 		elif mt == 'typing_start': return self.op_typing(m.d)
+
+		# XXX: events that'd be nice to check and implement
+		elif mt in {'voice_channel_start_time_update'}: return
 
 		# Known-ignored events
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
