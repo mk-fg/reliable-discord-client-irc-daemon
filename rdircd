@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.08.2' # git-version: py-str
+	version = '25.08.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2031,9 +2031,18 @@ class Discord:
 		if not (self.st_eris.enabled and self.session):
 			(fut := asyncio.Future()).set_result(nc); return fut
 		return self.session.req(*req_args, **req_kws)
-	def conn_req_oneway(self, *req_args, **req_kws):
+
+	def conn_req_oneway(self, *req_args, err_tpl='', **req_kws):
 		'Send conn_req one-way without waiting for result or reply'
-		if self.session: self.session.tasks.add(self.conn_req(*req_args, **req_kws))
+		if not self.session: return
+		conn_req = self.conn_req(*req_args, **req_kws)
+		if err_tpl:
+			async def conn_req_wrapper(conn_req):
+				try: await conn_req
+				except (aiohttp.ClientError, DiscordHTTPError) as err:
+					self.log.error(err_tpl.format(err=err_fmt(err)))
+			conn_req = conn_req_wrapper(conn_req)
+		self.session.tasks.add(conn_req)
 
 	def flake_parse(self, flake):
 		if not flake: return None
@@ -2410,15 +2419,16 @@ class Discord:
 	def cmd_typing_from_irc(self, cc):
 		if cc.id in (delays := self.st_eris.typing_delays): return
 		delays[cc.id] = True
-		self.conn_req_oneway(f'channels/{cc.id}/typing', m='post', raw=True)
+		self.conn_req_oneway( f'channels/{cc.id}/typing', m='post',
+			raw=True, err_tpl='Sending IRC-typing notification failed: {err}' )
 
 	def cmd_status(self, st_name):
 		if not (pb := getattr(self.c_status_protobuf, st_name, None)):
 			return self.log.error('Unknown/unsupported discord status: {}', st_name)
 		self.log.debug('Setting discord user status: {}', st_name)
-		self.conn_req_oneway(up.urljoin( # v10 API fails with "need to update your app"
-			self.conf.discord_api_url.format(api_ver=9),
-			'users/@me/settings-proto/1' ), m='patch', json=dict(settings=pb))
+		self.conn_req_oneway( # v10 API fails with "need to update your app"
+			up.urljoin(self.conf.discord_api_url.format(api_ver=9), 'users/@me/settings-proto/1'),
+			m='patch', json=dict(settings=pb), err_tpl='Failed to update discord status: {err}' )
 
 
 class DiscordSession:
