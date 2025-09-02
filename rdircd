@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.08.3' # git-version: py-str
+	version = '25.09.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -334,6 +334,8 @@ class RDIRCDConfigBase:
 	# Space-separated received ws events to drop from protocol logs
 	debug_proto_log_filter_ws = 'guild_member_list_update typing_start'
 	debug_proto_aiohttp = True # log aiohttp request/response info in proto-log
+	# To set specific level - critical, error, warning, info, debug - overidden by "verbose" option
+	debug_log_level = ''
 	debug_log_file = '' # debug-level log, not affected by "verbose" option
 	debug_log_file_size = int(1.5e6)
 	debug_log_file_count = 9
@@ -5891,8 +5893,13 @@ def main(args=None, conf=None):
 	if conf.debug_verbose: log_fmt = '{asctime} :: ' + log_fmt
 	log_fmt = logging.Formatter(log_fmt, style='{')
 	log_handler = logging.StreamHandler(sys.stderr)
-	log_handler.setLevel( logging.DEBUG
-		if conf.debug_verbose else logging.WARNING )
+	if conf.debug_verbose: log = logging.DEBUG
+	elif conf.debug_log_level:
+		try: log = getattr(logging, conf.debug_log_level.upper())
+		except AttributeError: parser.error( 'Unrecognized [debug]'
+			f' log-level= configuration option value: {conf.debug_log_level!r}' )
+	else: log = logging.WARNING
+	log_handler.setLevel(log)
 	log_handler.setFormatter(log_fmt)
 	log_handler.addFilter(log_empty_filter)
 	logging.root.addHandler(log_handler)

@@ -1780,6 +1780,12 @@ but dunno if those apply if you're just using the alt-client.
 [Discord Developer Terms of Service]:
   https://discord.com/developers/docs/policies-and-agreements/developer-terms-of-service
 
+Generally my "feeling" as of 2025, after using this client for years and seeing
+alt-clients widely used by other people, is that discord staff does not actually
+enforce these rules, even if they apply, except by mistake or when wanting to get
+rid of some troublesome user (e.g. when reported or due to spam/abuse/etc),
+but it's totally just my opinion.
+
 I did ask discord staff for clarification on the matter,
 and got this response around Nov 2020:
 
@@ -1830,8 +1836,8 @@ if they are aware of it.
 
 Few other datapoints and anecdotes on the subject:
 
--   Don't think Discord's "Terms of Service" document explicitly covers
-    third-party client usage, but "Discord Community Guidelines" kinda does,
+-   Don't think Discord's "Terms of Service" document explicitly covers third-party
+    client usage (as of 2020), but "Discord Community Guidelines" kinda does,
     if you consider this client to be "self-bot" or "user-bot" at least.
 
     Only thing that matters in practice is likely the actual staff and specific
@@ -1875,6 +1881,22 @@ Few other datapoints and anecdotes on the subject:
     Guidelines violation (third-party client), but obviously it's just a guess
     on my part as to whether it matters.
 
+-   Running rdircd on a VPS with different IP address than other clients
+    [might trigger captcha to "authorize" IP address], which can be bypassed
+    by using `ssh -D` socks-proxy connection via web browser from that same IP.
+
+-   There've been reports of discord forcing a auth/password reset on account
+    when restarting long-running rdircd instance(s):
+
+    > You’re receiving this message because we detected suspicious activity on
+    > your account and believe your account may have been compromised.
+    > This can happen if your Discord password is the same password used on
+    > another website and that website was hacked, or you accidentally gave
+    > your access token to someone else.
+
+    In which case discord simply asks for one password reset afterwards.
+    Seem to be rare, reported once or twice on IRC, haven't seen it myself.
+
 There are also [some HN comments clarifying Discord staff position in a thread here],
 though none of the above should probably be taken as definitive,
 since third-party and even support staff's responses can be wrong/misleading or outdated,
@@ -1886,6 +1908,8 @@ without explicit indication.
 [issue-18]: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/18
 [Cordless]: https://github.com/Bios-Marcel/cordless
 [Ripcord]: https://cancel.fm/ripcord/
+[might trigger captcha to "authorize" IP address]:
+  #hdr-captcha-solving_is_required_to_login_for.ls9P
 [some HN comments clarifying Discord staff position in a thread here]:
   https://news.ycombinator.com/item?id=25214777
 
