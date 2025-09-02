@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.1' # git-version: py-str
+	version = '25.09.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3177,13 +3177,11 @@ class DiscordSession:
 		elif mt == 'gift_code_update': return self.op_gift_code(m.d)
 		elif mt.startswith('voice_'):
 			if mt == 'voice_state_update': return self.op_voice_st_user(m.d)
-			elif mt == 'voice_channel_status_update': return self.op_voice_st_chan(m.d)
+			elif mt in { 'voice_channel_status_update',
+				'voice_channel_start_time_update' }: return self.op_voice_st_chan(m.d)
 		elif mt.startswith('message_reaction_'): return self.op_react(m.d, mt[17:])
 		elif mt == 'notification_center_item_create': return self.op_ev_note(m.d)
 		elif mt == 'typing_start': return self.op_typing(m.d)
-
-		# XXX: events that'd be nice to check and implement
-		elif mt in {'voice_channel_start_time_update'}: return
 
 		# Known-ignored events
 		elif o in { 'integration', 'channel_pins', 'webhooks', 'call',
@@ -4042,9 +4040,10 @@ class DiscordSession:
 	def op_voice_st_chan(self, m):
 		if not ( (gg := self.st_da.guilds.get(m.get('guild_id', 1)))
 			and (cc := gg.chans.get(m.get('id'))) ): return
-		# status here seem to always be null, indicating empty channel
-		if ( bool(st := m.get('status')) == bool(cc.get('vc_active'))
-			or not self.op_voice_st_tbf_check(cc) ): return
+		# status in status_update seem to always be null, indicating empty channel
+		# voice_start_time seem to be in newer events that have either timestamp or null
+		st = m.get('status') or (m.get('voice_start_time') and 'active')
+		if bool(st) == bool(cc.get('vc_active')) or not self.op_voice_st_tbf_check(cc): return
 		cc.vc_active = bool(st)
 		self.discord.cmd_msg_recv( cc, None,
 			'voice-chat status: ' + str(st or 'empty'), dict(_ev='vc'), notice=True )
