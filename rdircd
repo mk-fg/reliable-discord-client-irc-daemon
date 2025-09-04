@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.3' # git-version: py-str
+	version = '25.09.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -396,6 +396,12 @@ class RDIRCDConfigBase:
 		if len(v.split()) == 1 and not any(c in v for c in ':@!<>'): return v
 		raise ValueError('irc-nick-sys should be a valid IRC nick: {v!r}')
 
+	def _conv_debug_stderr_log(self, v):
+		if not (log_handler := getattr(self, '_debug_log_handler', None)): return
+		if v.lower() not in (vs := 'critical error warning info debug').split():
+			raise ValueError(f'Unsupported value: {v!r} [ {vs} ]')
+		log_handler.setLevel(getattr(logging, v.upper()))
+
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
 	_conv_irc_len_dont_split_re = lambda s,v: re.compile(v or '$x') # $x = never match
@@ -427,11 +433,9 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
-	_conv_debug_stderr_log = ( lambda s,v:
-		(lh := getattr(s, '_debug_log_handler', 0)) and lh.setLevel(getattr(logging, v.upper())) )
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
-	del _re_chk, _parse_td_str, _parse_kv_pairs # func-macros for conversions above
+	del _re_chk, _parse_kv_pairs, _parse_td_str # func-macros for conversions above
 
 
 doc_control_chan_cmds = r'''
@@ -4817,24 +4821,24 @@ class RDIRCD:
 				v = ['no', 'yes'][v] if vt is bool else repr(v)
 				if vt is str and k == 'auth' or 'password' in k: v = '<hidden>'
 				send(f'  {k_ini} = {v} [{vt.__name__}]')
-			send( 'Note: string values must be quoted when setting'
-				' them (using python str literal rules), e.g.: set irc-prefix-edit \'[ed] \'' )
+			send( 'Note: string values can be quoted when setting them to empty "" or'
+				' escapes (using python str literal syntax), e.g.: set irc-prefix-edit \'[ed] \'' )
 			return send( 'Note: not all option changes take effect'
 				' without reconnect or full restart, save them to config for latter' )
 		conf_save = line[1] in ['-s', '--save']
-		line = line_raw.lstrip().split(None, 2 + conf_save)[1 + conf_save:]
-		if not 1 <= len(line) <= 2:
-			return send('ERROR: "set" command needs "option [value]" arguments')
+		line = line_raw.lstrip().split(None, 2+conf_save)[1+conf_save:]
+		if len(line) != 2:
+			return send('ERROR: "set" command needs "set <option> <value>" arguments')
 		if line[-1].startswith('='): line[-1] = line[-1].lstrip('= ') # allows "set key = val"
 		v_conf = None
 		try:
-			k_ini, v_raw = line if len(line) != 1 else (line[0], '""')
-			k, v = k_ini.replace('-', '_'), v_raw
+			k_ini, v_raw = line; k, v = k_ini.replace('-', '_'), v_raw
 			v_conf, sec = self.conf.get(k, raw=True), sec_re.search(k)
 			if not sec: raise KeyError(k)
 			vt, (sec, k_sec) = type(v_conf), sec.groups()
 			if isinstance(v_conf, str):
-				v = ast.literal_eval(v)
+				try: v = ast.literal_eval(v)
+				except ValueError: pass
 				if not isinstance(v, str): raise ValueError(v)
 			v = self.conf.opt_to_val_func(v_conf)(v)
 			if vt is not type(v): raise TypeError(v)

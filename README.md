@@ -1731,7 +1731,7 @@ Here are some random commands to try out in #rdircd.control channel:
 - Disable "reacts" noise everywhere: `set irc-disable-reacts-msgs yes`
 
 - Remove long, confusing and silly nicknames full of unicode junk:\
-    `set discord-name-preference-order 'login'`
+    `set discord-name-preference-order login`
 
     If even ascii logins of specific users get annoying, use `[renames]` in
     config to change those locally (see [Local name aliases] section for more info):
