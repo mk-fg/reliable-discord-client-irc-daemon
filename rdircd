@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.2' # git-version: py-str
+	version = '25.09.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -427,6 +427,8 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
+	_conv_debug_stderr_log = ( lambda s,v:
+		(lh := getattr(s, '_debug_log_handler', 0)) and lh.setLevel(getattr(logging, v.upper())) )
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 	del _re_chk, _parse_td_str, _parse_kv_pairs # func-macros for conversions above
@@ -4688,10 +4690,10 @@ class RDIRCD:
 		return f'since {up_dt} ({up_td})'
 
 	def cmd_chan_sys_log_counts(self):
-		counts = self.conf._debug_counts
-		counts = (' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
+		counts = self.conf._debug_log_counts
+		counts = ( ' '.join( '{}={:,d}'.format(k, counts[k]) for n, k in
 			sorted(((n, k.lower()) for n, k in logging._levelToName.items()), reverse=True)
-			if counts[k] > 0 ) + f' all={counts["all"]:,d}').strip()
+			if counts[k] > 0 ) + f' all={counts["all"]:,d}' ).strip()
 		return counts
 
 	def cmd_chan_sys_control(self, conn, chan, line_raw):
@@ -5219,7 +5221,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	ws_dump_file = 'dump.json'
 
 	_state_section = _state_offsets = _state_file = _state_file_ts = None
-	_debug_chan = _debug_proto = _debug_counts = None
+	_debug_chan = _debug_proto = None
 
 	def __init__(self):
 		self.state, self.renames = dict(), dict()
@@ -5906,10 +5908,11 @@ def main(args=None, conf=None):
 	logging.root.addHandler(log_handler)
 	logging.root.setLevel(0)
 	log = get_logger('main')
+	conf._debug_log_handler = log_handler
 
 	log_handler = LogLevelCounter()
 	logging.root.addHandler(log_handler)
-	conf._debug_counts = log_handler.counts
+	conf._debug_log_counts = log_handler.counts
 
 	if conf.debug_log_file:
 		log_handler = LogFileHandler(
