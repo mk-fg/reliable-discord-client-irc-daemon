@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.6' # git-version: py-str
+	version = '25.09.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -888,6 +888,8 @@ def host_uid_seed():
 	return f'rdircd.{str_hash(seed, 25)}'
 
 
+fd_sync = getattr(os, 'fdatasync', os.fsync)
+
 @cl.contextmanager
 def safe_replacement(path, *open_args, mode=None, **open_kws):
 	path = path_filter(path)
@@ -900,7 +902,7 @@ def safe_replacement(path, *open_args, mode=None, **open_kws):
 		try:
 			if mode is not None: os.fchmod(tmp.fileno(), mode)
 			yield tmp
-			if not tmp.closed: tmp.flush()
+			if not tmp.closed: tmp.flush(); fd_sync(tmp.fileno())
 			os.rename(tmp.name, path)
 		finally:
 			try: os.unlink(tmp.name)
@@ -5583,7 +5585,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if items: return ts_list
 		return ts_list[-1][0] if ts_list else None
 
-	def _state_set(self, t, k, ts, sync=False):
+	def _state_set(self, t, k, ts):
 		if t not in self._state_keep: raise ValueError(t)
 		k, v = f'{t}.{k}', ts_iso8601_fixed(ts)
 		if k not in self.state:
@@ -5595,8 +5597,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		n, v = offsets[k], v.encode()
 		src.seek(n)
 		parse_iso8601(src.read(len(v)).decode(), validate=True)
-		src.seek(n); src.write(v); src.flush()
-		if sync: os.fdatasync(src.fileno())
+		src.seek(n); src.write(v); src.flush() # shouldn't be important enough for fsync
 		self.state[k], self._state_file_ts = ts, os.fstat(src.fileno()).st_ctime
 
 	def state_fwd(self, k=None, ts=None, **get_kws):
