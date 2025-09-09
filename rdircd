@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.5' # git-version: py-str
+	version = '25.09.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -324,8 +324,8 @@ class RDIRCDConfigBase:
 	discord_match_counters = ''
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
-	# To set specific log-level for standard error output (terminal, journalctl, docker logs, etc)
-	# Overidden by "verbose" option above, should be one of: critical, error, warning, info, debug
+	# To set specific log-level for standard error output (terminal, journalctl, docker logs, etc).
+	# Overidden by "verbose" option above, should be one of: critical, error, warning, info, debug.
 	debug_stderr_log = ''
 	debug_err_cut = 150 # for various error messages from discord, which can be long html junk
 	debug_msg_cut = 50 # message part length in debug logs
