@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.4' # git-version: py-str
+	version = '25.09.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2920,13 +2920,6 @@ class DiscordSession:
 				break
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
 
-	async def ws_auth_timeout(self):
-		await asyncio.sleep(timeout := self.conf.discord_ws_auth_timeout)
-		if self.st_da.state == 'ready': return
-		self.log.error( 'Discord gateway auth failed'
-			' to complete within {:.1f}s, closing connection', timeout )
-		self.ws_close_later()
-
 	def ws_send_check(self):
 		'Returns True if sending data on websocket should work currently'
 		return self.ws and not self.ws_state.closed.is_set() and self.ws_state.usable.is_set()
@@ -2981,6 +2974,14 @@ class DiscordSession:
 			self.state('disconnected')
 			self.ws_state.closed.set()
 		finally: self.ws_state.usable.set()
+
+	async def ws_auth_timeout(self):
+		await asyncio.sleep(timeout := self.conf.discord_ws_auth_timeout)
+		if self.st_da.state == 'ready': return
+		self.log.error( 'Discord gateway auth failed'
+			' to complete within {:.1f}s, closing connection', timeout )
+		self.ws_state.auth.clear() # not a deliberate close/reject action from discord
+		self.ws_close_later()
 
 	def ws_auth_fail_check(self):
 		if not self.ws_state.auth_retry.is_set(): return
