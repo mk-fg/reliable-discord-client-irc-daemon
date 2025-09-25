@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.7' # git-version: py-str
+	version = '25.09.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -985,6 +985,19 @@ except: # py < 3.11
 		async def __aexit__(self, err_t, err, err_tb):
 			if err_t is asyncio.CancelledError and self._timeout: raise asyncio.TimeoutError
 			self._timeout_call.cancel()
+
+try: it.pairwise
+except: # py < 3.10
+	def it_pairwise(seq):
+		e_last = nx = object()
+		for e in seq:
+			if e_last is not nx: yield e_last, e
+			e_last = e
+	it.pairwise = it_pairwise
+
+try: it.batched # py >= 3.12
+except: it.batched = ( lambda seq,n,fill=None:
+	it.zip_longest(fillvalue=fill, *([iter(seq)] * n)) )
 
 
 class StacklessContext:
