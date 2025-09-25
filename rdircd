@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.8' # git-version: py-str
+	version = '25.09.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5912,7 +5912,7 @@ def main(args=None, conf=None):
 	if opts.proto_log: conf.debug_proto_log_file = opts.proto_log
 
 	log_fmt = '{name} {levelname:5} :: {message}'
-	if conf.debug_verbose: log_fmt = '{asctime} :: ' + log_fmt
+	if conf.debug_verbose or sys.stderr.isatty(): log_fmt = '{asctime} :: ' + log_fmt
 	log_fmt = logging.Formatter(log_fmt, style='{')
 	log_handler = logging.StreamHandler(sys.stderr)
 	if conf.debug_verbose: log = logging.DEBUG
