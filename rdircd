@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.12' # git-version: py-str
+	version = '25.09.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3608,8 +3608,9 @@ class DiscordSession:
 
 		media_expected = tags.pop('_embed_info', False)
 		if msg_ev: tags.update(_ev=msg_ev)
+		else: msg_ev = tags.get('_ev') # no-text event msg types with embeds and such
 		if line_cache and msg_is_update: line = f'{line_cache}\n{line}'
-		if not (line or media_info or media_expected): return # joins/parts/pins events and such
+		if not (line or msg_ev or media_info or media_expected): return # ignored events
 		if line: self.op_msg_ref(m.id, cc, nick, line, ref=ref)
 		if msg_is_update:
 			tags._prefix = tags.get('_prefix', '') + self.conf.irc_prefix_edit
@@ -3617,7 +3618,7 @@ class DiscordSession:
 				tags._prefix += f'[old-msg {ts_iso8601(msg_ts)}] '
 		elif reply := self.op_msg_parse_reply(m, gg):
 			reply_line, reply_tags = reply
-			line = f'{reply_line}\n{line.strip()}'; tags.update(reply_tags)
+			line = f'{reply_line}\n{line.strip()}'.rstrip(); tags.update(reply_tags)
 
 		if self.conf.discord_embed_info:
 			if act != 'media' and re.search(
@@ -3903,12 +3904,12 @@ class DiscordSession:
 				if name := m.get('content'): line = f'[channel renamed to] {name}'
 				else: line = '[channel renamed]'
 			elif mt == mtc.context_menu_command: pass # "Loading..." placeholder
+			elif mt == mtc.reply: tags._ev = True # bot replies, if they have other components
 			elif mt == mtc.default:
 				if m.get('activity') and m.get('timestamp'):
 					pass # discord embedded-app activities don't display channel msgs anyway
 				elif not can_be_empty: self.log.warning( 'Discarded basic'
 					' text-msg without contents (processing bug?): {}', self._repr(m) )
-			elif mt == mtc.reply: tags._ev, line = True, 'generated-reply' # bot replies
 			elif self.conf.discord_msg_misc_events:
 				line = getattr(mt, 'name', str(mt)).replace(*'_-')
 				tags._ev, line = True, f'misc-event-msg: {line}'
