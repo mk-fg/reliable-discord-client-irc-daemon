@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.10' # git-version: py-str
+	version = '25.09.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3902,6 +3902,7 @@ class DiscordSession:
 					pass # discord embedded-app activities don't display channel msgs anyway
 				elif not can_be_empty: self.log.warning( 'Discarded basic'
 					' text-msg without contents (processing bug?): {}', self._repr(m) )
+			elif mt == mtc.reply: tags._ev, line = True, 'generated-reply' # bot replies
 			elif self.conf.discord_msg_misc_events:
 				line = getattr(mt, 'name', str(mt)).replace(*'_-')
 				tags._ev, line = True, f'misc-event-msg: {line}'
