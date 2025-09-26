@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.9' # git-version: py-str
+	version = '25.09.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -725,6 +725,42 @@ def path_filter(path):
 		raise RuntimeError(f'Disallowed using file with .py/.pyc suffix in [ {path} ]')
 	return pl.Path(path)
 
+@cl.contextmanager
+def safe_replacement(path, *open_args, mode=None, **open_kws):
+	path = path_filter(path)
+	if mode is None:
+		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
+		except OSError: pass
+	open_kws.update(delete=False, dir=path.parent, prefix=path.name+'.')
+	if not open_args: open_kws['mode'] = 'w'
+	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
+		try:
+			if mode is not None: os.fchmod(tmp.fileno(), mode)
+			yield tmp
+			if not tmp.closed: tmp.flush(); os_fdatasync(tmp.fileno())
+			os.rename(tmp.name, path)
+		finally:
+			try: os.unlink(tmp.name)
+			except OSError: pass
+
+def file_tail(p, n, grep=None, bs=100 * 2**10):
+	import mmap
+	lines = list()
+	with open(p, 'rb') as src:
+		a, buff, mm = 1, b'', mmap.mmap(
+			src.fileno(), 0, access=mmap.ACCESS_READ )
+		while len(lines) < n:
+			b = a + bs
+			a, buff, end = b, buff + mm[-a:-b:-1], b > len(mm)
+			while True:
+				try: line, buff = buff.split(b'\n', 1)
+				except ValueError:
+					if end and buff: line, buff = buff, b''
+					else: break
+				if line: lines.append(line[::-1].decode())
+			if end: break
+	return list(reversed(lines[:n]))
+
 
 def setup_aiohttp_trace_logging(log):
 	tc = aiohttp.TraceConfig()
@@ -810,7 +846,7 @@ def str_wrap(s, w_lwm, w_hwm, **wrap_kws):
 		out = textwrap.wrap(s, n, **wrap_kws)
 		outs.append((ol := len(out), sum( abs(len(a) - len(b)) + sum(
 				max(0, w_hwm - (len(sl) + 4 + sl.count(' ')*2)) for sl in [a, b] )
-			for a, b in it.pairwise(out) ), out))
+			for a, b in it_pairwise(out) ), out))
 		if ol == 1: break
 	return sorted(outs)[0][-1]
 
@@ -887,75 +923,18 @@ def host_uid_seed():
 		except OSError: pass
 	return f'rdircd.{str_hash(seed, 25)}'
 
+def force_list(v):
+	if not v: v = list()
+	elif isinstance(v, cs_abc.ValuesView): v = list(v)
+	elif not isinstance(v, list): v = [v]
+	return v
 
-fd_sync = getattr(os, 'fdatasync', os.fsync)
-
-@cl.contextmanager
-def safe_replacement(path, *open_args, mode=None, **open_kws):
-	path = path_filter(path)
-	if mode is None:
-		try: mode = stat.S_IMODE(os.lstat(path).st_mode)
-		except OSError: pass
-	open_kws.update(delete=False, dir=path.parent, prefix=path.name+'.')
-	if not open_args: open_kws['mode'] = 'w'
-	with tempfile.NamedTemporaryFile(*open_args, **open_kws) as tmp:
-		try:
-			if mode is not None: os.fchmod(tmp.fileno(), mode)
-			yield tmp
-			if not tmp.closed: tmp.flush(); fd_sync(tmp.fileno())
-			os.rename(tmp.name, path)
-		finally:
-			try: os.unlink(tmp.name)
-			except OSError: pass
-
-def file_tail(p, n, grep=None, bs=100 * 2**10):
-	import mmap
-	lines = list()
-	with open(p, 'rb') as src:
-		a, buff, mm = 1, b'', mmap.mmap(
-			src.fileno(), 0, access=mmap.ACCESS_READ )
-		while len(lines) < n:
-			b = a + bs
-			a, buff, end = b, buff + mm[-a:-b:-1], b > len(mm)
-			while True:
-				try: line, buff = buff.split(b'\n', 1)
-				except ValueError:
-					if end and buff: line, buff = buff, b''
-					else: break
-				if line: lines.append(line[::-1].decode())
-			if end: break
-	return list(reversed(lines[:n]))
-
-def token_bucket(spec, negative_tokens=False):
-	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
-			Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
-		Expects a number of tokens (can be float, def=1),
-			and subtracts these, borrowing below zero with negative_tokens set.
-		Yields either None if there's enough tokens
-			or delay (in seconds, float) until when there will be.
-		Simple "0" value means "always None", or "inf" for "infinite delays".'''
-	try:
-		try: interval, burst = spec.rsplit(':', 1)
-		except (ValueError, AttributeError): interval, burst = spec, 1.0
-		else: burst = float(burst)
-		if isinstance(interval, str):
-			try: a, b = interval.split('/', 1)
-			except ValueError: interval = float(interval)
-			else: interval = float(a) / float(b)
-		if min(interval, burst) < 0: raise ValueError
-	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
-	if interval <= 0:
-		while True: yield None
-	elif interval == math.inf:
-		while True: yield 2**31 # safe "infinite delay" value
-	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
-	val = (yield) or 1
-	while True:
-		ts = time.monotonic()
-		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
-		val, tokens = ( (None, tokens - val) if tokens >= val else
-			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens) )
-		val = (yield val) or 1
+def dict_update(d, du_iter=None, sync=True):
+	'Update or replace dict contents, returning difference in the latter case.'
+	keys_old, du = set(d.keys()), dict()
+	if du_iter: du.update(du_iter)
+	d.update(du)
+	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
 
 
 async def aio_await_wrap(res):
@@ -972,33 +951,6 @@ async def aio_task_cancel(task_list):
 		with cl.suppress(asyncio.CancelledError): task.cancel()
 	for task in task_list:
 		with cl.suppress(asyncio.CancelledError): await task
-
-try: aio_timeout = asyncio.timeout
-except: # py < 3.11
-	class aio_timeout:
-		def __init__(self, timeout):
-			loop = asyncio.get_running_loop()
-			self._timeout, self._timeout_call = False, loop.call_at(
-				loop.time() + timeout, self._timeout_set, asyncio.current_task() )
-		def _timeout_set(self, task): self._timeout = task.cancel() or True
-		async def __aenter__(self): return self
-		async def __aexit__(self, err_t, err, err_tb):
-			if err_t is asyncio.CancelledError and self._timeout: raise asyncio.TimeoutError
-			self._timeout_call.cancel()
-
-try: it.pairwise
-except: # py < 3.10
-	def it_pairwise(seq):
-		e_last = nx = object()
-		for e in seq:
-			if e_last is not nx: yield e_last, e
-			e_last = e
-	it.pairwise = it_pairwise
-
-try: it.batched # py >= 3.12
-except: it.batched = ( lambda seq,n,fill=None:
-	it.zip_longest(fillvalue=fill, *([iter(seq)] * n)) )
-
 
 class StacklessContext:
 	'''Like AsyncContextStack, but for tracking tasks that
@@ -1032,6 +984,37 @@ class StacklessContext:
 		return task
 	add = add_task
 
+
+def token_bucket(spec, negative_tokens=False):
+	'''Spec: { interval_seconds: float | float_a/float_b }[:burst_float]
+			Examples: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5, 0.5:10, 20:30.
+		Expects a number of tokens (can be float, def=1),
+			and subtracts these, borrowing below zero with negative_tokens set.
+		Yields either None if there's enough tokens
+			or delay (in seconds, float) until when there will be.
+		Simple "0" value means "always None", or "inf" for "infinite delays".'''
+	try:
+		try: interval, burst = spec.rsplit(':', 1)
+		except (ValueError, AttributeError): interval, burst = spec, 1.0
+		else: burst = float(burst)
+		if isinstance(interval, str):
+			try: a, b = interval.split('/', 1)
+			except ValueError: interval = float(interval)
+			else: interval = float(a) / float(b)
+		if min(interval, burst) < 0: raise ValueError
+	except: raise ValueError(f'Invalid format for rate-limit: {spec!r}')
+	if interval <= 0:
+		while True: yield None
+	elif interval == math.inf:
+		while True: yield 2**31 # safe "infinite delay" value
+	tokens, rate, ts_sync = max(0, burst - 1), interval**-1, time.monotonic()
+	val = (yield) or 1
+	while True:
+		ts = time.monotonic()
+		ts_sync, tokens = ts, min(burst, tokens + (ts - ts_sync) * rate)
+		val, tokens = ( (None, tokens - val) if tokens >= val else
+			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens) )
+		val = (yield val) or 1
 
 def parse_iso8601( spec, tz_default=None, validate=False,
 		_re=re.compile( r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
@@ -1150,28 +1133,6 @@ def repr_duration( ts, ts0=None,
 	else:
 		if ext: res.append(ext)
 		return ' '.join(res)
-
-
-def force_list(v):
-	if not v: v = list()
-	elif isinstance(v, cs_abc.ValuesView): v = list(v)
-	elif not isinstance(v, list): v = [v]
-	return v
-
-def dict_update(d, du_iter=None, sync=True):
-	'Update or replace dict contents, returning difference in the latter case.'
-	keys_old, du = set(d.keys()), dict()
-	if du_iter: du.update(du_iter)
-	d.update(du)
-	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
-
-def iter_gather(container):
-	'Auto-gathers iterator function result into some container.'
-	def _cls_wrapper(func):
-		def _wrapper(self, *args, **kws):
-			return container(func(self, *args, **kws))
-		return ft.wraps(func)(_wrapper)
-	return _cls_wrapper
 
 
 class str_attrs(str):
@@ -1344,6 +1305,35 @@ class TimeSeriesBuckets:
 		return ' '.join(out)
 
 
+try: os_fdatasync = os.fdatasync # not on MacOS
+except: os_fdatasync = os.fsync
+
+try: aio_timeout = asyncio.timeout
+except: # py < 3.11
+	class aio_timeout:
+		def __init__(self, timeout):
+			loop = asyncio.get_running_loop()
+			self._timeout, self._timeout_call = False, loop.call_at(
+				loop.time() + timeout, self._timeout_set, asyncio.current_task() )
+		def _timeout_set(self, task): self._timeout = task.cancel() or True
+		async def __aenter__(self): return self
+		async def __aexit__(self, err_t, err, err_tb):
+			if err_t is asyncio.CancelledError and self._timeout: raise asyncio.TimeoutError
+			self._timeout_call.cancel()
+
+try: it_pairwise = it.pairwise
+except: # py < 3.10
+	def it_pairwise(seq):
+		e_last = nx = object()
+		for e in seq:
+			if e_last is not nx: yield e_last, e
+			e_last = e
+
+try: it_batched = it.batched # py >= 3.12
+except: it_batched = ( lambda seq,n,fill=None:
+	it.zip_longest(fillvalue=fill, *([iter(seq)] * n)) )
+
+
 def irc_casefold_rfc1459(name, _irc_rfc1459_table=dict(zip(
 		map(ord, string.ascii_uppercase + '\\[]^'), string.ascii_lowercase + '|{}~' ))):
 	return name.translate(_irc_rfc1459_table)
@@ -1473,7 +1463,7 @@ class IRCProtocol:
 				try:
 					tag, val = tag.split('=', 1)
 					if not val: raise ValueError
-					for a, b in it.batched(_tag_esc, 2): val = val.replace(a, b)
+					for a, b in it_batched(_tag_esc, 2): val = val.replace(a, b)
 				except ValueError: val = ''
 				m.tags[tag] = val
 			line = line.lstrip(' ')
@@ -4528,10 +4518,9 @@ class RDIRCD:
 		return ( self.tasks.add(asyncio.sleep(delay), func)
 			if delay else self.tasks.add(aio_await_wrap(func)) )
 
-	@iter_gather(irc_name_dict)
 	def cmd_conn_map(self):
-		for conn in self.irc_conns.values():
-			if conn.st_irc.nick: yield (conn.st_irc.nick, conn)
+		return irc_name_dict( (conn.st_irc.nick, conn)
+			for conn in self.irc_conns.values() if conn.st_irc.nick )
 
 	def cmd_conn(self, name=None):
 		'Get IRC connection for sending a direct message'
@@ -4540,17 +4529,18 @@ class RDIRCD:
 			return self.cmd_conn_map()[name]
 		except (KeyError, StopIteration): return
 
-	@iter_gather(list)
 	def cmd_chan_conns(self, name_or_cc):
 		'Get list of irc connections for users in a channel'
 		if isinstance(name_or_cc, str): name = name_or_cc
 		elif not (name := self.st_br.did_chan.get(name_or_cc.did)): return
+		conn_list = list()
 		for conn in self.irc_conns.values():
 			chan_name = conn.chan_name(name)
 			if chan_name not in conn.st_irc.chans:
 				if not self.conf._irc_chan_auto_join_re.search(chan_name): continue
 				if not conn.st_irc.auth: continue
-			yield conn
+			conn_list.append(conn)
+		return conn_list
 
 	def cmd_chan_names(self, name):
 		'''Returns list of irc-unique nicks for specified channel, for /names and such.
