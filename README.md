@@ -37,6 +37,7 @@ Table of Contents
     - [Highlight on incoming private messages]
     - [Message ACKs, typing notifications and other events from IRC]
     - [Not getting messages in some of 200+ joined discords]
+    - [Hidden events like "user joined" and such special messages]
     - [WARNING :: Session/auth rejected unexpectedly - disabling connection]
     - [Captcha-solving is required to login for some reason]
     - [Debugging anything strange, unknown or unexpected]
@@ -82,6 +83,8 @@ Table of Contents
   #hdr-message_acks_typing_notifications_and_ot.9aX7
 [Not getting messages in some of 200+ joined discords]:
   #hdr-not_getting_messages_in_some_of_200_join.8aTB
+[Hidden events like "user joined" and such special messages]:
+  #hdr-hidden_events_like_user_joined_and_such_.q08a
 [WARNING :: Session/auth rejected unexpectedly - disabling connection]:
   #hdr-warning_session_auth_rejected_unexpected.ZboG
 [Captcha-solving is required to login for some reason]:
@@ -1419,6 +1422,28 @@ Option can also be useful to lower amount of network traffic from discords
 that you don't want to leave, but don't care to keep up with via IRC either.
 "Unsubscribing" from specific discords when leaving last IRC channel on those
 is not implemented - just restart rdircd if that's ever needed.
+
+<a name=hdr-hidden_events_like_user_joined_and_such_.q08a></a>
+### Hidden events like "user joined" and such special messages
+
+All messages that people send on discord are marked with "default" type, but in
+addition to that, discord generates various events like "\<user\> joined this discord",
+"\<user\> changed the channel icon", "poll ended" or "emoji added" as channel messages
+with their own different types, [there are dozens of such special msg types].
+
+Common and useful-looking ones are handled and presented in some special way,
+e.g. poll results are displayed with votes/percentages and a winning entry highlighted,
+but most of these tend to be ignored as likely irrelevant (like "user joined" events
+in #welcome channels), or simply overlooked due to being new or relatively rare to see.
+
+To include all default-ignored events, formatted in some generic way,
+`msg-misc-events = yes` option can be enabled under \[discord\] section,
+but if specific event seems relevant and important, it might be a good idea to
+report it being ignored as an issue in this repository (or in any other way) -
+should be easy enough to add it to the list of ones to default-display at least.
+
+[there are dozens of such special msg types]:
+  https://docs.discord.food/resources/message#message-type
 
 <a name=hdr-warning_session_auth_rejected_unexpected.ZboG></a>
 ### WARNING :: Session/auth rejected unexpectedly - disabling connection
