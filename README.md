@@ -1861,6 +1861,25 @@ if they are aware of it.
 
 Few other datapoints and anecdotes on the subject:
 
+-   There've been multiple reports in 2025 of discord forcing a auth/password
+    reset on account, citing "detected suspicious activity":
+
+    > You’re receiving this message because we detected suspicious activity on
+    > your account and believe your account may have been compromised.
+    > This can happen if your Discord password is the same password used on
+    > another website and that website was hacked, or you accidentally gave
+    > your access token to someone else.
+
+    In which case discord asks for a password reset afterwards (no one mentioned
+    getting this more than once so far), and can apply temporary restrictions on
+    the account afterwards (which seem to get lifted with notification after a
+    few hours), like showing up your messages as `N message(s) hidden from likely
+    spammer -- [Show]` in channels/DMs, or disallow initiating new DMs.
+
+    Might be related to using manually-set static auth token or using it for
+    too long with e.g. rotating IP addresses, which triggers some kind of
+    "this looks like a stolen credential" protection on the discord side, but idk.
+
 -   Don't think Discord's "Terms of Service" document explicitly covers third-party
     client usage (as of 2020), but "Discord Community Guidelines" kinda does,
     if you consider this client to be "self-bot" or "user-bot" at least.
@@ -1909,18 +1928,6 @@ Few other datapoints and anecdotes on the subject:
 -   Running rdircd on a VPS with different IP address than other clients
     [might trigger captcha to "authorize" IP address], which can be bypassed
     by using `ssh -D` socks-proxy connection via web browser from that same IP.
-
--   There've been reports of discord forcing a auth/password reset on account
-    when restarting long-running rdircd instance(s):
-
-    > You’re receiving this message because we detected suspicious activity on
-    > your account and believe your account may have been compromised.
-    > This can happen if your Discord password is the same password used on
-    > another website and that website was hacked, or you accidentally gave
-    > your access token to someone else.
-
-    In which case discord simply asks for one password reset afterwards.
-    Seem to be rare, reported once or twice on IRC, haven't seen it myself.
 
 There are also [some HN comments clarifying Discord staff position in a thread here],
 though none of the above should probably be taken as definitive,
