@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.10.0' # git-version: py-str
+	version = '25.10.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3919,6 +3919,8 @@ class DiscordSession:
 					pass # an actually empty message - seem to be allowed by discord
 				elif not can_be_empty: self.log.warning( 'Discarded basic'
 					' text-msg without contents (processing bug?): {}', self._repr(m) )
+			elif tags.get('_embed_info') and self.conf.discord_embed_info:
+				self.log.debug('Embed-only misc-event-msg {!r} [{}]', mt, m.id)
 			elif self.conf.discord_msg_misc_events:
 				line = getattr(mt, 'name', str(mt)).replace(*'_-')
 				tags._ev, line = True, f'misc-event-msg: {line}'
