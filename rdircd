@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.09.15' # git-version: py-str
+	version = '25.10.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5681,7 +5681,7 @@ def main_test(cmd, conf):
 			msg-parse[=<json-file-path>[:<json-file-path>...]]
 				Parse full MESSAGE_CREATE event(s) from JSON file(s)
 					with it (or stdin lines, without file paths), using op_msg.
-				Prints resulting parsed lines and any warnings logged during that.
+				Prints resulting parsed lines or any notices/warnings logged during that.
 				Intended to test pasing new/complicated message structures after code tweaks.
 
 			msg-parse-base[=<json-file-path>]
@@ -5700,7 +5700,7 @@ def main_test(cmd, conf):
 				self.msg_recv = cc, nick, line, tags, adict(kws)
 			def __init__(self, conf, st):
 				self.st_da = self.st_br = self.st_eris = st; self.irc_conns = adict()
-				self.conf, self.log = conf, get_logger('xxx')
+				self.conf, self.log = conf, get_logger('test')
 				self.discord = self.bridge = self # all-in-one mock object
 				self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
 		class str_report(str): pass
@@ -5911,7 +5911,6 @@ def main(args=None, conf=None):
 			print(f'  {k}: {ts_iso8601_ms(v)}')
 		return
 
-	if opts.test is not None: return main_test(opts.test, conf)
 	if opts.debug: conf.debug_verbose = True
 	if opts.debug_asyncio: conf.debug_asyncio_logs = True
 	if opts.debug_log: conf.debug_log_file = opts.debug_log
@@ -5935,6 +5934,8 @@ def main(args=None, conf=None):
 	logging.root.setLevel(0)
 	log = get_logger('main')
 	conf._debug_log_handler = log_handler
+
+	if opts.test is not None: return main_test(opts.test, conf)
 
 	log_handler = LogLevelCounter()
 	logging.root.addHandler(log_handler)
