@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.10.1' # git-version: py-str
+	version = '25.10.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -935,6 +935,8 @@ def dict_update(d, du_iter=None, sync=True):
 	if du_iter: du.update(du_iter)
 	d.update(du)
 	if sync: return dict((k, d.pop(k)) for k in keys_old.difference(du))
+
+n_clamp = lambda n, a, b: min(b, max(a, n))
 
 
 async def aio_await_wrap(res):
@@ -3751,10 +3753,19 @@ class DiscordSession:
 		elif (url := em.get('url') or '') and (m := re.match(
 				r'https?://(' r'github\.com|gitlab\.com|bitbucket\.org'
 				r'|codeberg\.org|git\.kernel\.org|git\.sr\.ht' r')/', url )):
-			commit_desc = desc and re.fullmatch(
-				r'\s*\[[^\]]+\]\([^) ]+\)\s+(?P<msg>\S.*)', desc ) or ''
-			if commit_desc: commit_desc = ' ' + commit_desc['msg'].strip()
-			lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}' + commit_desc)
+			lines.append(f'SCM {m[1]} :: {em_src or "-"} :: {title}')
+			if m := re.fullmatch(r'\s*\[([^\]]+)\]\([^) ]+\)\s+(\S.*)', msg := desc, re.S):
+				msg = f'[{m[1]}] {m[2]}' # strip md link url, keep "[hash] comment"
+			if msg := msg.replace('\r', '').strip():
+				re_code = re.compile(r'(^|\s)```\s*(diff|patch)\s*(.*?)\s*```(\s|$)', re.S)
+				pre, n = re_code.subn('', msg)
+				if not n: lines.append('Info :: ' + str_cut(
+					msg, n_clamp(self.conf.irc_len_lwm, 80, 150) ))
+				else: # inline and length-clamped code-block previews
+					mm, n = list(), (self.conf.irc_len_lwm - len(pre := pre.strip()) - 100) / n
+					msg = re_code.sub( lambda m: mm.append(m.end(1)) or
+						f'{m[1]}`{str_cut(m[3], n_clamp(n, 30, 140))}`{m[4]}', msg )
+					lines.append(f'Info :: {msg[:mm[0]].strip()} {msg[mm[0]:]}')
 		elif fields := em.get('fields'): # can be one-word, so try to group them
 			inline, em_len = list(), self.conf.discord_embed_info_len
 			for fd in fields:
@@ -3768,7 +3779,7 @@ class DiscordSession:
 				if kv: inline.append('\ue790'.join(kv.replace('\n', ' // ').split()))
 			if inline:
 				w_max = round(min(160, (em_len - 10) / 2))
-				w_min = round(max(70, min(120, (em_len - 10) / 3)))
+				w_min = round(n_clamp((em_len - 10) / 3, 70, 120))
 				lines = list( line.replace(' ', ' :: ').replace('\ue790', ' ')
 					for line in str_wrap(' '.join(inline), w_min, w_max) ) + lines
 			if msg := ' :: '.join(filter(None, [em_src, title, desc])):
