@@ -279,10 +279,16 @@ On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
 as python port there doesn't seem to have [hashlib.scrypt] in its stdlib.
 
+aiohttp and its dependencies might also require installing
+[typing_extensions module] when using non-latest major python versions
+(e.g. 3.10.x or earlier).
+Seem to also be an issue with OpenBSD's aiohttp or aiosignal packages
+(run `pkg_add py3-typing_extensions` to fix).
+
 [python-systemd]: https://github.com/systemd/python-systemd
 [scrypt module]: https://github.com/holgern/py-scrypt/
 [hashlib.scrypt]: https://docs.python.org/3/library/hashlib.html#hashlib.scrypt
-
+[typing_extensions module]: https://github.com/python/typing_extensions
 
 <a name=hdr-installation></a>
 ### Installation
