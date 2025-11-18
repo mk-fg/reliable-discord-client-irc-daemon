@@ -1868,7 +1868,7 @@ if they are aware of it.
 
 Few other datapoints and anecdotes on the subject:
 
--   There've been multiple reports in 2025 of discord forcing a auth/password
+-   There've been multiple reports in 2025 of Discord forcing a password/token
     reset on account, citing "detected suspicious activity":
 
     > You’re receiving this message because we detected suspicious activity on
@@ -1877,15 +1877,19 @@ Few other datapoints and anecdotes on the subject:
     > another website and that website was hacked, or you accidentally gave
     > your access token to someone else.
 
-    In which case discord asks for a password reset afterwards (no one mentioned
-    getting this more than once so far), and can apply temporary restrictions on
-    the account afterwards (which seem to get lifted with notification after a
-    few hours), like showing up your messages as `N message(s) hidden from likely
-    spammer -- [Show]` in channels/DMs, or disallow initiating new DMs.
+    In which case Discord asks for a password reset afterwards, and can apply
+    temporary restrictions on the account afterwards (which seem to get lifted
+    with notification after a few hours), like showing up your messages as
+    `N message(s) hidden from likely spammer -- [Show]` in channels/DMs,
+    or disallow initiating new DMs.
 
-    Might be related to using manually-set static auth token or using it for
-    too long with e.g. rotating IP addresses, which triggers some kind of
-    "this looks like a stolen credential" protection on the discord side, but idk.
+    It's been reported to happen after triggering an auto-mod regexp on a server,
+    or in other cases might be related to using manually-set static auth token
+    or using it for too long with e.g. rotating IP addresses - hard to say,
+    but Discord seem to be finding rdircd usage a factor in "suspicious activity".
+
+    No one mentioned getting this more than once so far, so might be more like a
+    once-per-account bot-check for accounts used via rdircd.
 
 -   Don't think Discord's "Terms of Service" document explicitly covers third-party
     client usage (as of 2020), but "Discord Community Guidelines" kinda does,
