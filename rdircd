@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.0' # git-version: py-str
+	version = '25.11.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3056,6 +3056,7 @@ class DiscordSession:
 			# typing=true activities=true is required to get MESSAGE_CREATE in large guilds
 			self.ws_send(self.c.ox_guild_sub, dict( guild_id=gid,
 				threads=True, typing=True, activities=True, channels=dict([chan_req[0]]) ))
+			gg.synced = True
 
 	### Gateway Websocket event handlers
 
