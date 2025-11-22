@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.1' # git-version: py-str
+	version = '25.11.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -911,7 +911,7 @@ def data_hash(data, **str_hash_kws):
 	data = _data_clean(data)
 	if not isinstance(data, bytes):
 		data = json.dumps(data, sort_keys=True).encode()
-	return str_hash(data)
+	return str_hash(data, **str_hash_kws)
 
 def data_json(data):
 	return json.dumps(_data_clean(data))
@@ -3323,7 +3323,7 @@ class DiscordSession:
 
 	def op_ev_chans(self, gid, chans, sync=None):
 		if not (gg := self.st_da.guilds.get(gid)): return
-		chans_updated, new_threads = self.op_ev_chans_process(gg, chans)
+		chans_updated, new_threads = self.op_ev_chans_process(gg, chans, dedup=not sync)
 
 		rename_list = list() # sent after chan_map is updated
 		for cc, name_old in self.op_ev_chans_rename_list(chans_updated, gg.chans):
@@ -3346,7 +3346,7 @@ class DiscordSession:
 				self.discord.cmd_chan_thread_event(cc, 'created')
 		for ren_func in rename_list: ren_func() # these msgs go to old chans
 
-	def op_ev_chans_process(self, gg, chans):
+	def op_ev_chans_process(self, gg, chans, dedup=False):
 		'''Process channel data from discord into internal information.
 			Earlier information from gg.chans is used as a base and for diffs, if it is there.'''
 		_gg_prefix = lambda: self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
@@ -3356,6 +3356,10 @@ class DiscordSession:
 			cc = gg.chans.get(c.id, adict(
 				tid=None, names=adict(), threads=adict(), last_msg_sent=adict(),
 				users=TimedCacheDict(self.conf._irc_names_timeout, bump_on_get=False) ))
+			if dedup:
+				c.pop('version', None); c_hash = data_hash(c, c=8)
+				if c_hash == cc.get('dedup_hash'): continue # some bots spam no-op chan-updates
+				cc.dedup_hash = c_hash
 			cc.names.update(raw=name or '', old=cc.get('name', '')) # for various renames
 
 			if c.type in [ct.group, ct.store]: continue
