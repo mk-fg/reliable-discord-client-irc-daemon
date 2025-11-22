@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.10.3' # git-version: py-str
+	version = '25.11.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2454,21 +2454,23 @@ class DiscordSession:
 	api_ver = 10
 
 	class c(enum.IntEnum):
-		dispatch = 0
-		heartbeat = 1
-		identify = 2
-		status_update = 3
-		voice_state_update = 4
-		resume = 6
-		reconnect = 7
-		request_guild_members = 8
-		invalid_session = 9
-		hello = 10
-		heartbeat_ack = 11
-		request_sync = 12
-		client_disconnected = 13
-		request_sync_chan = 14
+		# https://docs.discord.food/topics/opcodes-and-status-codes
+		# Opcodes - most aren't used/listed. Prefixes (x=padding): o=sent, i=received
+		xi_dispatch = 0
+		oi_heartbeat = 1
+		ox_identify = 2
+		ox_status_update = 3
+		ox_voice_state_update = 4
+		ox_resume = 6
+		xi_reconnect = 7
+		ox_guild_members = 8
+		xi_invalid_session = 9
+		xi_hello = 10
+		xi_heartbeat_ack = 11
+		ox_guild_sub = 14
+		# ox_last_msgs = 34 - might be useful to check history on reconnects
 
+		# Gateway Close Event Codes
 		unknown_error = 4000
 		unknown_opcode = 4001
 		decode_error = 4002
@@ -2483,6 +2485,7 @@ class DiscordSession:
 		invalid_api_ver = 4012
 		intent_invalid = 4013
 		intent_denied = 4014
+		too_many_sessions = 4015
 
 		oneshot = 10_000
 
@@ -2857,10 +2860,10 @@ class DiscordSession:
 			await self.ws_close()
 			raise DiscordSessionError('Failed to connect to discord')
 		self.state('connected')
-		self.ws_add_handler(self.c.dispatch, self.op_track_seq)
-		self.ws_add_handler(self.c.reconnect, self.op_reconnect)
-		self.ws_add_handler(self.c.hello, self.op_hello)
-		self.ws_add_handler(self.c.invalid_session, self.op_invalid_session)
+		self.ws_add_handler(self.c.xi_dispatch, self.op_track_seq)
+		self.ws_add_handler(self.c.xi_reconnect, self.op_reconnect)
+		self.ws_add_handler(self.c.xi_hello, self.op_hello)
+		self.ws_add_handler(self.c.xi_invalid_session, self.op_invalid_session)
 		self.ws_tasks.add(self.ws_poller())
 		self.ws_tasks.add(self.ws_auth_timeout())
 
@@ -3031,7 +3034,7 @@ class DiscordSession:
 		fut = self.ws_nonces[nonce] = asyncio.Future()
 		if not isinstance(gid, list): gid = [gid]
 		fut.results, fut.queries = dict(), dict.fromkeys(gid)
-		self.ws_send( self.c.request_guild_members,
+		self.ws_send( self.c.ox_guild_members,
 			dict(nonce=nonce, guild_id=gid, presences=False, limit=limit, query=query) )
 		try: return await asyncio.wait_for(fut, to := self.conf.discord_user_query_timeout)
 		except asyncio.TimeoutError:
@@ -3048,10 +3051,10 @@ class DiscordSession:
 			chan_req = list( (cc.id, [[0, 99]]) for cc in # to pick any text-ish channel
 				gg.chans.values() if cc.ct in [cc.ct.text, cc.ct.news, cc.ct.forum] )
 			if not chan_req: continue
-			# It doesn't seem to matter what channels= are sent in request_sync_chan -
+			# It doesn't seem to matter what channels= are sent in ox_guild_sub -
 			#   all threads are returned regardless, along with GUILD_MEMBER_LIST_UPDATE and such
 			# typing=true activities=true is required to get MESSAGE_CREATE in large guilds
-			self.ws_send(self.c.request_sync_chan, dict( guild_id=gid,
+			self.ws_send(self.c.ox_guild_sub, dict( guild_id=gid,
 				threads=True, typing=True, activities=True, channels=dict([chan_req[0]]) ))
 
 	### Gateway Websocket event handlers
@@ -3075,17 +3078,17 @@ class DiscordSession:
 		self.ws_state.auth.set()
 		if not sid:
 			self.state('hello.auth.identify')
-			self.ws_add_handler( self.c.dispatch,
+			self.ws_add_handler( self.c.xi_dispatch,
 				t='ready', func=self.op_ready, replace=True )
 			# Note: sending API intents seem to strip "contents" from other people's messages!
-			self.ws_send(self.c.identify, dict(
+			self.ws_send(self.c.ox_identify, dict(
 				properties={'os': 'Linux', 'browser': 'rdircd', 'device': ''},
 				token=token, compress=False ))
 		else:
 			self.state('hello.auth.resume')
-			self.ws_add_handler( self.c.dispatch,
+			self.ws_add_handler( self.c.xi_dispatch,
 				t='resumed', func=self.op_ready, replace=True )
-			self.ws_send(self.c.resume, dict(
+			self.ws_send(self.c.ox_resume, dict(
 				token=token, session_id=sid, seq=self.st_da.get('seq') ))
 
 	async def op_invalid_session(self, m):
@@ -3139,8 +3142,8 @@ class DiscordSession:
 				'' if td_conn == td_sess else f' last-conn-duration=[{td_conn}]' ) )
 		self.st_da.ts_connect, self.st_da.ts_disconnect = ts, None
 		self.state('ready')
-		self.ws_add_handler(self.c.dispatch, func=self.op_ev)
-		self.ws_add_handler(self.c.heartbeat, func=self.op_heartbeat_req)
+		self.ws_add_handler(self.c.xi_dispatch, func=self.op_ev)
+		self.ws_add_handler(self.c.oi_heartbeat, func=self.op_heartbeat_req)
 		self.ws_tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
 		if not resume: self.ws_req_guild_sync()
 		return self.c.oneshot
@@ -3148,9 +3151,9 @@ class DiscordSession:
 	async def op_heartbeat_task(self, interval):
 		loop = asyncio.get_running_loop()
 		self.st_da.hb_ts_ack = hb_ts = loop.time() + interval
-		self.ws_add_handler(self.c.heartbeat_ack, self.op_heartbeat_ack)
+		self.ws_add_handler(self.c.xi_heartbeat_ack, self.op_heartbeat_ack)
 		while not self.ws_state.closed.is_set():
-			self.ws_send(self.c.heartbeat, self.st_da.get('seq'))
+			self.ws_send(self.c.oi_heartbeat, self.st_da.get('seq'))
 			ts = loop.time()
 			if self.st_da.hb_ts_ack < ts - interval*2:
 				self.log.info('Missing heartbeat ack, reconnecting')
@@ -3164,7 +3167,7 @@ class DiscordSession:
 		self.st_da.hb_ts_ack = asyncio.get_running_loop().time()
 
 	def op_heartbeat_req(self, m):
-		self.ws_send(self.c.heartbeat, self.st_da.get('seq'))
+		self.ws_send(self.c.oi_heartbeat, self.st_da.get('seq'))
 
 	def op_ev(self, m):
 		'Dispatcher for op=0 (dispatch) gateway-ws events, which is most of the activity'
@@ -3293,7 +3296,7 @@ class DiscordSession:
 			if 'properties' in g: g = adict(g.pop('properties'), **g)
 			gg = gs_new.setdefault( g.id,
 				self.st_da.guilds.get(g.id, adict(id=g.id, chans=dict())) )
-			if init: gg.synced = False # req_sync needs to be re-sent after reconnect
+			if init: gg.synced = False # ox_guild_sub needs to be re-sent after reconnect
 			if g.id not in self.st_da.guilds:
 				prefix = self.discord.bridge.uid('guild', gg.id, kh=gg.get('kh'))
 				self.log.debug('New guild: gid={} prefix={} name={!r}', g.id, prefix, g.name)
