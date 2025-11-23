@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.2' # git-version: py-str
+	version = '25.11.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3356,10 +3356,9 @@ class DiscordSession:
 			cc = gg.chans.get(c.id, adict(
 				tid=None, names=adict(), threads=adict(), last_msg_sent=adict(),
 				users=TimedCacheDict(self.conf._irc_names_timeout, bump_on_get=False) ))
-			if dedup:
-				c.pop('version', None); c_hash = data_hash(c, c=8)
-				if c_hash == cc.get('dedup_hash'): continue # some bots spam no-op chan-updates
-				cc.dedup_hash = c_hash
+			for k in 'version', 'permission_overwrites': c.pop(k, None)
+			if (c_hash := data_hash(c, c=8)) == cc.get('dedup_hash') and dedup: continue
+			cc.dedup_hash = c_hash # some bots spam no-op chan-updates, hence dedup
 			cc.names.update(raw=name or '', old=cc.get('name', '')) # for various renames
 
 			if c.type in [ct.group, ct.store]: continue
