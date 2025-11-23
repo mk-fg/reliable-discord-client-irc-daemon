@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.4' # git-version: py-str
+	version = '25.11.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3488,8 +3488,8 @@ class DiscordSession:
 				for c_tid, cct in cc.threads.items(): # can be skipped here due to manual [renames]
 					dst_thread = self.op_ev_chans_thread_name(c_tid, cct.names.base, dst)
 					if not irc_name_eq(src_thread := cct.names.old or cct.name, dst_thread):
-						yield cct, src_thread
-				yield cc, src_old
+						yield cct, src_thread; cct.names.old = dst_thread
+				yield cc, src_old; cc.names.old = dst
 			if not irc_name_eq(src, dst):
 				self.log.debug('Channel name dedup-update{}: {!r} -> {!r}', thread_info, src, dst)
 				for c_tid, cct in cc.threads.items():
