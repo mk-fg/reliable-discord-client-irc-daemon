@@ -3562,6 +3562,10 @@ class DiscordSession:
 		gg.emojis = self.op_ev_guilds_emojis(m.get('emojis') or list())
 
 	def op_msg(self, m, act, cc=None, tid_prefix=''):
+		'''Process discord msg to chan/nick/msg-str/msg-tags and call cmd_msg_recv().
+			Can call itself recursively to process/send msg to different channels with diff prefixes.'''
+		# Recursive call is a bit of a hack - much easier to tweak
+		#  prefixes and call cmd_msg_recv multiple times for different channels.
 		nick, ts = m.get('author'), time.time()
 		msg_ev, msg_ts = None, self.discord.flake_parse(m.id)
 		old_pre, old_skip = self.conf._discord_msg_old_prefix, self.conf._discord_msg_old_ignore
