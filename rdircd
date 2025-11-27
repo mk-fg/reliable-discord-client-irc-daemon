@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.7' # git-version: py-str
+	version = '25.11.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3852,6 +3852,8 @@ class DiscordSession:
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
 				tags._ev, line = 'vc', f'{mt.name.replace("_", "-")}: {line!r}'
 				if ts := m.get('timestamp'): line += f' [ {ts_iso8601_conv(ts)} ]'
+			if mt and mt.name.startswith('guild_join_'):
+				tags._ev, line = True, f'onboarding [ {line} ]: ' + mt.name[6:].replace(*'_ ')
 			elif mt == mtc.emoji_added: line = '' # contains added emoji tag
 			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
 				if mt is mtc.thread_created: line = '' # handled separately elsewhere
@@ -5730,7 +5732,7 @@ def main_test(cmd, conf):
 		ev_list = list(adict(json.loads(ev)) for ev in ev_list if ev.strip())
 
 		for n, ev in enumerate(ev_list):
-			guild_id, chan_id, msg_id = ev.d.guild_id, ev.d.channel_id, ev.d.id
+			guild_id, chan_id, msg_id = ev.d.get('guild_id', 1), ev.d.channel_id, ev.d.id
 			author = ev.d.get('author') or dict( username='test',
 				public_flags=0, id='298467229970726912', discriminator='8418' )
 			embed_info = {msg_id: author}
