@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.10' # git-version: py-str
+	version = '25.11.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3855,7 +3855,7 @@ class DiscordSession:
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
 				tags._ev, line = 'vc', f'{mt.name.replace("_", "-")}: {line!r}'
 				if ts := m.get('timestamp'): line += f' [ {ts_iso8601_conv(ts)} ]'
-			if mt and mt.name.startswith('guild_join_'):
+			elif mt and mt.name.startswith('guild_join_'):
 				tags._ev, line = True, f'onboarding [ {line} ]: ' + mt.name[6:].replace(*'_ ')
 			elif mt == mtc.emoji_added: line = '' # contains added emoji tag
 			elif mt not in [mtc.default, mtc.reply, mtc.media, mtc.channel_name_change]:
