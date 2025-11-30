@@ -28,13 +28,14 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.13' # git-version: py-str
+	version = '25.11.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
 
 	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
 	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
+	auth_token_temp = False # don't store token in config files, just re-fetch on restarts
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -2616,7 +2617,8 @@ class DiscordSession:
 		st_guilds = {1: adict(id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict())}
 		self.st_da = adict( guilds=st_guilds, me=st_guilds[1],
 			embed_info=dict(), icache=adict(), req_action=None )
-		self.auth_token, self.ws_enabled = self.conf.auth_token, False
+		self.auth_token = self.auth_token_conf = self.conf.auth_token
+		self.ws_enabled = False
 		return self
 
 	async def __aexit__(self, *err):
@@ -2700,6 +2702,8 @@ class DiscordSession:
 
 	async def req_auth_token(self):
 		while isinstance(self.auth_token, asyncio.Event): await self.auth_token.wait()
+		if not self.conf.auth_token_temp and self.auth_token_conf != self.conf.auth_token:
+			self.auth_token = self.auth_token_conf = self.conf.auth_token # changed manually
 		if not self.auth_token:
 			if self.conf.auth_token_manual: raise DiscordAbort(
 				'Authentication token is set to be configured manually, but is not specified' )
@@ -2711,8 +2715,8 @@ class DiscordSession:
 				if res.get('mfa'): raise DiscordAbort(
 					'Multi-factor auth requirement detected, but is not supported by rdircd' )
 				self.ws_auth_req_action_check(res)
-				self.auth_token = self.conf.set('auth_token', res['token'])
-				self.conf.update_file_section('auth', 'token')
+				self.auth_token = self.auth_token_conf = self.conf.set('auth_token', res['token'])
+				if not self.conf.auth_token_temp: self.conf.update_file_section('auth', 'token')
 			except: self.auth_token = None; raise # reset for next attempt
 			finally: auth_token_ev.set()
 		return self.auth_token

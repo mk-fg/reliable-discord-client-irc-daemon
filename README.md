@@ -491,10 +491,10 @@ See "Usage" section for a more general information.
 
 Multiple ini files can be specified with `-c` option, overriding each other in sequence.
 
-Last one will be updated wrt \[state\], token= and similar runtime stuff,
-as well as any values set via #rdircd.control channel commands,
-so it can be useful to specify persistent config with auth and options,
-and separate (initially empty) one for such dynamic state.
+Last one will be updated wrt \[state\], token= and similar runtime stuff
+(by default, unless disabled), as well as any values set via #rdircd.control
+channel commands, so it can be useful to specify persistent config with auth
+and options, and separate (initially empty) one for such dynamic state.
 
 E.g. `./rdircd -c config.ini -c state.ini` will do that.\
 `--conf-dump` can be added to print resulting ini assembled from all these.\
