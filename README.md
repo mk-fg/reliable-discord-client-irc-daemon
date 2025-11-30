@@ -509,6 +509,19 @@ load and apply values from all config files in the same order.
 Note that such operation won't reset any values missing in files to their
 defaults, only apply stuff explicitly set there on top of the current config.
 
+Command-line `--conf-ro` and corresponding `conf-readonly` ini-file option
+can be used to avoid saving anything between restarts, though I'd recommend
+using writable config on tmpfs (e.g. under `/run/rdircd/` or such) if it is
+due to read-only filesystem/image, which will at least keep changes until reboot.
+
+Related `token-temp` option in \[auth\] section can be used to only keep auth token
+out of writable configs, intended for usage with at-rest-encrypted config file,
+but using more transient, revokable and IP-bound `token` + `token-manual` might
+be a better idea anyway (see [section on MFA/captchas below]).
+
+[section on MFA/captchas below]:
+  #hdr-captcha-solving_is_required_to_login_for.ls9P
+
 <a name=hdr-systemd_integration></a>
 ### Systemd integration
 
