@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.12' # git-version: py-str
+	version = '25.11.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2597,15 +2597,9 @@ class DiscordSession:
 		self.log_http_reqres = get_logger(f'proto.http.reqres')
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_proto_cut, repr_fmt=True)
 
-	def get_auth(self, k, default=ValueError):
-		try: return self.conf.get(f'auth_{k}')
-		except AttributeError as err:
-			if default is ValueError: raise
-			return default
-
 	async def __aenter__(self):
-		if not (self.get_auth('email') and self.get_auth('password') or self.get_auth('token')):
-			raise DiscordSessionError('Missing account auth credentials')
+		if not (self.conf.auth_email and self.conf.auth_password or self.conf.auth_token):
+			raise DiscordSessionError('Missing discord account authentication credentials')
 		self.ctx, self.tasks = cl.AsyncExitStack(), StacklessContext(self.log)
 		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
 			connect=self.conf.discord_http_timeout_conn,
@@ -2622,9 +2616,7 @@ class DiscordSession:
 		st_guilds = {1: adict(id=1, name='me', ts_joined=0, kh='me', chans=dict(), roles=dict())}
 		self.st_da = adict( guilds=st_guilds, me=st_guilds[1],
 			embed_info=dict(), icache=adict(), req_action=None )
-		self.auth_token, self.auth_token_manual = (
-			self.get_auth('token'), self.get_auth('token_manual') )
-		self.ws_enabled = False
+		self.auth_token, self.ws_enabled = self.conf.auth_token, False
 		return self
 
 	async def __aexit__(self, *err):
@@ -2709,19 +2701,18 @@ class DiscordSession:
 	async def req_auth_token(self):
 		while isinstance(self.auth_token, asyncio.Event): await self.auth_token.wait()
 		if not self.auth_token:
-			if self.auth_token_manual: raise DiscordAbort(
+			if self.conf.auth_token_manual: raise DiscordAbort(
 				'Authentication token is set to be configured manually, but is not specified' )
 			auth_token_ev = self.auth_token = asyncio.Event()
 			try:
-				email, pw = (self.get_auth(k) for k in ['email', 'password'])
+				email, pw = self.conf.auth_email, self.conf.auth_password
 				res = await self.req( 'auth/login', m='post',
 					auth=False, json=dict(login=email, password=pw) )
 				if res.get('mfa'): raise DiscordAbort(
 					'Multi-factor auth requirement detected, but is not supported by rdircd' )
 				self.ws_auth_req_action_check(res)
-				self.conf.set('auth_token', res['token'])
+				self.auth_token = self.conf.set('auth_token', res['token'])
 				self.conf.update_file_section('auth', 'token')
-				self.auth_token = self.get_auth('token')
 			except: self.auth_token = None; raise # reset for next attempt
 			finally: auth_token_ev.set()
 		return self.auth_token
@@ -3007,7 +2998,7 @@ class DiscordSession:
 		return fail
 
 	def ws_auth_fail_retry(self):
-		if self.auth_token_manual: return self.log.info(
+		if self.conf.auth_token_manual: return self.log.info(
 			'Auth rejected, but auth token is set to be manual, so just retrying once more' )
 		self.log.info('Auth rejected - updating auth token')
 		self.auth_token = self.ws_state.auth_retry.set()
@@ -5298,7 +5289,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if k.endswith('_tbf'): # test token-bucket spec here to report format errors
 			try: tbf = token_bucket(v); next(tbf); next(tbf)
 			except: raise RDIRCDError(f'Invalid token-bucket rate-limit spec [ {k} ]: {v}')
-		setattr(self, k, v)
+		setattr(self, k, v); return v
 
 	def val_to_opt(self, v):
 		if isinstance(v, bool): v = ['no', 'yes'][v]
