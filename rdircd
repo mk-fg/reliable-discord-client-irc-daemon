@@ -28,14 +28,14 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.11.14' # git-version: py-str
+	version = '25.11.15' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
 
 	auth_token = '' # auto-fetched using email/password, unless mfa/captcha is in the way
 	auth_token_manual = False # never fetch/refresh auth token, for captcha/mfa logins
-	auth_token_temp = False # don't store token in config files, just re-fetch on restarts
+	auth_token_temp = False # don't store/update token in config files, just re-fetch on restarts
 
 	irc_password_hash = '' # use -H/--conf-pw-scrypt option to generate hash for this
 	irc_password = '' # for plaintext password - do not use, use password-hash instead
@@ -324,6 +324,8 @@ class RDIRCDConfigBase:
 	# ...where "2h30m=505" means "505 rule hits within last 2 hours 30 minutes" and so on.
 	discord_match_counters = ''
 
+	misc_conf_readonly = False # do not write any values to config files, warn if it's requested
+
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	# To set specific log-level for standard error output (terminal, journalctl, docker logs, etc).
 	# Overidden by "verbose" option above, should be one of: critical, error, warning, info, debug.
@@ -350,7 +352,7 @@ class RDIRCDConfigBase:
 	debug_mean_minutes_to_segfault = 0.0
 
 	_conf_path = '~/.rdircd.ini'
-	_conf_sections = 'auth', 'irc', 'discord', 'debug'
+	_conf_sections = 'auth', 'irc', 'discord', 'misc', 'debug'
 	_conf_sections_old = dict( # old -> new section renames
 		auth_main='auth', aliases='renames',
 		filters='unmonitor', replacements='send-replacements' )
@@ -2716,7 +2718,8 @@ class DiscordSession:
 					'Multi-factor auth requirement detected, but is not supported by rdircd' )
 				self.ws_auth_req_action_check(res)
 				self.auth_token = self.auth_token_conf = self.conf.set('auth_token', res['token'])
-				if not self.conf.auth_token_temp: self.conf.update_file_section('auth', 'token')
+				if not (self.conf.auth_token_temp or self.conf.misc_conf_readonly):
+					self.conf.update_file_section('auth', 'token')
 			except: self.auth_token = None; raise # reset for next attempt
 			finally: auth_token_ev.set()
 		return self.auth_token
@@ -2824,7 +2827,7 @@ class DiscordSession:
 					self.state('connecting.ws.error')
 					self.log.info('Failed to fetch discord gateway URL: {}', err_fmt(err))
 					continue # ws_connect will fail
-				self.conf.update_file_section('discord', 'gateway')
+				if not self.conf.misc_conf_readonly: self.conf.update_file_section('discord', 'gateway')
 			parts = adict(up.urlsplit(self.conf.discord_gateway)._asdict())
 			query = up.parse_qs(parts.query)
 			query.update(v=str(self.api_ver), encoding='json', compress='zlib-stream')
@@ -4412,7 +4415,9 @@ class RDIRCD:
 					else:
 						wc = 'already enabled' if wc else 'not enabled'
 						return notice_cmd(f'History watch/replay is {wc} for this channel')
-					self.conf.update_file_section('watch', upd)
+					if not self.conf.misc_conf_readonly: self.conf.update_file_section('watch', upd)
+					else: notice_cmd( 'History watch/replay changes for'
+						' channel will not be stored due to read-only configuration' )
 					if wc: self.conf.state_watch(info.cc.id, time.time())
 					wc = 'enabled' if wc else 'disabled'
 					return notice_cmd(f'History watch/replay {wc} for this channel')
@@ -4890,8 +4895,10 @@ class RDIRCD:
 			return send(f'ERROR: failed to parse {k_ini} = [{v_raw}]{vt} - {err_fmt(err)}')
 		self.conf.set(k, v)
 		if conf_save:
-			save = self.conf.update_file_section(sec, k_sec)
-			save = f' [saved to a file: {save}]'
+			if not self.conf.misc_conf_readonly:
+				save = self.conf.update_file_section(sec, k_sec)
+				save = f' [saved to a file: {save}]'
+			else: save = ' [but NOT SAVED due to read-only config]'
 		else: save = ''
 		send(f'Updated conf value: {k_ini} = {v!r}{save}')
 
@@ -4941,6 +4948,8 @@ class RDIRCD:
 				f'ERROR: Failed to parse regexp-filter [ {pat!r} ]: {err_fmt(err)}' )
 		upd = f'{key} = {pat}' if not rm else f'removed [ {key} ]'
 		if not save: return send(f'Updated runtime filters (not saved to ini): {upd}')
+		if self.conf.misc_conf_readonly: return send(
+			f'Updated runtime filters (but NOT SAVED due to read-only config): {upd}' )
 		try: p = self.conf.update_file_section(sec, {key: None if rm else pat})
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
@@ -4976,6 +4985,8 @@ class RDIRCD:
 		if not rm: repls[repl.pre].append(repl)
 		elif not repl: return send(f'ERROR: No matching replacement [ {key} ]')
 		if not save: return send(f'Updated runtime replacement rules [ {repl.key} ]')
+		if self.conf.misc_conf_readonly: return send(
+			f'Updated runtime replacement rules [ {repl.key} ] - NOT SAVED due read-only config' )
 		try:
 			upd = {repl.key: repl.val if not rm else None}
 			p = self.conf.update_file_section(f'{rt}-replacements', upd)
@@ -5011,6 +5022,8 @@ class RDIRCD:
 		else:
 			ts = time.time(); self.conf.watch.update(upd)
 			for cid in upd.values(): self.conf.state_watch(cid, ts)
+		if self.conf.misc_conf_readonly: return send(
+			'ERROR: Cannot update read-only configuration file' )
 		try: p = self.conf.update_file_section('watch', upd)
 		except OSError as err:
 			return send(f'ERROR: Failed to update configuration file: {err_fmt(err)}')
@@ -5525,6 +5538,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			keys=None or a str/list of keys stores/updates specified section keys to a file.
 				None value set for the key removes it from config section.
 			key_set=True will print empty-string values as "key" instead of default "key =".'''
+		if self.misc_conf_readonly: raise RDIRCDError(
+			'BUG - bogus call to update read-only configuration file(s)' )
 		section = section.replace('_', '-')
 		sec_k, sec_re = str_norm(section), re.compile(r'(?i)^\[\s*(\S+)\s*\]$')
 		if not path: path = self._conf_path
@@ -5627,18 +5642,20 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def _state_set(self, t, k, ts):
 		if t not in self._state_keep: raise ValueError(t)
-		k, v = f'{t}.{k}', ts_iso8601_fixed(ts)
+		k, v, ro = f'{t}.{k}', ts_iso8601_fixed(ts), self.misc_conf_readonly
 		if k not in self.state:
-			self.update_file_section('state', {k: v})
 			self.state[k] = ts
+			if not ro: return self.update_file_section('state', {k: v})
 			return self._state_cleanup()
 		if self.state[k] > ts: return
+		self.state[k] = ts
+		if ro: return
 		src, offsets = self._state_source_get()
 		n, v = offsets[k], v.encode()
 		src.seek(n)
 		parse_iso8601(src.read(len(v)).decode(), validate=True)
 		src.seek(n); src.write(v); src.flush() # shouldn't be important enough for fsync
-		self.state[k], self._state_file_ts = ts, os.fstat(src.fileno()).st_ctime
+		self._state_file_ts = os.fstat(src.fileno()).st_ctime
 
 	def state_fwd(self, k=None, ts=None, **get_kws):
 		if ts: self._state_set('bridge-fwd', k, ts)
@@ -5794,7 +5811,8 @@ def main(args=None, conf=None):
 	group.add_argument('-c', '--conf', metavar='file', action='append', help=dd(f'''
 		Path to configuration file to use.
 		It will get updated with authentication token (in [auth] section), any settings
-			changes made while running, and state info ([state] section), so has to be writable.
+			changes made while running, and state info ([state] section), so has to be writable,
+			unless that's disabled by --conf-ro cli flag, conf-readonly= or token-temp= options.
 		Can be specified mutliple times to use multiple config files,
 			with same values in later ones overriding the former,
 			in which case only last one will be updated and has to be writable.
@@ -5819,6 +5837,9 @@ def main(args=None, conf=None):
 		Create initial config file(s) with default options in specified path(s) and exit.
 		This will never change or overwrite any existing files.
 		If multiple -c/--conf files are used, all files after first one are created empty.'''))
+	group.add_argument('--conf-ro', action='store_true', help=dd('''
+		Never store/update values in configuration files.
+		Nothing will be retained between restarts, but allows to run on read-only fs.'''))
 
 	group = parser.add_argument_group('Interfaces')
 	group.add_argument('-i', '--irc-bind', metavar='host(:port)', help=dd(f'''
@@ -5917,13 +5938,13 @@ def main(args=None, conf=None):
 				' Remove it to run script normally with these configs.\n' )
 		return exit_code
 
-	for n, p in enumerate(conf_user_paths):
-		mode, w = os.R_OK, ''
-		if n == len(conf_user_paths) - 1:
-			mode |= os.W_OK; w = ' (for write access)'
-		if not os.access(p, mode):
-			parser.error(f'Specified config file missing or inaccessible{w}: {p}')
+	for p in conf_user_paths:
+		if not os.access(p, os.R_OK):
+			parser.error(f'Specified config file is missing or inaccessible: {p}')
 	conf_user_paths = conf.read_from_file(*conf_user_paths)
+	if opts.conf_ro: conf.misc_conf_readonly = True
+	if not conf.misc_conf_readonly and not os.access(p := conf_user_paths[-1], os.W_OK):
+		parser.error(f'Last specified config file is missing or non-writable: {p}')
 
 	if opts.conf_dump: return conf.pprint('Current configuration options')
 	if opts.conf_dump_state:
