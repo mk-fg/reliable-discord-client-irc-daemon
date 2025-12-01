@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.12.0' # git-version: py-str
+	version = '25.12.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1206,7 +1206,7 @@ class adict(cs.UserDict):
 	def __setitem__(self, k, v): super().__setitem__(k, v); self._track_check(k, v)
 	def __delitem__(self, k): super().__delitem__(k); self._track_check(k)
 	def __copy__(self): return self.copy()
-	def copy(self): return adict(self)
+	def copy(self): c = adict(self); c.attrs = self.attrs; return c
 
 class adict_rev(adict):
 	'adict with methods to lookup keys by value'
