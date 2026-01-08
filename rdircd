@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '25.12.1' # git-version: py-str
+	version = '26.01.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -263,7 +263,8 @@ class RDIRCDConfigBase:
 	discord_embed_info = True
 	discord_embed_info_buffer = 40 # last N links to remember for delayed annotation updates
 	discord_embed_info_len = 250 # will truncate long youtube titles and twitter msgs
-	discord_embed_info_len_skip_re = r'\bhttps?://\S{10,400}(\s|$)' # skip truncating matching lines
+	discord_embed_info_lines = 3 # to merge misc descriptions with more lines into one line
+	discord_embed_info_len_skip_re = r'\bhttps?://\S{10,400}\s*$' # skip truncating matching lines
 
 	# Replace attachment URLs with OSC 8 terminal links, if enabled.
 	discord_terminal_links = False
@@ -3711,16 +3712,20 @@ class DiscordSession:
 						((ei := info.get('victor_answer_emoji_name', '')) and f':{ei}: ')
 						+ info.get('victor_answer_text', '') ).strip() or '???') )
 			if meta_add or force_meta:
-				# vvv some unrecognized embed-type, added on force_meta vvv
-				if not meta_add and (info := ' '.join( k for k in ['image', 'thumbnail',
-					'video', 'provider'] if em.get(k) )): lines.append(f'Media :: [{info}]')
+				if not (meta_add or lines): # some unrecognized embed-type, to add on force_meta
+					if info := em.get('url'): lines.append(f'Media [{emt}] :: {info}')
+					for k, e in em.items():
+						if isinstance(e, dict) and (info := e.get('url')):
+							lines.append(f'Media [{k}] :: {info}')
+					meta_add.update((k, k) for k in 'title author description'.split())
 				meta_add.update(meta_skip)
 				if info := em.get(meta_add.get('title')): lines.append(f'Title :: {info}')
 				if info := em.get(meta_add.get('author')):
-					info = ' '.join(info.get(k, '') for k in ['name', 'url']).strip()
+					info = ' :: '.join(info.get(k, '') for k in ['name', 'url']).strip()
 					if info: lines.append(f'Author :: {info}')
 				if info := em.get(meta_add.get('description')):
-					info = filter(None, (dl.strip() for dl in info.splitlines()))
+					info = list(filter(None, (dl.strip() for dl in info.splitlines())))
+					if len(info) > self.conf.discord_embed_info_lines: info = [' // '.join(info)]
 					for line in info: lines.append(f'Desc :: {line}')
 		if not lines: return
 		return list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
