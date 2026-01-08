@@ -1147,7 +1147,7 @@ class str_attrs(str):
 		for k, v in attrs.items(): setattr(s, k, v)
 		return s
 
-class adict(cs.UserDict):
+class adict(cs.UserDict, dict): # dict for shared isinstance checks
 	'dict with simpler access via attrs and update-tracking for cache invalidation.'
 	__slots__ = 'data', 'attrs', '_track_keys', '_track_cb'
 
@@ -3712,21 +3712,28 @@ class DiscordSession:
 						((ei := info.get('victor_answer_emoji_name', '')) and f':{ei}: ')
 						+ info.get('victor_answer_text', '') ).strip() or '???') )
 			if meta_add or force_meta:
+				emtx = '' # used to put odd embed-type on first displayed info-line
 				if not (meta_add or lines): # some unrecognized embed-type, to add on force_meta
-					if info := em.get('url'): lines.append(f'Media [{emt}] :: {info}')
-					for k, e in em.items():
-						if isinstance(e, dict) and (info := e.get('url')):
-							lines.append(f'Media [{k}] :: {info}')
+					uc, emx, emtx = m.get('content'), em.copy(), emt
 					meta_add.update((k, k) for k in 'title author description'.split())
+					if (info := emx.get('url')):
+						if info != uc: lines.append(f'Media [{emt}] :: {info}')
+						emx.clear()
+					for k, e in emx.items():
+						if k in meta_add or (uc and k in ['thumbnail', 'provider']): continue
+						if not (isinstance(e, dict) and (info := e.get('url'))): continue
+						if info != uc: lines.append(f'Media [{k}] :: {info}'); emtx = emtx or k
+					if emtx: emtx = f' [{emtx}]'
 				meta_add.update(meta_skip)
-				if info := em.get(meta_add.get('title')): lines.append(f'Title :: {info}')
+				if info := em.get(meta_add.get('title')):
+					lines.append(f'Title{emtx} :: {info}'); emtx = ''
 				if info := em.get(meta_add.get('author')):
 					info = ' :: '.join(info.get(k, '') for k in ['name', 'url']).strip()
-					if info: lines.append(f'Author :: {info}')
+					if info: lines.append(f'Author{emtx} :: {info}'); emtx = ''
 				if info := em.get(meta_add.get('description')):
 					info = list(filter(None, (dl.strip() for dl in info.splitlines())))
 					if len(info) > self.conf.discord_embed_info_lines: info = [' // '.join(info)]
-					for line in info: lines.append(f'Desc :: {line}')
+					lines.extend(f'Desc{emtx} :: {line}' for line in info); emtx = ''
 		if not lines: return
 		return list(re.sub(r'\s*\n+\s*', ' // ', line) for line in lines)
 
