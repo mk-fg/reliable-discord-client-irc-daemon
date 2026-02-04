@@ -9,13 +9,13 @@ Table of Contents
 - [Usage](#hdr-usage)
 
     - [Requirements](#hdr-requirements)
-    - [Installation](#hdr-installation)
+    - [Installation]
     - [Setup and actual usage](#hdr-setup_and_actual_usage)
 
 - [Misc feature info](#hdr-misc_feature_info)
 
     - [Multiple config files](#hdr-multiple_config_files)
-    - [Systemd integration]
+    - [systemd integration]
     - [Private chats](#hdr-private_chats)
     - [Channel commands](#hdr-channel_commands)
     - [#rdircd.monitor and #rdircd.leftover channels]
@@ -55,7 +55,8 @@ Table of Contents
 - [API and Implementation Notes](#hdr-api_and_implementation_notes)
 
 [WARNING]: #hdr-warning
-[Systemd integration]: #hdr-systemd_integration
+[Installation]: #hdr-installation
+[systemd integration]: #hdr-systemd_integration
 [#rdircd.monitor and #rdircd.leftover channels]:
   #hdr-rdircd.monitor_and_rdircd.leftover_channels
 [People's names on discord]: #hdr-people_s_names_on_discord
@@ -273,7 +274,7 @@ You have been warned! :)
 
 * [Python 3.8+](https://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
-* (Optional) [python-systemd] - only if using tweaks mentioned in [Systemd integration] below.
+* (Optional) [python-systemd] - only if using tweaks mentioned in [systemd integration] below.
 
 On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
@@ -374,7 +375,7 @@ rdircd % ./rdircd --debug -c rdircd.ini
 
 For setting up daemon/script to run on OS boot, [rdircd.service] systemd unit file
 can be used in most Linux environments (maybe edit ExecStart= options and paths there,
-and see also [Systemd integration] below), or otherwise probably via init.d script,
+and see also [systemd integration] below), or otherwise probably via init.d script,
 or maybe in "screen" or "tmux" session as a last-resort ad-hoc option.
 Make sure it runs as e.g. "rdircd" user created in snippet above, not as root.
 
@@ -477,7 +478,13 @@ For broad outline of various supported configuration settings,
 see [rdircd.defaults.ini] file (output of `./rdircd --conf-dump-defaults`),
 and more on particular uses of those below.
 
+See [Installation] section above for some options for how to setup this script
+to run in a more long-term way via OS package, systemd or some OCI container
+runtime like [docker] or [podman].
+
 [rdircd.defaults.ini]: rdircd.defaults.ini
+[docker]: https://www.docker.com/
+[podman]: https://podman.io/
 
 
 <a name=hdr-misc_feature_info></a>
@@ -523,7 +530,7 @@ be a better idea anyway (see [section on MFA/captchas below]).
   #hdr-captcha-solving_is_required_to_login_for.ls9P
 
 <a name=hdr-systemd_integration></a>
-### Systemd integration
+### systemd integration
 
 [rdircd.service] systemd unit file in the repository can be used as a template
 for running rdircd with [systemd] init daemon, which is used by most linux distros.
@@ -537,24 +544,45 @@ In addition to that, if [python-systemd] bindings module is installed (e.g.
 `python -c 'import systemd'` doesn't print ImportError), then extra bits of
 integration can be enabled in that unit file:
 
+- `rdircd.service` can be started by [systemd .socket unit] file like `rdircd.socket`:
+
+    ```ini
+    [Socket]
+    ListenStream=127.0.0.1:6667
+
+    [Install]
+    WantedBy=sockets.target
+    ```
+
+    To also have rdircd exit after IRC client disconnects (i.e. that socket no
+    longer in use), set something like `no-clients-exit-timeout = 2m` in \[misc\]
+    config file section, or via `-I/--idle-exit-timeout` command-line option.
+
+    No need to pass socket via stdin. This type of startup avoids any ordering issues.
+
 - `Type=notify` can be used (instead of `Type=exec`) to inform systemd when
   rdircd have started and is listening on IRC socket, to order other unit files
   (e.g. IRC client or bouncer) after it's actually ready to accept connections.
 
-  `AF_UNIX` has to be added to `RestrictAddressFamilies=` line if it is used as well.
+    `AF_UNIX` has to be added to `RestrictAddressFamilies=` line if this is used.
 
 - `FileDescriptorStoreMax=1` can be set with `Type=notify` to use systemd
   [File Descriptor Store] protocol to preserve IRC listening socket between
   rdircd restarts.
 
-  It will still disconnect all IRC clients on restart, but if those reconnect
-  immediately afterwards, they won't get "Connection Refused" error and will be
-  able to connect, as open IRC socket doesn't change or go away.
+    It will still disconnect all IRC clients on restart, but if those reconnect
+    immediately afterwards, they won't get "Connection Refused" error and will be
+    able to connect, as open IRC socket doesn't change or go away.
 
-All of this is optional, systemd python module is only checked if `Type=notify`
-or fdstore mechanisms are detected on startup from systemd-set environment variables.
+    This shouldn't be needed if `rdircd.socket` startup described above is used,
+    as having systemd handle socket explicitly does the same thing there.
+
+All of this is optional, and systemd python module is only checked if `Type=notify`,
+fdstore or socket activation mechanisms are detected on startup from systemd-set
+environment variables.
 
 [systemd]: https://systemd.io/
+[systemd .socket unit]: https://man.archlinux.org/man/systemd.socket.5
 [File Descriptor Store]: https://systemd.io/FILE_DESCRIPTOR_STORE/
 
 <a name=hdr-private_chats></a>

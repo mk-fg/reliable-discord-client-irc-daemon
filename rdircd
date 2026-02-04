@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.0' # git-version: py-str
+	version = '26.02.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -326,6 +326,7 @@ class RDIRCDConfigBase:
 	discord_match_counters = ''
 
 	misc_conf_readonly = False # do not write any values to config files, warn if it's requested
+	misc_no_clients_exit_timeout = '' # timeout to exit without any IRC clients connected
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	# To set specific log-level for standard error output (terminal, journalctl, docker logs, etc).
@@ -437,6 +438,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
+	_conv_misc_no_clients_exit_timeout = lambda s,v: v and parse_duration(v)
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 	del _re_chk, _parse_kv_pairs, _parse_td_str # func-macros for conversions above
@@ -4168,7 +4170,8 @@ class RDIRCD:
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
-		self.uptime_ts, self.uptime_ts_online = time.monotonic(), 0
+		self.uptime_ts = time.monotonic()
+		self.uptime_ts_discord = self.uptime_ts_irc = 0
 		self.uptime_dt = dt.datetime.now().astimezone()
 		self.server_ver = self.conf.version
 		self.server_ts = dt.datetime.now(dt.timezone.utc)
@@ -4189,6 +4192,7 @@ class RDIRCD:
 		self.uid_start = f'{str_hash(self.uid_seed, 3)}.{boot_id}.{str_hash(os.urandom(6), 6)}'
 		self.cmd_delay(self.irc_msg_queue_proc)
 		self.cmd_delay(self.run_task_crash_offline_check)
+		self.cmd_delay(self.run_task_exit_without_clients)
 		return self
 
 	async def __aexit__(self, *err):
@@ -4202,17 +4206,30 @@ class RDIRCD:
 		ctypes.string_at(0) # should reliably crash the process
 
 	async def run_task_crash_offline_check(self):
-		'Exit with error if crash-on-offline-timeout expires without uptime_ts_online bump'
+		'Exit with error if crash-on-offline-timeout expires without uptime_ts_discord bump'
 		while True:
 			if not (timeout := self.conf._discord_crash_on_offline_timeout):
 				await self.conf.wait('discord_crash_on_offline_timeout'); continue
-			ts_online = self.uptime_ts_online or self.uptime_ts
-			if self.discord.st_eris.online: delay = timeout
-			elif (delay := timeout - (td := time.monotonic() - ts_online)) <= 0:
+			ts_discord = self.uptime_ts_discord or self.uptime_ts
+			if self.discord and self.discord.st_eris.online: delay = timeout
+			elif (delay := timeout - (td := time.monotonic() - ts_discord)) <= 0:
 				self.log.error( 'Exiting due to crash-on-offline-timeout - offline'
 					' since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
 				task, self.run_task = self.run_task, 7; task.cancel(); break
 			await asyncio.sleep(delay + 1) # downtime should be >timeout by then
+
+	async def run_task_exit_without_clients(self):
+		'Exit on timeout without any IRC clients connected, for systemd socket activation'
+		while True:
+			if not (timeout := self.conf._misc_no_clients_exit_timeout):
+				await self.conf.wait('misc_no_clients_exit_timeout'); continue
+			ts_irc = self.uptime_ts_irc or self.uptime_ts
+			if self.irc_conns: delay = timeout
+			elif (delay := timeout - (td := time.monotonic() - ts_irc)) <= 0:
+				self.log.info( 'Exiting due to timeout without IRC clients connected -'
+					' since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
+				task, self.run_task = self.run_task, 0; task.cancel(); break
+			await asyncio.sleep(delay + 1)
 
 	def systemd_fdstore_irc(self, fd=None):
 		'Stores/retrieves named "irc" fd from systemd, returns fd on success'
@@ -4228,7 +4245,7 @@ class RDIRCD:
 			'systemd env-vars are set, but unable to import python-systemd module' )
 		if not fd:
 			sd_fds = dict((name, n) for n, name in sdd.listen_fds_with_names().items())
-			if not (fd := sd_fds.get('irc')): return
+			if not (fd := sd_fds.get('irc') or (sd_fds and sd_fds.popitem()[1])): return
 			self.log.debug('Reusing IRC socket from LISTEN_FDS')
 			sdd.notify('READY=1', True)
 		elif os.environ.get('FDSTORE'): # FileDescriptorStoreMax=0 default-disables it
@@ -4306,6 +4323,7 @@ class RDIRCD:
 	def irc_conn_lost(self, irc):
 		self.irc_conns.pop(id(irc), None)
 		if not self.irc_conns: self.cmd_user_status('disconnect')
+		self.uptime_ts_irc = time.monotonic()
 	def irc_conn_stats(self):
 		stats = adict(
 			servers=len(self.discord.st_da.get('guilds', dict())) or 1,
@@ -4643,7 +4661,7 @@ class RDIRCD:
 		if not cm: cm = self.cmd_chan_map()
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 		self.cmd_chan_map_sync_tracking(cm=cm)
-		if not cm.ø_online: self.uptime_ts_online = time.monotonic()
+		if not cm.ø_online: self.uptime_ts_discord = time.monotonic()
 
 	def cmd_chan_map_sync_tracking(self, c=None, cm=None):
 		'''Requests receiving messages for discords with any
@@ -5880,6 +5898,11 @@ def main(args=None, conf=None):
 			Generate self-signed TLS cert using "openssl req" with specified subject line.
 			Will never overwrite -c/--irc-tls-pem file, if it exists already.
 			Use empty value to disable this. Default subject line: %(default)s'''))
+	group.add_argument('-I', '--idle-exit-timeout',
+		metavar='timespan', default=conf.misc_no_clients_exit_timeout, help=dd('''
+			Auto-exit after specified timeout without any IRC clients connected.
+			Can be useful for a transient service started by systemd.socket unit file.
+			Value can be number of seconds or short timespan spec, e.g.: 30, 20min, 1h30m, etc'''))
 
 	group = parser.add_argument_group('Logging and debug opts')
 	group.add_argument('-d', '--debug',
@@ -6056,6 +6079,8 @@ def main(args=None, conf=None):
 			if pw_hash('hunter2', conf.irc_password_hash):
 				parser.error('Using "hunter2" as [irc] password is explicitly prohibited, sorry.')
 		except ValueError as err: parser.error(f'Invalid [irc] password-hash value - {err}')
+
+	if td := opts.idle_exit_timeout: conf.set('misc-no-clients-exit-timeout', td)
 
 	host, port, family = opts.irc_bind or conf.irc_host, conf.irc_port, conf.irc_host_af
 	if host.count(':') > 1: host, port = str_part(host, ']:>', port)
