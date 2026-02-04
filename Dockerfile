@@ -1,4 +1,4 @@
-ARG ALPINE_TAG=3.20
+ARG ALPINE_TAG=3.23
 FROM alpine:${ALPINE_TAG}
 
 LABEL \
@@ -7,7 +7,7 @@ LABEL \
 	org.opencontainers.image.licenses="WTFPL" \
 	org.opencontainers.image.url="https://github.com/mk-fg/reliable-discord-client-irc-daemon"
 
-RUN apk add --no-cache python3 py3-aiohttp
+RUN apk add --no-cache python3 py3-aiohttp openssl
 
 # See README.docker-permissions.md doc for a common "Permission denied" issue due to these
 ARG UID=55373

@@ -205,7 +205,7 @@ You have been warned! :)
 - Single python3 script that only requires aiohttp module, trivial to run or
   deploy anywhere.
 
-- Runs in relatively stable ~40M memory footprint on amd64, which is probably
+- Runs in relatively stable ~50M memory footprint on amd64, which is probably
   more than e.g. [bitlbee-discord], but better than those leaky browser tabs.
 
 - Easy to tweak and debug without rebuilds, gdb, rust and such.
