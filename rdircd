@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.01.1' # git-version: py-str
+	version = '26.02.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -358,8 +358,8 @@ class RDIRCDConfigBase:
 		auth_main='auth', aliases='renames',
 		filters='unmonitor', replacements='send-replacements' )
 	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
-		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
 		irc_disable_reacts_msgs=['disable_reactions'],
+		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
 		discord_msg_old_prefix=['msg_old_upd_timestamp'],
 		discord_msg_old_ignore=['msg_old_upd_ignore', 'msg_old_del_ignore'],
 		debug_stderr_log=['log_level'] )
@@ -4177,7 +4177,7 @@ class RDIRCD:
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
-		self.tasks = StacklessContext(self.log)
+		self.discord, self.tasks = None, StacklessContext(self.log)
 		self.st_br = adict( chan_map=None, line_dedup=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover/voice channels
@@ -4205,9 +4205,10 @@ class RDIRCD:
 		'Exit with error if crash-on-offline-timeout expires without uptime_ts_online bump'
 		while True:
 			if not (timeout := self.conf._discord_crash_on_offline_timeout):
-				await asyncio.sleep(30 * 60); continue # in case it'll get configured later
+				await self.conf.wait('discord_crash_on_offline_timeout'); continue
 			ts_online = self.uptime_ts_online or self.uptime_ts
-			if (delay := timeout - (td := time.monotonic() - ts_online)) <= 0:
+			if self.discord.st_eris.online: delay = timeout
+			elif (delay := timeout - (td := time.monotonic() - ts_online)) <= 0:
 				self.log.error( 'Exiting due to crash-on-offline-timeout - offline'
 					' since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
 				task, self.run_task = self.run_task, 7; task.cancel(); break
@@ -4642,7 +4643,7 @@ class RDIRCD:
 		if not cm: cm = self.cmd_chan_map()
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 		self.cmd_chan_map_sync_tracking(cm=cm)
-		if cm.ø_online: self.uptime_ts_online = time.monotonic()
+		if not cm.ø_online: self.uptime_ts_online = time.monotonic()
 
 	def cmd_chan_map_sync_tracking(self, c=None, cm=None):
 		'''Requests receiving messages for discords with any
@@ -5298,7 +5299,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 	_debug_chan = _debug_proto = None
 
 	def __init__(self):
-		self.state, self.renames = dict(), dict()
+		self.state, self.renames, self.events = dict(), dict(), dict()
 		self.send_repls, self.recv_repls = cs.defaultdict(list), cs.defaultdict(list)
 		self.unmon_filters, self.recv_filters, self.watch = dict(), dict(), adict_rev()
 		self.log = get_logger('rdircd.state')
@@ -5308,11 +5309,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			self.set(k, self.get(k))
 
 	def __repr__(self): return repr(vars(self))
+
 	def get(self, *k, raw=False):
 		k = '_'.join(k).replace('-', '_')
 		if not raw:
 			with cl.suppress(AttributeError): return getattr(self, f'_{k}')
 		return getattr(self, k)
+
 	def set(self, k, v):
 		k = k.replace('-', '_')
 		k_conv, v_conv = f'_{k}', getattr(self, f'_conv_{k}', None)
@@ -5320,7 +5323,13 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if k.endswith('_tbf'): # test token-bucket spec here to report format errors
 			try: tbf = token_bucket(v); next(tbf); next(tbf)
 			except: raise RDIRCDError(f'Invalid token-bucket rate-limit spec [ {k} ]: {v}')
-		setattr(self, k, v); return v
+		setattr(self, k, v)
+		if ev := self.events.get(k): ev.set()
+		return v
+
+	def wait(self, k):
+		if not (ev := self.events.get(k)): ev = self.events[k] = asyncio.Event()
+		ev.clear(); return ev.wait()
 
 	def val_to_opt(self, v):
 		if isinstance(v, bool): v = ['no', 'yes'][v]
