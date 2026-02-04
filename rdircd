@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.1' # git-version: py-str
+	version = '26.02.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2156,7 +2156,7 @@ class Discord:
 	def cmd_online_state(self, st):
 		if st == self.st_eris.online: return
 		self.st_eris.online = st
-		if self.st_eris.online: self.bridge.cmd_chan_map_sync()
+		self.bridge.cmd_discord_online(st)
 
 	def cmd_chan_map_update(self):
 		'Discord channel changes signal, to rebuild various mappings as necessary.'
@@ -4170,9 +4170,8 @@ class RDIRCD:
 		self._repr = ft.partial(str_cut, max_len=self.conf.debug_msg_cut, repr_fmt=True)
 
 	async def __aenter__(self):
-		self.uptime_ts = time.monotonic()
-		self.uptime_ts_discord = self.uptime_ts_irc = 0
-		self.uptime_dt = dt.datetime.now().astimezone()
+		self.uptime_ts, self.uptime_dt = time.monotonic(), dt.datetime.now().astimezone()
+		self.last_ts_discord = self.last_ts_irc = 0 # time of last discord/irc disconnect
 		self.server_ver = self.conf.version
 		self.server_ts = dt.datetime.now(dt.timezone.utc)
 		self.server_host = os.uname().nodename
@@ -4206,24 +4205,24 @@ class RDIRCD:
 		ctypes.string_at(0) # should reliably crash the process
 
 	async def run_task_crash_offline_check(self):
-		'Exit with error if crash-on-offline-timeout expires without uptime_ts_discord bump'
+		'Exit with error if crash-on-offline-timeout expires without last_ts_discord bump'
 		while True:
 			if not (timeout := self.conf._discord_crash_on_offline_timeout):
 				await self.conf.wait('discord_crash_on_offline_timeout'); continue
-			ts_discord = self.uptime_ts_discord or self.uptime_ts
+			ts_discord = self.last_ts_discord or self.uptime_ts
 			if self.discord and self.discord.st_eris.online: delay = timeout
 			elif (delay := timeout - (td := time.monotonic() - ts_discord)) <= 0:
 				self.log.error( 'Exiting due to crash-on-offline-timeout - offline'
 					' since {} [{}]', ts_iso8601(time.time() - td), repr_duration(td, ext='ago') )
 				task, self.run_task = self.run_task, 7; task.cancel(); break
-			await asyncio.sleep(delay + 1) # downtime should be >timeout by then
+			await asyncio.sleep(delay + 1)
 
 	async def run_task_exit_without_clients(self):
 		'Exit on timeout without any IRC clients connected, for systemd socket activation'
 		while True:
 			if not (timeout := self.conf._misc_no_clients_exit_timeout):
 				await self.conf.wait('misc_no_clients_exit_timeout'); continue
-			ts_irc = self.uptime_ts_irc or self.uptime_ts
+			ts_irc = self.last_ts_irc or self.uptime_ts
 			if self.irc_conns: delay = timeout
 			elif (delay := timeout - (td := time.monotonic() - ts_irc)) <= 0:
 				self.log.info( 'Exiting due to timeout without IRC clients connected -'
@@ -4323,7 +4322,7 @@ class RDIRCD:
 	def irc_conn_lost(self, irc):
 		self.irc_conns.pop(id(irc), None)
 		if not self.irc_conns: self.cmd_user_status('disconnect')
-		self.uptime_ts_irc = time.monotonic()
+		self.last_ts_irc = time.monotonic()
 	def irc_conn_stats(self):
 		stats = adict(
 			servers=len(self.discord.st_da.get('guilds', dict())) or 1,
@@ -4583,6 +4582,11 @@ class RDIRCD:
 		self.discord.cmd_typing_from_irc(info.cc)
 
 
+	def cmd_discord_online(self, online):
+		'Called when discord state flips between connected/disconnected'
+		if online: self.cmd_chan_map_sync()
+		else: self.last_ts_discord = time.monotonic()
+
 	def cmd_delay(self, delay, func=None):
 		'Runs async task after an optional delay, waiting/monitoring it for errors.'
 		if func is None: delay, func = 0, delay
@@ -4661,7 +4665,6 @@ class RDIRCD:
 		if not cm: cm = self.cmd_chan_map()
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 		self.cmd_chan_map_sync_tracking(cm=cm)
-		if not cm.ø_online: self.uptime_ts_discord = time.monotonic()
 
 	def cmd_chan_map_sync_tracking(self, c=None, cm=None):
 		'''Requests receiving messages for discords with any
