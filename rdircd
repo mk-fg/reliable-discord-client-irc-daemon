@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.2' # git-version: py-str
+	version = '26.02.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2591,6 +2591,9 @@ class DiscordSession:
 		# https://docs.discord.food/resources/channel#safety-warning-structure
 		stranger = 1; inappropriate = 2; offensive = 3; hacked = 4
 
+	class c_interaction_type(enum.IntEnum):
+		ping = 1; command = 2; component = 3; autocomplete = 4; submit = 5; can_buy = 6
+
 	c_msg_tags = enum.Enum('c_msg_tags', 'user chan role emo ts everyone other')
 	c_msg_tags_ts_fmts = dict(
 		t='%H:%M', T='%H:%M:%S', d='%Y-%m-%d', D='%m %B %Y',
@@ -3648,7 +3651,7 @@ class DiscordSession:
 				while (n := len(self.st_da.embed_info)) and n >= self.conf.discord_embed_info_buffer:
 					del self.st_da.embed_info[next(iter(self.st_da.embed_info.keys()))]
 				self.st_da.embed_info[m.id], em_suffs = nick, (el.strip() for el in line.split('\n'))
-				self.st_da.embed_info[f'lines.{m.id}'] = list(filter(None, em_suffs))
+				act, self.st_da.embed_info[f'lines.{m.id}'] = 'media', list(filter(None, em_suffs))
 			if media_info := media_info or self.op_msg_media_info(m, force_meta=media_expected):
 				tag = self.conf.irc_prefix_embed.format(str_hash(m.id, 3))
 				if tag not in (pre := tags.get('_prefix', '')): tags._prefix = pre + tag
@@ -3659,8 +3662,8 @@ class DiscordSession:
 				line = '\n'.join([line, *(( str_cut(line, el)
 					if not es.search(line) else line ) for line in media_info)]).strip()
 				if not (line or any(media_info)): return # deliberately parsed to empty line(s)
-			if not line: return self.log.warning( 'Expected msg media'
-				' info parsed to empty line [ {} ]: {}', m.id, self._repr(m) )
+			if not line and (act == 'media' or media_info): return self.log.warning(
+				'Expected msg media info parsed to empty line [ {} ]: {}', m.id, self._repr(m) )
 		if not (nick and line): return
 
 		if tid_prefix: tags._prefix = tags.get('_prefix', '') + tid_prefix
@@ -3857,13 +3860,21 @@ class DiscordSession:
 				else: # new unknown msg type - check how to handle
 					self.log.warning('Unhandled msg type [{!r}]: {}', mt, self._repr(m))
 					if line: tags._prefix = f'[msg-type={mt!r}] '
-			if mt in [mtc.application_command, mtc.context_menu_command]:
+			if ( mt in [mtc.application_command, mtc.context_menu_command]
+					or mt == mtc.reply and m.get('interaction_metadata') ):
 				pre = self.conf.irc_prefix_interact
-				if cmd := m.get('interaction'):
-					cmd_nick, cmd = self.discord.user_name(cmd), cmd.get('name') or '???'
-					if str_norm(cmd) == str_norm(line): line = ''
-					act = 'used' if mt != mtc.context_menu_command else 'context-menu-picked'
-					cmd, line = line, f'{pre}<{cmd_nick}> {act} [{cmd}]'
+				if cmd := m.get('interaction_metadata') or m.get('interaction'):
+					cmd_nick, act = self.discord.user_name(cmd), cmd.get('name', '')
+					if str_norm(act) == str_norm(line): line = '' # dedup
+					if not act and (t := cmd.get('type')) and t in (ts := self.c_interaction_type):
+						if (act := ts(t)) is act.component: act = cmd.get('custom_id')
+						elif act is act.submit: act = f'submit {cmd.get("custom_id", "???")}'
+						else: act = act.name # ping, autocomplete, can_buy, etc
+					else: act = f'action-{t}' if t else '???'
+					if not act: cmd = line = '' # no-op interactions without component-id
+					else:
+						verb = 'used' if mt != mtc.context_menu_command else 'context-menu-picked'
+						cmd, line = line, f'{pre}<{cmd_nick}> {verb} [{act}]'
 				else: cmd, line = line, '{pre}<some-interaction-command>'
 				if cmd: line += f' :: {cmd}'.rstrip()
 			elif mt in [mtc.stage_start, mtc.stage_end, mtc.stage_speaker, mtc.stage_topic]:
