@@ -35,19 +35,19 @@ def main(argv=None):
 
 	parser = argparse.ArgumentParser(
 		formatter_class=argparse.RawTextHelpFormatter, description=dd('''
-			Parse current list of unicode emojis like :smile: that discord
-				auto-translates in messages from a saved web.<something>.js file,
-				printing names of all emojis in there, one per line.
-			This is intended to generate rdircd.unicode-emojis.txt.gz list-file,
-				to not lookup specific :something-something: as discord-custom emoji,
-				and leave as-is, without signaling error if it's not found in a discord.
+	Parse current list of unicode emojis like :smile: that discord
+		auto-translates in messages from a saved web.<something>.js file,
+		printing names of all emojis in there, one per line.
+	This is intended to generate rdircd.unicode-emojis.txt.gz list-file,
+		to not lookup specific :something-something: as discord-custom emoji,
+		and leave as-is, without signaling error if it's not found in a discord.
 
-			To save input file for this script using web browser and Discord WebUI:
-			- Open Discord WebUI on any channel, open webdev tools using F12 key.
-			- Go to Network Tab in webdev tools, filter for All requests there.
-			- Open emoji-selection in WebUI's input box for sending new message.
-			- This will create emoji-loading requests in Network Tab, right-click on any.
-			- Open initiator JS for an image-loading request, save it to a file.'''))
+	To save input file for this script using web browser and Discord WebUI:
+	- Open Discord WebUI on any channel, open webdev tools using F12 key.
+	- Go to Network Tab in webdev tools, filter for All requests there.
+	- Open emoji-selection in WebUI's input box for sending new message.
+	- This will create emoji-loading requests in Network Tab, click or right-click on any.
+	- Open initiator JS for an image-loading request (via button or tab), save it to a file.'''))
 
 	parser.add_argument('web_js', help=dd('''
 		JS file used to load/insert emoji into messages by discord web client.
@@ -67,11 +67,11 @@ def main(argv=None):
 				if (cn := int(m[1], 16)) >= 128: fix_esc.append((m.start(), m.end(), cn))
 			for ca, cb, cn in reversed(fix_esc):
 				data_json = data_json[:ca] + json.dumps(chr(cn))[1:-1] + data_json[cb:]
-			for em in json.loads(data_json):
-				assert len(set(em).intersection(em_keys)) == len(em_keys)
+			for em in (data_ems := json.loads(data_json)):
 				em_names.update(em.get('names') or list())
-				for em in em.get('diversityChildren') or list():
-					em_names.update(em.get('names') or list())
+				for emc in em.get('diversityChildren') or list():
+					if isinstance(emc, int): emc = data_ems[emc]
+					em_names.update(emc.get('names') or list())
 		except Exception as err:
 			err_data, sn = data_json, 80
 			p_err(f'ERROR: Failed to parse should-be-json chunk - {err_fmt(err)}')
