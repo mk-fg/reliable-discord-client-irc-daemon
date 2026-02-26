@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.4' # git-version: py-str
+	version = '26.02.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1029,7 +1029,7 @@ def token_bucket(spec, negative_tokens=False):
 			((val - tokens) / rate, (tokens - val) if negative_tokens else tokens) )
 		val = (yield val) or 1
 
-def parse_iso8601( spec, tz_default=None, validate=False,
+def parse_iso8601_strict( spec, tz_default=None, validate=False,
 		_re=re.compile( r'(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?'
 			r'(?::(?P<s>\d{2})(?:\.(?P<us>\d+))?)?\s*(?P<tz>Z|[-+]\d{2}:\d{2})?' ) ):
 	if not (m := _re.search(spec or '')):
@@ -1051,6 +1051,13 @@ def parse_iso8601( spec, tz_default=None, validate=False,
 	return dt.datetime.strptime(
 		'{:04d}-{:02d}-{:02d} {:02d}:{:02d}:{:02d}.{}'.format(*ts_list),
 		'%Y-%m-%d %H:%M:%S.%f' ).replace(tzinfo=tz).timestamp()
+
+def parse_iso8601(spec, *args, **kws):
+	try: return parse_iso8601_strict(spec, *args, **kws)
+	except Exception as err:
+		get_logger('rdircd.time').exception( 'Failed to parse value as iso8601'
+			' timestamp, using "now" in its place: {!r} - {}', spec, err_fmt(err) )
+		return dt.datetime.now(dt.timezone.utc)
 
 def ts_iso8601( ts, ms=3, to_str=True,
 		human=True, short=True, strip_date=None, add_tz=False ):
@@ -1095,7 +1102,7 @@ ts_iso8601_fixed = ft.partial(ts_iso8601, human=False, short=False) # fixed-widt
 
 def ts_iso8601_conv(ts, human=True, short=True): # str -> str
 	if not ts: return '???'
-	try: return ts_iso8601(parse_iso8601(ts), human=human, short=short)
+	try: return ts_iso8601(parse_iso8601_strict(ts), human=human, short=short)
 	except Exception as err:
 		get_logger('rdircd.time').warning(
 			'Failed to convert timestamp [ {!r} ]: {}', ts, err_fmt(err) )
@@ -4479,7 +4486,7 @@ class RDIRCD:
 					try: ts = self.conf.state[state]
 					except KeyError: raise IRCBridgeSignal(f'No state {state!r}')
 				else:
-					try: ts = parse_iso8601(state)
+					try: ts = parse_iso8601_strict(state)
 					except ValueError:
 						try: ts = parse_duration(state)
 						except ValueError: pass
@@ -5499,7 +5506,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 		self.state.clear()
 		if conf_file.has_section('state'): self.state.update(
-			(k, parse_iso8601(v, validate=0)) for k, v in conf_file['state'].items() )
+			(k, parse_iso8601_strict(v, validate=0)) for k, v in conf_file['state'].items() )
 		self.watch.clear()
 		if conf_file.has_section('watch'): self.watch.update(conf_file['watch'].items())
 
@@ -5713,7 +5720,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		src, offsets = self._state_source_get()
 		n, v = offsets[k], v.encode()
 		src.seek(n)
-		parse_iso8601(src.read(len(v)).decode(), validate=True)
+		parse_iso8601_strict(src.read(len(v)).decode(), validate=True)
 		src.seek(n); src.write(v); src.flush() # shouldn't be important enough for fsync
 		self._state_file_ts = os.fstat(src.fileno()).st_ctime
 
