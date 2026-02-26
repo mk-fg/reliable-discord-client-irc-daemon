@@ -5,7 +5,7 @@
 # ///
 
 import itertools as it, operator as op, functools as ft
-import contextlib as cl, datetime as dt, pathlib as pl
+import contextlib as cl, datetime as dt, pathlib as pl, traceback as tb
 import collections as cs, collections.abc as cs_abc, urllib.parse as up
 import os, sys, errno, io, stat, re, time, secrets, enum, json, zlib, gzip, math
 import asyncio, socket, signal, inspect, configparser, tempfile, fnmatch
@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.3' # git-version: py-str
+	version = '26.02.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -577,7 +577,12 @@ doc_fmt_lines = lambda s,**kws: '\n'.join(
 	f'-- {line}'.strip() for line in s.format(**kws).strip().splitlines() )
 
 
-err_fmt = lambda err: f'[{err.__class__.__name__}] {err}'
+def err_fmt(err):
+	try:
+		place = tb.TracebackException.from_exception(err).stack[-1]
+		place = f'{place.name}:{place.lineno}'
+	except: place = '-'
+	return f'[{err.__class__.__name__}@{place}] {err}'
 
 class LogMessage:
 	def __init__(self, fmt, a, k): self.fmt, self.a, self.k = fmt, a, k
