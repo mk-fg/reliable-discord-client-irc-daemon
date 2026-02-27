@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.8' # git-version: py-str
+	version = '26.02.9' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1343,29 +1343,29 @@ def unicode_emojis_list_parse(p):
 def unicode_emojis_strip_func(em_map):
 	'''Returns function that replaces all unicode emojis with their names in a byte-string.
 		Builds long prefix-tree regexp to match emojis, replacing each via dict lookup.'''
-	def _trie_map(ems):
-		pre, m = b'', dict()
-		for a, b in it.pairwise(ems):
-			if pre:
-				if b.startswith(pre): m[pre].append(b[len(pre):]); continue
-				else: m[pre] = _trie_map(m[pre]); pre = b''; continue
-			for n, (ca, cb) in enumerate(zip(a, b)):
-				if ca == cb: continue
-				if not n:
-					if not pre: m[a] = b''
-					pre = m[b] = b''
-				else: m.pop(a, None); m.setdefault(pre := a[:n], [a[n:]]).append(b[n:])
-				break
+	def _trie_map(ems, n=0, rec=0):
+		if not ems: return b''
+		if not rec: ems = sorted(ems)
+		c, mc, m = None, None, dict()
+		for em in ems:
+			if not em: m[em] = em
+			elif em[n] != c: c = em[n]; mc = m[em[:n+1]] = [em[n+1:]]
+			else: mc.append(em[n+1:])
+		for c, mc in list(m.items()):
+			mc = m[c] = _trie_map(mc, rec=rec+1)
+			if len(mc) == 1: cc, mc = mc.popitem(); del m[c]; m[c + cc] = mc
 		return m
-	def _trie_map_to_rx(m):
+	def _trie_map_to_rx(m): # longest-first for regexp to grab all modifiers
 		if isinstance(m, bytes): return m
-		elif isinstance(m, list) or not any(m.values()): m = b'|'.join(m)
-		else: m = b'|'.join(k+_trie_map_to_rx(v) for k,v in m.items())
+		elif isinstance(m, list) or not any(m.values()):
+			m = b'|'.join(sorted(m, key=lambda k: -len(k)))
+		else: m = b'|'.join( k + _trie_map_to_rx(v)
+			for k,v in sorted(m.items(), key=lambda kv: -len(kv[0])) )
 		return b'(?:' + m + b')'
 	em_map_rev, ems_re = dict(), dict()
 	for em_name, em in sorted(em_map.items(), key=lambda kv: -len(kv[0])):
 		if em: em_map_rev[em.encode()] = em_name.encode()
-	for k, v in _trie_map(sorted(em_map_rev, reverse=True)).items():
+	for k, v in _trie_map(em_map_rev).items():
 		if k[0] < 128: k = re.escape(k[:1]) + k[1:] # ascii char + trailing modifiers
 		ems_re[k] = v
 	ems_re = re.compile(_trie_map_to_rx(ems_re))
