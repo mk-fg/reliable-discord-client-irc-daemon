@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.11' # git-version: py-str
+	version = '26.02.12' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5849,24 +5849,30 @@ def main_test(cmd, conf):
 			msg-parse-base[=<json-file-path>]
 				Same as msg-parse above, but to parse "message" payload object, using op_msg_parse.
 			msg-parse-media[=<json-file-path>]
-				Same as msg-parse above, but to parse media/embed info only, using op_msg_media_info.''')
+				Same as msg-parse above, but to parse media/embed info only, using op_msg_media_info.
+
+			msg-recv-repl[=<line>]
+				Run specified line received from discord via [recv-replacements] config-file section.
+			msg-send-repl[=<line>]
+				Run specified line through [send-replacements] config-file section.''')
 	if not (cmd := cmd.strip()) or cmd in ['help', '?']: return print(help_msg)
 	cmd, s, arg = cmd.partition('=')
 
-	if cmd in ['msg-parse', 'msg-parse-base', 'msg-parse-media']:
-		conf._discord_msg_old_prefix = conf._discord_msg_old_ignore = dict()
-		class DiscordStub(RDIRCD, Discord, DiscordSession):
-			st_br = st_eris = st_da = None # to override getters
-			irc_conn_new = irc_conn_lost = lambda s,c: None
-			def cmd_msg_recv(self, cc, nick, line, tags=None, **kws):
-				self.msg_recv = cc, nick, line, tags, adict(kws)
-			def __init__(self, conf, st):
-				self.st_da = self.st_br = self.st_eris = st; self.irc_conns = adict()
-				self.conf, self.log = conf, get_logger('test')
-				self.discord = self.bridge = self # all-in-one mock object
-				self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
-		class str_report(str): pass
+	conf._discord_msg_old_prefix = conf._discord_msg_old_ignore = dict()
+	class DiscordStub(RDIRCD, Discord, DiscordSession):
+		st_br = st_eris = st_da = None # to override getters
+		irc_conn_new = irc_conn_lost = lambda s,c: None
+		uid_len, uid_seed = conf.irc_uid_len, conf._irc_uid_seed
+		def cmd_msg_recv(self, cc, nick, line, tags=None, **kws):
+			self.msg_recv = cc, nick, line, tags, adict(kws)
+		def __init__(self, conf, st):
+			self.st_da = self.st_br = self.st_eris = st; self.irc_conns = adict()
+			self.conf, self.log = conf, get_logger('test')
+			self.discord = self.bridge = self # all-in-one mock object
+			self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
+	class str_report(str): pass
 
+	if cmd in ['msg-parse', 'msg-parse-base', 'msg-parse-media']:
 		if arg: ev_list = list(pl.Path(a).read_bytes() for a in arg.split(':'))
 		else: ev_list = list(iter(lambda: sys.stdin.readline(), ''))
 		ev_list = list(adict(json.loads(ev)) for ev in ev_list if ev.strip())
@@ -5920,6 +5926,19 @@ def main_test(cmd, conf):
 				else: em_info = '<same>'
 				print(f'{pre}Em-info:', em_info)
 			print()
+
+	elif cmd == 'msg-recv-repl':
+		discord = DiscordStub(conf, adict(uid=dict()))
+		gg = adict(name='test', id=1)
+		lines = discord.cmd_msg_recv_lines_proc(gg, arg.splitlines())
+		print('Received IRC line(s) after replacements:')
+		for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
+
+	elif cmd == 'msg-send-repl':
+		discord = DiscordStub(conf, adict(uid=dict()))
+		info = adict(gg=adict(name='test', id=1))
+		line = discord.irc_msg_translate_postq(info, arg)
+		print(f'Sent IRC line after replacements: {line}')
 
 	else: return print(help_msg, file=sys.stderr) or 1
 
