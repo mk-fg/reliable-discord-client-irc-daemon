@@ -54,7 +54,7 @@ def main(argv=None):
 		All emoji names found in it will be printed one per line.'''))
 	opts = parser.parse_args(sys.argv[1:] if argv is None else argv)
 
-	em_names, data = set(), pl.Path(opts.web_js).read_text()
+	em_names, data = dict(), pl.Path(opts.web_js).read_text()
 	n, em_keys = 0, 'names surrogates unicodeVersion'.split()
 	while (n := data.find('"surrogates":', n)-1) > 0:
 		a, b = parse_up(data, n, -1), parse_up(data, n, 1) # single emoji spec
@@ -68,10 +68,10 @@ def main(argv=None):
 			for ca, cb, cn in reversed(fix_esc):
 				data_json = data_json[:ca] + json.dumps(chr(cn))[1:-1] + data_json[cb:]
 			for em in (data_ems := json.loads(data_json)):
-				em_names.update(em.get('names') or list())
+				for name in em.get('names'): em_names[name] = em['surrogates']
 				for emc in em.get('diversityChildren') or list():
 					if isinstance(emc, int): emc = data_ems[emc]
-					em_names.update(emc.get('names') or list())
+					for name in emc.get('names'): em_names[name] = emc['surrogates']
 		except Exception as err:
 			err_data, sn = data_json, 80
 			p_err(f'ERROR: Failed to parse should-be-json chunk - {err_fmt(err)}')
@@ -83,7 +83,7 @@ def main(argv=None):
 					f' {repr(err_data[n-5:n+5])} in :: ...' + err_data[n-sn//2:n+sn//2+1] + '...' )
 		n = b
 
-	for em in sorted(em_names): print(em)
+	for name, em in sorted(em_names.items()): print(f'{name} {em}')
 
 if __name__ == '__main__':
 	try: sys.exit(main())

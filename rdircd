@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.6' # git-version: py-str
+	version = '26.02.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -205,9 +205,14 @@ class RDIRCDConfigBase:
 	discord_msg_mention_irc_decode = True # try irc_name_revert on mention-matches from irc
 
 	# Regexp with "emoji" group for discord emojis like :debian: - similar to user mentions.
-	# If matches, either guild-emoji for tag is found/translated, or msg sending error returned.
+	# If matches, either unicode or guild-emoji is found/translated, or msg sending error returned.
 	discord_msg_emoji_re = r'(?:^|\s)(:)(?P<emoji>[-\w+]+)(:)(?=[^\w]|$)'
-	# File with a list of generic emojis translated to unicode in any discord.
+	# Translate all unicode emojis coming from discord to their ascii names.
+	# Might be useful for non-unicode-friendly IRC clients or terminals/fonts/devices.
+	# Does not affect sending emojis from IRC to discord.
+	discord_msg_emoji_to_ascii = False
+	# File with a list of emojis translated to unicode characters in any discord.
+	# Empty value will disable loading the file and msg-emoji-* options using this list.
 	discord_msg_emoji_unicode_list_file = 'rdircd.unicode-emojis.txt.gz'
 
 	discord_msg_confirm_timeout = 25.0 # can include extra requests to resolve user-mentions
@@ -1327,6 +1332,47 @@ class TimeSeriesBuckets:
 		return ' '.join(out)
 
 
+def unicode_emojis_list_parse(p):
+	'Returns unicode {emoji-name: emoji-str?} map loaded from specified file'
+	em_map, src = dict(), gzip.decompress(p.read_bytes()).decode()
+	for em_name in src.splitlines():
+		if len(em := em_name.split(' ', 1)) == 1: em_map[em_name] = ''
+		else: em_name, em = em; em_map[em_name] = em
+	return em_map
+
+def unicode_emojis_strip_func(em_map):
+	'''Returns function that replaces all unicode emojis with their names in a byte-string.
+		Builds long prefix-tree regexp to match emojis, replacing each via dict lookup.'''
+	def _trie_map(ems):
+		pre, m = b'', dict()
+		for a, b in it.pairwise(ems):
+			if pre:
+				if b.startswith(pre): m[pre].append(b[len(pre):]); continue
+				else: m[pre] = _trie_map(m[pre]); pre = b''; continue
+			for n, (ca, cb) in enumerate(zip(a, b)):
+				if ca == cb: continue
+				if not n:
+					if not pre: m[a] = b''
+					pre = m[b] = b''
+				else: m.pop(a, None); m.setdefault(pre := a[:n], [a[n:]]).append(b[n:])
+				break
+		return m
+	def _trie_map_to_rx(m):
+		if isinstance(m, bytes): return m
+		elif isinstance(m, list) or not any(m.values()): m = b'|'.join(m)
+		else: m = b'|'.join(k+_trie_map_to_rx(v) for k,v in m.items())
+		return b'(?:' + m + b')'
+	em_map_rev, ems_re = dict(), dict()
+	for em_name, em in sorted(em_map.items(), key=lambda kv: -len(kv[0])):
+		if em: em_map_rev[em.encode()] = em_name.encode()
+	for k, v in _trie_map(sorted(em_map_rev, reverse=True)).items():
+		if k[0] < 128: k = re.escape(k[:1]) + k[1:] # ascii char + trailing modifiers
+		ems_re[k] = v
+	ems_re = re.compile(_trie_map_to_rx(ems_re))
+	ems_re_sub = lambda m: (b':'+en+b':') if (en := em_map_rev.get(m[0])) else m[0]
+	return lambda line_bytes: ems_re.sub(ems_re_sub, line_bytes)
+
+
 try: os_fdatasync = os.fdatasync # not on MacOS
 except: os_fdatasync = os.fsync
 
@@ -2296,9 +2342,8 @@ class Discord:
 
 		try: flake_res = res['id']
 		except: raise DiscordError(f'Invalid response: {res}')
-		if flake_gw != flake_res:
-			self.log.warning( 'Same-nonce sent/received'
-				' msg-id mismatch: {} != {}', flake_gw, flake_res )
+		if flake_gw != flake_res: self.log.warning(
+			'Same-nonce sent/received msg-id mismatch: {} != {}', flake_gw, flake_res )
 		self.log.debug('Sending of msg {} confirmed: {}', flake_res, self._repr(line))
 		cc.last_msg_sent.update(flake=flake_res, line=line)
 		self.conf.state_watch(cc.id, ts, self.bridge.uid_start)
@@ -2309,25 +2354,30 @@ class Discord:
 			flags |= self.c_msg_flags.suppress_notifications
 		return line, flags
 
-	def cmd_msg_emojify_unicode_list(self, _empty=set()):
+	def cmd_msg_emojify_cache(self, reverse=False, _empty=set()):
 		if not (src := self.conf._discord_msg_emoji_unicode_list_file): return _empty
-		src_chk, mtime_chk, uems = self.st_eris.unicode_emoji_cache or ('', 0, _empty)
+		src_chk, mtime_chk, uems, uems_strip = \
+			self.st_eris.unicode_emoji_cache or ('', 0, _empty, None)
 		if src_chk != (src_str := str(src)): mtime_chk = 0
+		if reverse and uems_strip is None: mtime_chk = 0
 		if mtime_chk < (ts := time.time()) - 30*60:
 			mtime = ts
 			try:
 				if (mtime := src.stat().st_mtime) > mtime_chk:
-					uems = set(gzip.decompress(src.read_bytes()).decode().split())
-			except Exception as err: self.log.warning(
-				'Failed to load unicode-emoji list-file: {}', err_fmt(err) )
-			self.st_eris.unicode_emoji_cache = src_str, mtime, uems
-		return uems
+					uems = set(ems_map := unicode_emojis_list_parse(src))
+					if uems_strip := self.conf.discord_msg_emoji_to_ascii: # rarely needed
+						uems_strip = unicode_emojis_strip_func(ems_map)
+			except Exception as err:
+				self.log.warning('Failed to load unicode-emoji list-file: {}', err_fmt(err))
+				if reverse: uems_strip = False # cached failure to load/process
+			self.st_eris.unicode_emoji_cache = src_str, mtime, uems, uems_strip
+		return uems if not reverse else uems_strip
 
 	def cmd_msg_emojify(self, gg, line):
 		'''Find/translate :emoji: tags matched by "discord_msg_emoji_re", if any.
 			Either returns line with all such matches translated or fails with IRCBridgeSignal.'''
 		if not (rx := self.conf._discord_msg_emoji_re): return line
-		uems = self.cmd_msg_emojify_unicode_list()
+		uems = self.cmd_msg_emojify_cache()
 		line_parts, tag_idx = [line], rx.groupindex['emoji']
 		for n, m in enumerate(reversed(ms := list(rx.finditer(line))), 1):
 			if (en := m.group('emoji').lower()) in uems: em_tag = f':{en}:'
@@ -5199,6 +5249,9 @@ class RDIRCD:
 				elif s.re.search(line):
 					del lines[m]
 					s.tsb.event(intervals=self.conf.discord_match_counters)
+		if self.conf.discord_msg_emoji_to_ascii and (
+				uems_strip := self.discord.cmd_msg_emojify_cache(reverse=True) ):
+			for n, line in enumerate(lines): lines[n] = uems_strip(line.encode()).decode()
 		return lines
 
 	def cmd_msg_recv_filter(self, nick, msg):
