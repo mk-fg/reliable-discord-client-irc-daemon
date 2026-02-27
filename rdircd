@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.10' # git-version: py-str
+	version = '26.02.11' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5247,12 +5247,13 @@ class RDIRCD:
 			for (m, line), s in it.product(reversed(list(enumerate(lines))), it.chain(
 					repls.get('*', list()),
 					repls.get(self.uid('guild', gg.id, kh=gg.get('kh')), list()) )):
+				line = lines[m] # update with replacements, if any
 				if s.sub is not None:
 					lines[m], n = s.re.subn(s.sub, line)
 					if n: s.tsb.event(intervals=self.conf.discord_match_counters)
 				elif s.re.search(line):
-					del lines[m]
 					s.tsb.event(intervals=self.conf.discord_match_counters)
+					del lines[m]; break
 		if self.conf.discord_msg_emoji_to_ascii and (
 				uems_strip := self.discord.cmd_msg_emojify_cache(reverse=True) ):
 			for n, line in enumerate(lines): lines[n] = uems_strip(line.encode()).decode()
