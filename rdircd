@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.7' # git-version: py-str
+	version = '26.02.8' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3926,13 +3926,15 @@ class DiscordSession:
 					or mt == mtc.reply and m.get('interaction_metadata') ):
 				pre = self.conf.irc_prefix_interact
 				if cmd := m.get('interaction_metadata') or m.get('interaction'):
-					cmd_nick, act = self.discord.user_name(cmd), cmd.get('name', '')
+					cmd_nick = self.discord.user_name(cmd)
+					act, cmd_type = cmd.get('name', ''), cmd.get('type')
 					if str_norm(act) == str_norm(line): line = '' # dedup
-					if not act and (t := cmd.get('type')) and t in (ts := self.c_interaction_type):
-						if (act := ts(t)) is act.component: act = cmd.get('custom_id')
-						elif act is act.submit: act = f'submit {cmd.get("custom_id", "???")}'
-						else: act = act.name # ping, autocomplete, can_buy, etc
-					else: act = f'action-{t}' if t else '???'
+					if not act:
+						if cmd_type in (ts := self.c_interaction_type):
+							if (act := ts(cmd_type)) is act.component: act = cmd.get('custom_id')
+							elif act is act.submit: act = f'submit {cmd.get("custom_id", "???")}'
+							else: act = act.name # ping, autocomplete, can_buy, etc
+						else: act = cmd_type and f'action-{cmd_type}' or '???'
 					if not act: cmd = line = '' # no-op interactions without component-id
 					else:
 						verb = 'used' if mt != mtc.context_menu_command else 'context-menu-picked'
