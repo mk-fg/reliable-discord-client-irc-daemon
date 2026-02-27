@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.9' # git-version: py-str
+	version = '26.02.10' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5089,11 +5089,13 @@ class RDIRCD:
 					send(f'  {repl.key} = {repl.val}')
 					if tsb := repl.tsb.get_counts_str(): send(f'    [ rule hits: {tsb} ]')
 			return
-		if not rm: repl = self.conf.make_irc_repl(key, line)
+		repl = None
 		for pre_repls in repls.values():
-			for repl_chk in list(pre_repls):
-				if repl_chk.key == key: pre_repls.remove(repl := repl_chk)
-		if not rm: repls[repl.pre].append(repl)
+			for repl in list(pre_repls):
+				if repl.key == key: pre_repls.remove(repl)
+		if not rm:
+			repl = self.conf.make_irc_repl(key, line)
+			repls[repl.pre].append(repl)
 		elif not repl: return send(f'ERROR: No matching replacement [ {key} ]')
 		if not save: return send(f'Updated runtime replacement rules [ {repl.key} ]')
 		if self.conf.misc_conf_readonly: return send(
