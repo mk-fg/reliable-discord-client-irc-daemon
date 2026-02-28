@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.12' # git-version: py-str
+	version = '26.02.13' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5852,9 +5852,10 @@ def main_test(cmd, conf):
 				Same as msg-parse above, but to parse media/embed info only, using op_msg_media_info.
 
 			msg-recv-repl[=<line>]
-				Run specified line received from discord via [recv-replacements] config-file section.
+				Run specified (or stdin) line(s) through [recv-replacements]
+					config-file section, as if it was received from discord, print results.
 			msg-send-repl[=<line>]
-				Run specified line through [send-replacements] config-file section.''')
+				Same as msg-recv-repl but to test [send-replacements] config-file section.''')
 	if not (cmd := cmd.strip()) or cmd in ['help', '?']: return print(help_msg)
 	cmd, s, arg = cmd.partition('=')
 
@@ -5927,18 +5928,18 @@ def main_test(cmd, conf):
 				print(f'{pre}Em-info:', em_info)
 			print()
 
-	elif cmd == 'msg-recv-repl':
+	elif cmd in ['msg-recv-repl', 'msg-send-repl']:
 		discord = DiscordStub(conf, adict(uid=dict()))
-		gg = adict(name='test', id=1)
-		lines = discord.cmd_msg_recv_lines_proc(gg, arg.splitlines())
-		print('Received IRC line(s) after replacements:')
-		for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
-
-	elif cmd == 'msg-send-repl':
-		discord = DiscordStub(conf, adict(uid=dict()))
-		info = adict(gg=adict(name='test', id=1))
-		line = discord.irc_msg_translate_postq(info, arg)
-		print(f'Sent IRC line after replacements: {line}')
+		gg, lines = adict(name='test', id=1), (arg or sys.stdin.read()).splitlines()
+		if cmd == 'msg-recv-repl':
+			lines = discord.cmd_msg_recv_lines_proc(gg, lines)
+			print('Received IRC line(s) after replacements:')
+			for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
+		elif cmd == 'msg-send-repl':
+			info = adict(gg=gg)
+			lines = list(discord.irc_msg_translate_postq(info, line) for line in lines)
+			print(f'Sent-from-IRC lines after replacements:')
+			for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
 
 	else: return print(help_msg, file=sys.stderr) or 1
 
