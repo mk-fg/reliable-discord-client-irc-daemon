@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.13' # git-version: py-str
+	version = '26.02.14' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1343,6 +1343,7 @@ def unicode_emojis_list_parse(p):
 def unicode_emojis_strip_func(em_map):
 	'''Returns function that replaces all unicode emojis with their names in a byte-string.
 		Builds long prefix-tree regexp to match emojis, replacing each via dict lookup.'''
+	# Using simple str regexp like A|B|C|... is ~30x slower in py3.14
 	def _trie_map(ems, n=0, rec=0):
 		if not ems: return b''
 		if not rec: ems = sorted(ems)
@@ -5244,16 +5245,15 @@ class RDIRCD:
 		'Process proxied-from-discord IRC lines with recv_repls regexps and such'
 		lines = list(lines)
 		if repls := self.conf.recv_repls: # apply [recv-replacements]
-			for (m, line), s in it.product(reversed(list(enumerate(lines))), it.chain(
-					repls.get('*', list()),
-					repls.get(self.uid('guild', gg.id, kh=gg.get('kh')), list()) )):
-				line = lines[m] # update with replacements, if any
-				if s.sub is not None:
-					lines[m], n = s.re.subn(s.sub, line)
-					if n: s.tsb.event(intervals=self.conf.discord_match_counters)
-				elif s.re.search(line):
-					s.tsb.event(intervals=self.conf.discord_match_counters)
-					del lines[m]; break
+			for m, line in reversed(list(enumerate(lines))):
+				for s in it.chain( repls.get('*', list()),
+						repls.get(self.uid('guild', gg.id, kh=gg.get('kh')), list()) ):
+					if s.sub is not None:
+						line, n = s.re.subn(s.sub, line); lines[m] = line
+						if n: s.tsb.event(intervals=self.conf.discord_match_counters)
+					elif s.re.search(line):
+						s.tsb.event(intervals=self.conf.discord_match_counters)
+						del lines[m]; break
 		if self.conf.discord_msg_emoji_to_ascii and (
 				uems_strip := self.discord.cmd_msg_emojify_cache(reverse=True) ):
 			for n, line in enumerate(lines): lines[n] = uems_strip(line.encode()).decode()
