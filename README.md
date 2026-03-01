@@ -114,9 +114,12 @@ It translates all private chats and public channels/threads on "discord servers"
 into channels on an IRC server that it creates and that you can connect to using
 regular IRC client, instead of a browser or electron app.
 
-"reliable" is in the name because one of the initial goals was to make it confirm
-message delivery and notify about any issues in that regard, which was somewhat
-lacking in other similar clients at the time.
+"reliable" is only in the name because one of the initial goals was to make it
+confirm message delivery and notify about any issues in that regard, which was
+somewhat lacking in other similar clients at the time.
+Script's probably not actually that reliable and seem to be full of bugs in all
+less-used features, but those should be easy to fix if anyone cares enough to
+report them.
 
 There's an IRC channel to talk about the thing - join [#rdircd at libera.chat].\
 IRC URL: <ircs://irc.libera.chat/rdircd> (github refuses to make ircs:// links)
