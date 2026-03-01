@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.02.14' # git-version: py-str
+	version = '26.03.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5855,7 +5855,12 @@ def main_test(cmd, conf):
 				Run specified (or stdin) line(s) through [recv-replacements]
 					config-file section, as if it was received from discord, print results.
 			msg-send-repl[=<line>]
-				Same as msg-recv-repl but to test [send-replacements] config-file section.''')
+				Same as msg-recv-repl but to test [send-replacements] config-file section.
+			msg-recv-filter[=<message>]
+				Run specified/stdin message through [recv-regexp-filters], print whether it'll pass.
+				Message here can be multiline, must be in same format
+					as seen in monitor channels and is expected by regexps, including nickname.
+				Example: --test=msg-recv-filter='<helper-bot> #pub.welcomes :: Welcome!' ''')
 	if not (cmd := cmd.strip()) or cmd in ['help', '?']: return print(help_msg)
 	cmd, s, arg = cmd.partition('=')
 
@@ -5866,12 +5871,13 @@ def main_test(cmd, conf):
 		uid_len, uid_seed = conf.irc_uid_len, conf._irc_uid_seed
 		def cmd_msg_recv(self, cc, nick, line, tags=None, **kws):
 			self.msg_recv = cc, nick, line, tags, adict(kws)
-		def __init__(self, conf, st):
+		def __init__(self, conf, st=adict()):
 			self.st_da = self.st_br = self.st_eris = st; self.irc_conns = adict()
 			self.conf, self.log = conf, get_logger('test')
 			self.discord = self.bridge = self # all-in-one mock object
 			self._repr = ft.partial(str_cut, max_len=50, repr_fmt=True)
 	class str_report(str): pass
+	p_err = lambda *a,**k: print(*a, file=sys.stderr, **k) or 1
 
 	if cmd in ['msg-parse', 'msg-parse-base', 'msg-parse-media']:
 		if arg: ev_list = list(pl.Path(a).read_bytes() for a in arg.split(':'))
@@ -5940,8 +5946,18 @@ def main_test(cmd, conf):
 			lines = list(discord.irc_msg_translate_postq(info, line) for line in lines)
 			print(f'Sent-from-IRC lines after replacements:')
 			for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
+	if cmd == 'msg-recv-filter':
+		discord, msg = DiscordStub(conf), arg or sys.stdin.read()
+		if not (m := re.match(r'<([^>]+)> (#\S+\.\S+ ::.*)', msg)): return p_err(
+			'ERROR: Message should look like: <nick> #guild.chan :: some text' )
+		drop = discord.cmd_msg_recv_filter(nick := m[1], msg := m[2])
+		print('Configured [recv-regexp-filters] list:')
+		for key, rf in conf.recv_filters.items(): print(f'  {key} = {rf.pat}')
+		print('Message:', repr(f'<{nick}> {msg}'))
+		print( 'Will be', 'passed through to IRC' if not drop
+			else 'BLOCKED (use --debug to check by which filter line)' )
 
-	else: return print(help_msg, file=sys.stderr) or 1
+	else: return p_err(help_msg)
 
 def main(args=None, conf=None):
 	if not conf: conf = RDIRCDConfig()
