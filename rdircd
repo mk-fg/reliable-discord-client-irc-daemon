@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.0' # git-version: py-str
+	version = '26.03.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5263,10 +5263,10 @@ class RDIRCD:
 		if not (recv_rxs := self.conf.recv_filters): return
 		m, recv_msg = False, f'<{nick}> {msg}' # can be multiline, unlike in #monitor
 		for n, (k, mx) in enumerate(recv_rxs.items()):
-			if op_and := re.search(r'^\s*∧+¬*(\s|$)', k[1:]):
+			if op_and := re.search(r'^\s*∧+¬*(\s|$)', k):
 				if n and not m: continue # skip &&-tails after mismatch
 			elif m: break # standalone match found earlier
-			op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k[1:]))
+			op_not = bool(re.search(r'^[∧∨\s]*¬+(\s|$)', k))
 			if m := bool(mx.rx.search(recv_msg)) ^ op_not:
 				m = k, recv_msg
 				mx.tsb.event(intervals=self.conf.discord_match_counters)
