@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.3' # git-version: py-str
+	version = '26.03.4' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -375,15 +375,16 @@ class RDIRCDConfigBase:
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
 	#   renames, recv_repls, send_repls, unmon_filters, recv_filters, watch
 
-	def _re_chk(key, groups, v_def=re.compile('$x')):
+	def _re_chk(key, groups_or_rx, v_def=re.compile(r'\Zx')): # default = never match
 		def _conv(self, v):
 			if not v: return v_def
 			rx = re.compile(v)
-			if missing := set(groups).difference(rx.groupindex):
-				raise ValueError( 'Missing required regexp capture'
-					f' group(s) in regexp for {key} [ {" ".join(missing)} ] {v!r}' )
+			if missing := set(groups_or_rx).difference(rx.groupindex):
+				raise ValueError( 'Missing required regexp capture group(s)'
+					f' in regexp for {key_or_rx} [ {" ".join(missing)} ] {v!r}' )
 			return rx
-		return _conv
+		if not isinstance(groups_or_rx, str): return _conv
+		rx, groups_or_rx = groups_or_rx, list(); return _conv(key, rx)
 
 	def _parse_kv_pairs(keys, val_conv, val_flat=False):
 		key_name, keys = keys.split(':', 1); keys = keys.split()
@@ -415,16 +416,16 @@ class RDIRCDConfigBase:
 
 	# Converted values get assigned to attrs like conf._irc_chan_auto_join_re
 	_conv_irc_uid_seed = lambda s,v: v if len(v.encode()) <= 32 else str_hash(v, 32)
-	_conv_irc_len_dont_split_re = lambda s,v: re.compile(v or '$x') # $x = never match
+	_conv_irc_len_dont_split_re = _re_chk
 	_conv_irc_names_timeout = _parse_td_str
-	_conv_irc_chan_auto_join_re = lambda s,v: re.compile(v or '$x')
+	_conv_irc_chan_auto_join_re = _re_chk
 	_conv_irc_dedup_interval = _parse_td_str
 	_conv_irc_topic_hide_tags = lambda s,v: set(v.replace(*'_-').split())
 	_conv_discord_ignore_events = lambda s,v: set(v.lower().replace(*', ').split())
 	_conv_discord_crash_on_offline_timeout = lambda s,v: v and parse_duration(v)
 	_conv_discord_name_preference_order = lambda s,v: v.lower().split()
 	_conv_discord_msg_mention_re = _re_chk('discord-msg-mention', ['nick'], None)
-	_conv_discord_msg_mention_re_ignore = lambda s,v: re.compile(v or '$x')
+	_conv_discord_msg_mention_re_ignore = _re_chk
 	_conv_discord_msg_emoji_re = _re_chk('discord-msg-emoji', ['emoji'], None)
 	_conv_discord_msg_emoji_unicode_list_file = \
 		lambda s,v: v and (pl.Path(__file__).resolve().parent / path_filter(v)).resolve()
@@ -438,9 +439,9 @@ class RDIRCDConfigBase:
 		'msg-related event: update delete react poll', lambda v: parse_duration(v), val_flat=True )
 	_conv_discord_msg_ack_delay = _parse_td_str
 	_conv_discord_msg_edit_re = _re_chk('discord-msg-edit', ['aaa', 'bbb'])
-	_conv_discord_msg_del_re = lambda s,v: re.compile(v or '$x')
-	_conv_discord_msg_flag_silent_re = lambda s,v: re.compile(v or '$x')
-	_conv_discord_embed_info_len_skip_re = lambda s,v: re.compile(v or '$x')
+	_conv_discord_msg_del_re = _re_chk
+	_conv_discord_msg_flag_silent_re = _re_chk
+	_conv_discord_embed_info_len_skip_re = _re_chk
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
