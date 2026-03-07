@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.1' # git-version: py-str
+	version = '26.03.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3721,6 +3721,8 @@ class DiscordSession:
 				if em_suffs := self.st_da.embed_info.get(f'lines.{m.id}'):
 					for el, suff in it.product(list(media_info), em_suffs):
 						if el.endswith(suff) and el in media_info: media_info.remove(el)
+						elif ( line and re.match(r'https?://cdn\.discordapp\.com/', line)
+							and line in el ): line = '' # embed-url = content-url + ?ex=...
 				el, es = self.conf.discord_embed_info_len, self.conf._discord_embed_info_len_skip_re
 				line = '\n'.join([line, *(( str_cut(line, el)
 					if not es.search(line) else line ) for line in media_info)]).strip()
@@ -3763,6 +3765,9 @@ class DiscordSession:
 						emoji = self.conf.discord_terminal_links_tpl.format(url=url, name=emoji)
 					else: emoji = f'{emoji} :: {url}'
 					lines.append(f'Emoji :: {emoji}')
+				elif '?' not in url and (th := em.get('thumbnail')):
+					# CDN URL without ?ex= query-params won't work, use thumbnail instead
+					lines.append(f'Image :: {th.get("url")}')
 				else: lines.append(f'Image :: {url}')
 			elif emt in ['article', 'link']: lines.append(
 				f'{emt.title()} :: ' + (' :: '.join(filter(None, [ title,
@@ -5946,7 +5951,7 @@ def main_test(cmd, conf):
 			lines = list(discord.irc_msg_translate_postq(info, line) for line in lines)
 			print(f'Sent-from-IRC lines after replacements:')
 			for n, line in enumerate(lines, 1): print(f' #{n} :: {line}')
-	if cmd == 'msg-recv-filter':
+	elif cmd == 'msg-recv-filter':
 		discord, msg = DiscordStub(conf), arg or sys.stdin.read()
 		if not (m := re.match(r'<([^>]+)> (#\S+\.\S+ ::.*)', msg)): return p_err(
 			'ERROR: Message should look like: <nick> #guild.chan :: some text' )
