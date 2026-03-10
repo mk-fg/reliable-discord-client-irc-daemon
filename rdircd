@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.5' # git-version: py-str
+	version = '26.03.6' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -5497,9 +5497,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		if sub: sub = sub.replace(r'\\', '\uf098').replace(r'\n', '\n').replace('\uf098', r'\\')
 		return self.rx_repl_t(key, val, pre, sub_re, sub, comm, TimeSeriesBuckets())
 
-	def read(self, func, section, k, conf_k=None, section_old=None):
-		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
-		sec = section_old or section
+	def read(self, func, sec, k, conf_k):
 		keys = list((sec, k, False) for k in [k, k.replace('-', '_'), k.replace('_', '-')])
 		for ko in self._conf_keys_old.get(conf_k) or list():
 			ko_sec, ko = (sec, ko) if isinstance(ko, str) else ko
@@ -5565,9 +5563,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		self._conf_path = conf_paths[-1] # one to update via set and state stuff
 		self._conf_old_found.clear()
 		for k, k_new in list(self._conf_sections_old.items()):
-			if k_new not in self._conf_sections: continue # special sections
-			if self.update_from_file_section(
-					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
+			if k_new not in self._conf_sections: continue # special blocks parsed below
+			if self.update_from_file_section(conf_file, section=k, prefix=f'{k_new}_'):
 				# Warnings will be issued for existing keys after logging is configured later
 				self._conf_old_found[k, None] = k_new
 		for k in self._conf_sections:
@@ -5629,10 +5626,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 		return conf_paths
 
-	def update_from_file_section(self,
-			config, section='default', prefix=None, section_old=None ):
-		if section_old: section_old = section_old.replace('_', '-')
-		section_old_warn, section = None, section.replace('_', '-')
+	def update_from_file_section(self, config, section='default', prefix=None):
+		found_values, section = None, section.replace('_', '-')
 		for k in dir(self):
 			if prefix:
 				if not k.startswith(prefix): continue
@@ -5642,9 +5637,8 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			v = getattr(self, conf_k)
 			get_val = self.opt_to_val_func(v, config.get)
 			if not get_val: continue # other types cannot be specified in config
-			if self.read( get_val, section, k, conf_k,
-				section_old=section_old ) and section_old: section_old_warn = True
-		return section_old_warn
+			if self.read(get_val, section, k, conf_k): found_values = True
+		return found_values
 
 	# Saving - intended to replace lines/sections in config w/o removing
 	#  comments, or magling stuff otherwise via straight-up serialization.
@@ -6189,7 +6183,7 @@ def main(args=None, conf=None):
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
 	for (sec_old, k_old), k_new in conf._conf_old_found.items():
-		if not k_old: kt, k_old = 'section', repr(sec_old)
+		if not k_old: kt, k_old, k_new = 'section', repr(sec_old), repr(k_new)
 		else:
 			kt, k_old = 'value', f'[{sec_old}] {k_old!r}'
 			sec_new, k_new = k_new.split('_', 1)
