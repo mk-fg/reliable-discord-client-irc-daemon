@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.4' # git-version: py-str
+	version = '26.03.5' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -61,6 +61,7 @@ class RDIRCDConfigBase:
 	irc_nick_sys = 'core' # nick used as source for info/error notice-msgs
 	irc_auth_tbf = '30:8' # token-bucket login-attempt rate-limiter, rate=1/30s burst=8
 	irc_log_protocol_errors = False # log irc protocol issues with ERROR level instead of DEBUG
+	irc_no_clients_exit_timeout = '' # timeout to exit without any IRC clients connected
 
 	irc_prefix_edit = '[edit] '
 	irc_prefix_attachment = '[att] '
@@ -332,7 +333,6 @@ class RDIRCDConfigBase:
 	discord_match_counters = ''
 
 	misc_conf_readonly = False # do not write any values to config files, warn if it's requested
-	misc_no_clients_exit_timeout = '' # timeout to exit without any IRC clients connected
 
 	debug_verbose = False # for debug-level stderr and debug channel, same as --debug option
 	# To set specific log-level for standard error output (terminal, journalctl, docker logs, etc).
@@ -364,13 +364,14 @@ class RDIRCDConfigBase:
 	_conf_sections_old = dict( # old -> new section renames
 		auth_main='auth', aliases='renames',
 		filters='unmonitor', replacements='send-replacements' )
-	_conf_keys_old = dict( # new -> list(k-old) for specific value renames
+	_conf_keys_old = dict( # renames: new_conf_key -> list(key_old or (sec_old, key_old))
 		irc_disable_reacts_msgs=['disable_reactions'],
+		irc_no_clients_exit_timeout=[('misc', 'no_clients_exit_timeout')],
 		discord_ws_reconnect_warn_tbf=['ws_reconnect_warn'],
 		discord_msg_old_prefix=['msg_old_upd_timestamp'],
 		discord_msg_old_ignore=['msg_old_upd_ignore', 'msg_old_del_ignore'],
 		debug_stderr_log=['log_level'] )
-	_conf_old_found = dict() # old -> new
+	_conf_old_found = dict() # (old_section, old_key?) -> new_conf_key
 
 	# RDIRCDConfig.read_from_file also parses these attrs from dedicated sections:
 	#   renames, recv_repls, send_repls, unmon_filters, recv_filters, watch
@@ -445,7 +446,7 @@ class RDIRCDConfigBase:
 	_conv_discord_msg_interact_cache_expire = _parse_td_str
 	_conv_discord_voice_notify_after_inactivity = _parse_td_str
 	_conv_discord_voice_join_left_cache_expire = _parse_td_str
-	_conv_misc_no_clients_exit_timeout = lambda s,v: v and parse_duration(v)
+	_conv_irc_no_clients_exit_timeout = lambda s,v: v and parse_duration(v)
 	_conv_debug_proto_log_filter_ws = lambda s,v: set(v.upper().split())
 
 	del _re_chk, _parse_kv_pairs, _parse_td_str # func-macros for conversions above
@@ -4304,8 +4305,8 @@ class RDIRCD:
 	async def run_task_exit_without_clients(self):
 		'Exit on timeout without any IRC clients connected, for systemd socket activation'
 		while True:
-			if not (timeout := self.conf._misc_no_clients_exit_timeout):
-				await self.conf.wait('misc_no_clients_exit_timeout'); continue
+			if not (timeout := self.conf._irc_no_clients_exit_timeout):
+				await self.conf.wait('irc_no_clients_exit_timeout'); continue
 			ts_irc = self.last_ts_irc or self.uptime_ts
 			if self.irc_conns: delay = timeout
 			elif (delay := timeout - (td := time.monotonic() - ts_irc)) <= 0:
@@ -5498,15 +5499,17 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 	def read(self, func, section, k, conf_k=None, section_old=None):
 		if not conf_k: conf_k = f'{section}_{k}'.replace('-', '_')
-		k_old = list(it.chain.from_iterable(
-			(ko, ko.replace('_', '-')) for ko in self._conf_keys_old.get(conf_k) or list() ))
-		for k in [k, k.replace('-', '_'), k.replace('_', '-')] + k_old:
+		sec = section_old or section
+		keys = list((sec, k, False) for k in [k, k.replace('-', '_'), k.replace('_', '-')])
+		for ko in self._conf_keys_old.get(conf_k) or list():
+			ko_sec, ko = (sec, ko) if isinstance(ko, str) else ko
+			for k in ko, ko.replace('_', '-'): keys.append((ko_sec, k, True))
+		for k_sec, k, old in keys:
 			try:
-				self.set(conf_k, func(section_old or section, k))
-				if k in k_old: self._conf_old_found[k] = conf_k
+				self.set(conf_k, func(k_sec, k))
+				if old: self._conf_old_found[k_sec, k] = conf_k
 				return True
-			except configparser.NoSectionError: pass
-			except configparser.NoOptionError: pass
+			except (configparser.NoSectionError, configparser.NoOptionError): pass
 
 	def pprint(self, title=None, empty_vals=False, comments=None, out=print):
 		out = lambda line,_out=out: _out(line.rstrip(' ')) # for empty values
@@ -5566,7 +5569,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 			if self.update_from_file_section(
 					conf_file, section=k_new, prefix=f'{k_new}_', section_old=k ):
 				# Warnings will be issued for existing keys after logging is configured later
-				self._conf_old_found[k] = k_new
+				self._conf_old_found[k, None] = k_new
 		for k in self._conf_sections:
 			self.update_from_file_section(conf_file, section=k, prefix=f'{k}_')
 
@@ -5579,14 +5582,14 @@ class RDIRCDConfig(RDIRCDConfigBase):
 		self.renames.clear()
 		for new, sk in enumerate(['aliases', sk_new := 'renames']):
 			if not conf_file.has_section(sk): continue
-			if not new: self._conf_old_found[sk] = sk_new
+			if not new: self._conf_old_found[sk, None] = sk_new
 			self.renames.update(
 				(tuple(str_norm(k).split('.', 1)), v) for k, v in conf_file[sk].items() )
 
 		self.send_repls.clear()
 		for new, sk in enumerate(['replacements', sk_new := 'send-replacements']):
 			if not conf_file.has_section(sk): continue
-			if not new: self._conf_old_found[sk] = sk_new
+			if not new: self._conf_old_found[sk, None] = sk_new
 			val_conv = self.opt_to_val_func(str)
 			for k, v in conf_file[sk].items():
 				repl = self.make_irc_repl(k, val_conv(v or ''))
@@ -5601,7 +5604,7 @@ class RDIRCDConfig(RDIRCDConfigBase):
 
 		self.unmon_filters.clear(); filters_old = dict()
 		if conf_file.has_section('filters'): # deprecated section
-			self._conf_old_found['filters'] = 'unmonitor'
+			self._conf_old_found['filters', None] = 'unmonitor'
 			for v in conf_file['filters'].keys():
 				if '[' in v:
 					v_new = f're:^{re.escape(v)}'
@@ -6027,7 +6030,7 @@ def main(args=None, conf=None):
 			Will never overwrite -c/--irc-tls-pem file, if it exists already.
 			Use empty value to disable this. Default subject line: %(default)s'''))
 	group.add_argument('-I', '--idle-exit-timeout',
-		metavar='timespan', default=conf.misc_no_clients_exit_timeout, help=dd('''
+		metavar='timespan', default=conf.irc_no_clients_exit_timeout, help=dd('''
 			Auto-exit after specified timeout without any IRC clients connected.
 			Can be useful for a transient service started by systemd.socket unit file.
 			Value can be number of seconds or short timespan spec, e.g.: 30, 20min, 1h30m, etc'''))
@@ -6185,14 +6188,15 @@ def main(args=None, conf=None):
 	log.debug('Starting rdircd {}', conf.version)
 
 	for p in conf_user_paths: log.debug('Loaded configuration file: {}', p)
-	for k_old, k_new in conf._conf_old_found.items():
-		if k_old in conf._conf_sections_old: kt, k_old = 'section', repr(k_old)
+	for (sec_old, k_old), k_new in conf._conf_old_found.items():
+		if not k_old: kt, k_old = 'section', repr(sec_old)
 		else:
-			k_new = k_new.split('_', 1)
-			kt, k_old, k_new = 'value', f'[{k_new[0]}] {k_old!r}', k_new[-1]
+			kt, k_old = 'value', f'[{sec_old}] {k_old!r}'
+			sec_new, k_new = k_new.split('_', 1)
+			k_new = repr(k_new) if sec_new == sec_old else f'[{sec_new}] {k_new!r}'
 		k_old, k_new = (k.replace('_', '-') for k in [k_old, k_new])
 		log.warning( 'Old and deprecated {} in config'
-			' file(s) - {} - replace it with {!r}', kt, k_old, k_new )
+			' file(s) - {} - replace it with {}', kt, k_old, k_new )
 
 	if conf.irc_password:
 		if conf.irc_password_hash:

@@ -558,7 +558,7 @@ integration can be enabled in that unit file:
     ```
 
     To also have rdircd exit after IRC client disconnects (i.e. that socket no
-    longer in use), set something like `no-clients-exit-timeout = 2m` in \[misc\]
+    longer in use), set something like `no-clients-exit-timeout = 2m` in \[irc\]
     config file section, or via `-I/--idle-exit-timeout` command-line option.
 
     No need to pass socket via stdin. This type of startup avoids any ordering issues.
