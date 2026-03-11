@@ -1930,10 +1930,7 @@ Few other datapoints and anecdotes on the subject:
     It's been reported to happen after triggering an auto-mod regexp on a server,
     or in other cases might be related to using manually-set static auth token
     or using it for too long with e.g. rotating IP addresses - hard to say,
-    but Discord seem to be finding rdircd usage a factor in "suspicious activity".
-
-    No one mentioned getting this more than once so far, so might be more like a
-    once-per-account bot-check for accounts used via rdircd.
+    but Discord might be finding rdircd usage a factor in "suspicious activity".
 
 -   Don't think Discord's "Terms of Service" document explicitly covers third-party
     client usage (as of 2020), but "Discord Community Guidelines" kinda does,
