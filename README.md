@@ -1932,6 +1932,9 @@ Few other datapoints and anecdotes on the subject:
     or using it for too long with e.g. rotating IP addresses - hard to say,
     but Discord might be finding rdircd usage a factor in "suspicious activity".
 
+-   Anything related to private messaging might be more likely to flag account
+    as "suspicious activity" - there's definitely been reports to that effect.
+
 -   Don't think Discord's "Terms of Service" document explicitly covers third-party
     client usage (as of 2020), but "Discord Community Guidelines" kinda does,
     if you consider this client to be "self-bot" or "user-bot" at least.
