@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.6' # git-version: py-str
+	version = '26.03.7' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -6240,8 +6240,9 @@ def main(args=None, conf=None):
 				p_pem.name + f'.new.{k}' )) for k in ['key', 'crt'])
 			try:
 				log.debug('Generating new TLS cert/key file: {}', p_pem)
-				sp.run([ 'openssl', 'req', '-new', '-x509', '-nodes', '-keyout',
-					p_key, '-out', p_crt, '-subj', conf.irc_tls_pem_gen_subj ], check=True)
+				sp.run([ 'openssl', 'req', '-new', '-x509', '-nodes',
+					'-days', str(365*100), '-keyout', p_key, '-out', p_crt,
+					'-subj', conf.irc_tls_pem_gen_subj ], check=True)
 				p_pem.touch(0o600)
 				try: p_pem.write_text('\n'.join([p_key.read_text(), p_crt.read_text()]))
 				except: p_pem.unlink(); raise
