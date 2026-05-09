@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.03.7' # git-version: py-str
+	version = '26.05.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2677,13 +2677,7 @@ class DiscordSession:
 	async def __aenter__(self):
 		if not (self.conf.auth_email and self.conf.auth_password or self.conf.auth_token):
 			raise DiscordSessionError('Missing discord account authentication credentials')
-		self.ctx, self.tasks = cl.AsyncExitStack(), StacklessContext(self.log)
-		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
-			connect=self.conf.discord_http_timeout_conn,
-			sock_connect=self.conf.discord_http_timeout_conn_sock ))
-		if self.conf.debug_proto_aiohttp:
-			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
-		self.http = await self.ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
+		self.tasks = StacklessContext(self.log)
 		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
 		self.ws_state = adict(
 			auth=asyncio.Event(), auth_retry=asyncio.Event(),
@@ -2702,7 +2696,6 @@ class DiscordSession:
 			self.ws_enabled.cancel()
 			self.ws_enabled = None
 		if self.ws_ctx: await self.ws_ctx.aclose()
-		if self.ctx: await self.ctx.aclose()
 		if self.tasks: await self.tasks.close()
 
 	async def run(self):
@@ -2800,6 +2793,7 @@ class DiscordSession:
 
 	async def req( self, url, m='get',
 			route=None, auth=True, raw=False, **kws ):
+		if not self.ws_http: raise DiscordSessionError('Not connected to discord')
 		if not re.search(r'^https?:', url): url = up.urljoin(self.api_url, url.lstrip('/'))
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
@@ -2808,7 +2802,7 @@ class DiscordSession:
 			if auth:
 				token = await self.req_auth_token()
 				kws.setdefault('headers', dict()).update(Authorization=token)
-			req_func = ft.partial(self.http.request, m, url, **kws)
+			req_func = ft.partial(self.ws_http.request, m, url, **kws)
 			self.log_http.debug(' >> {} {}', m, url, extra=(' >>', f'{m} {url}'))
 			res = await self.rate_limit_wrapper(route, req_func)
 			if not auth: break
@@ -2885,8 +2879,14 @@ class DiscordSession:
 			self.log.warning('BUG: ws_connect issued before old websocket is closed')
 			await self.ws_state.usable.wait()
 		self.state('connecting.init')
-		self.ws_ctx = ctx = cl.AsyncExitStack()
+		self.ws_ctx = ctx = cl.AsyncExitStack() # closed/unset on disconnect or session aexit
 		self.ws, self.ws_tasks = None, StacklessContext(self.log)
+		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
+			connect=self.conf.discord_http_timeout_conn,
+			sock_connect=self.conf.discord_http_timeout_conn_sock ))
+		if self.conf.debug_proto_aiohttp:
+			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
+		self.ws_http = await ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
 		self.ws_handlers, self.ws_nonces = dict(), dict()
 		ctx.push_async_callback(self.ws_close)
 		self.ws_state.closed.clear()
@@ -2911,7 +2911,7 @@ class DiscordSession:
 			self.state('connecting.ws')
 			try: # ws_connect(timeout=...) is NOT a connection timeout!
 				async with aio_timeout(self.conf.discord_ws_conn_timeout):
-					self.ws = await ctx.enter_async_context(self.http.ws_connect(
+					self.ws = await ctx.enter_async_context(self.ws_http.ws_connect(
 						ws_url, headers={'User-Agent': self.conf.discord_api_user_agent},
 						heartbeat=self.conf.discord_ws_heartbeat, max_msg_size=20 * 2**20 ))
 			except (aiohttp.ClientError, asyncio.TimeoutError) as err:
@@ -3053,7 +3053,8 @@ class DiscordSession:
 				for fut in self.ws_nonces.values(): fut.cancel()
 			if self.ws_tasks: await self.ws_tasks.close()
 			if self.ws: await self.ws.close()
-			self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
+			if ws_ctx := self.ws_ctx: self.ws_ctx = None; await ws_ctx.aclose()
+			self.ws = self.ws_tasks = self.ws_http =self.ws_handlers = self.ws_nonces = None
 			self.st_da.ts_disconnect = time.monotonic()
 			self.state('disconnected')
 			self.ws_state.closed.set()
