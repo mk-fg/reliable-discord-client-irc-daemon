@@ -1912,8 +1912,8 @@ if they are aware of it.
 
 Few other datapoints and anecdotes on the subject:
 
--   There've been multiple reports in 2025 of Discord forcing a password/token
-    reset on account, citing "detected suspicious activity":
+-   There've been multiple reports since 2025 about Discord forcing
+    password/token reset on account, citing "detected suspicious activity":
 
     > You’re receiving this message because we detected suspicious activity on
     > your account and believe your account may have been compromised.
@@ -1921,19 +1921,25 @@ Few other datapoints and anecdotes on the subject:
     > another website and that website was hacked, or you accidentally gave
     > your access token to someone else.
 
-    In which case Discord asks for a password reset afterwards, and can apply
-    temporary restrictions on the account afterwards (which seem to get lifted
+    In which case Discord asks for a password reset, and can apply temporary
+    restrictions on the account afterwards (which seem to get lifted
     with notification after a few hours), like showing up your messages as
     `N message(s) hidden from likely spammer -- [Show]` in channels/DMs,
     or disallow initiating new DMs.
 
-    It's been reported to happen after triggering an auto-mod regexp on a server,
-    or in other cases might be related to using manually-set static auth token
-    or using it for too long with e.g. rotating IP addresses - hard to say,
-    but Discord might be finding rdircd usage a factor in "suspicious activity".
+    Unclear when/why this triggers, but was reported (in separate cases) after:
 
--   Anything related to private messaging might be more likely to flag account
-    as "suspicious activity" - there's definitely been reports to that effect.
+    - Triggering an auto-mod regexp on a server.
+    - Discord servers being down for a while.
+    - Trying incorrect password in config multiple times.
+    - Using invalidated auth token multiple times.
+    - Replying to private messages from other people.
+
+    Resetting password as suggested in such email sometimes fixes the issue.
+    But not always, as sometimes Discord just resets password again when rdircd
+    connects. In which case, maybe setting up 2FA/MFA for account (as also
+    mentioned in the email) + [using auth token from browser], or leaving rdircd
+    disabled for a couple days might help, I don't know.
 
 -   Don't think Discord's "Terms of Service" document explicitly covers third-party
     client usage (as of 2020), but "Discord Community Guidelines" kinda does,
@@ -1990,6 +1996,7 @@ since third-party and even support staff's responses can be wrong/misleading or 
 and such treatment can likely change anytime and in any direction,
 without explicit indication.
 
+[using auth token from browser]: #hdr-captcha-solving_is_required_to_login_for.ls9P
 [BetterDiscord]: https://github.com/BetterDiscord/BetterDiscord
 [discord tos violation warning]: discord-tos-violation-warning.jpg
 [issue-18]: https://github.com/mk-fg/reliable-discord-client-irc-daemon/issues/18
