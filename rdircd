@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.05.0' # git-version: py-str
+	version = '26.05.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2125,7 +2125,7 @@ class Discord:
 		if err_tpl:
 			async def conn_req_wrapper(conn_req):
 				try: await conn_req
-				except (aiohttp.ClientError, DiscordHTTPError) as err:
+				except (aiohttp.ClientError, DiscordHTTPError, DiscordSessionError) as err:
 					self.log.error(err_tpl.format(err=err_fmt(err)))
 			conn_req = conn_req_wrapper(conn_req)
 		self.session.tasks.add(conn_req)
@@ -2475,6 +2475,11 @@ class Discord:
 				if uid_key[0] not in '\0\t' or uid_key not in users: continue
 				if users[uid_key][1] < ts: users.pop(users.pop(uid_key)[0], None)
 
+	def cmd_user_query(self, gid, nick, limit=None):
+		'''Query discord for current user info by nick or a part of it.
+			Can use a list of gids. Always returns by-gid dict.'''
+		return self.session.ws_req_users_query(gid, nick, limit)
+
 	def cmd_chan_rename_func(self, cc, name_old):
 		name_old = self.bridge.irc_name(name_old)
 		send_func = self.bridge.cmd_msg_rename_func(cc)
@@ -2677,8 +2682,7 @@ class DiscordSession:
 	async def __aenter__(self):
 		if not (self.conf.auth_email and self.conf.auth_password or self.conf.auth_token):
 			raise DiscordSessionError('Missing discord account authentication credentials')
-		self.tasks = StacklessContext(self.log)
-		self.ws_ctx = self.ws = self.ws_tasks = self.ws_handlers = self.ws_nonces = None
+		self.ws, self.tasks = None, StacklessContext(self.log)
 		self.ws_state = adict(
 			auth=asyncio.Event(), auth_retry=asyncio.Event(),
 			closed=asyncio.Event(), usable=asyncio.Event() )
@@ -2695,7 +2699,7 @@ class DiscordSession:
 		if self.ws_enabled:
 			self.ws_enabled.cancel()
 			self.ws_enabled = None
-		if self.ws_ctx: await self.ws_ctx.aclose()
+		if self.ws: self.ws = await self.ws.aclose()
 		if self.tasks: await self.tasks.close()
 
 	async def run(self):
@@ -2743,7 +2747,8 @@ class DiscordSession:
 				delay = req_limit_ts - ts
 				self.log.debug('Rate-limiting request on route {!r}: delay={:,.1f}s', route, delay)
 				await asyncio.sleep(delay + self.conf.discord_http_delay_padding)
-			res = await req_func()
+			try: res = await req_func()
+			except RuntimeError as err: raise DiscordSessionError(str(err)) # http session dead
 			req_limit_headers = list( res.headers.get(k)
 				for k in ['X-RateLimit-Remaining', 'X-RateLimit-Reset'] )
 			if any(req_limit_headers):
@@ -2793,7 +2798,7 @@ class DiscordSession:
 
 	async def req( self, url, m='get',
 			route=None, auth=True, raw=False, **kws ):
-		if not self.ws_http: raise DiscordSessionError('Not connected to discord')
+		if not self.ws: raise DiscordSessionError('Not connected to discord')
 		if not re.search(r'^https?:', url): url = up.urljoin(self.api_url, url.lstrip('/'))
 		if route is None: route = url
 		kws.setdefault('headers', dict()).setdefault(
@@ -2802,7 +2807,7 @@ class DiscordSession:
 			if auth:
 				token = await self.req_auth_token()
 				kws.setdefault('headers', dict()).update(Authorization=token)
-			req_func = ft.partial(self.ws_http.request, m, url, **kws)
+			req_func = ft.partial(self.ws.http.request, m, url, **kws)
 			self.log_http.debug(' >> {} {}', m, url, extra=(' >>', f'{m} {url}'))
 			res = await self.rate_limit_wrapper(route, req_func)
 			if not auth: break
@@ -2874,21 +2879,23 @@ class DiscordSession:
 		self.log.debug('ws_connect_loop finished')
 
 	async def ws_connect(self):
-		if self.ws_ctx: return
+		'Creates connected discord websocket'
+		if self.ws: raise DiscordError('BUG - earlier session close/cleanup failed')
 		if not self.ws_state.usable.is_set():
 			self.log.warning('BUG: ws_connect issued before old websocket is closed')
 			await self.ws_state.usable.wait()
 		self.state('connecting.init')
-		self.ws_ctx = ctx = cl.AsyncExitStack() # closed/unset on disconnect or session aexit
-		self.ws, self.ws_tasks = None, StacklessContext(self.log)
+		ws = self.ws = cl.AsyncExitStack() # closed/unset on disconnect or session aexit
+		ws.push_async_callback(self.ws_close) # if has to be called implicitly
+		ws.tasks = await ws.enter_async_context(StacklessContext(self.log))
 		aiohttp_opts = adict(timeout=aiohttp.ClientTimeout(
 			connect=self.conf.discord_http_timeout_conn,
 			sock_connect=self.conf.discord_http_timeout_conn_sock ))
 		if self.conf.debug_proto_aiohttp:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
-		self.ws_http = await ctx.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
-		self.ws_handlers, self.ws_nonces = dict(), dict()
-		ctx.push_async_callback(self.ws_close)
+		ws.http = await ws.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
+		ws.handlers, ws.nonces = dict(), dict()
+		ws.callback(lambda: list(fut.cancel() for fut in ws.nonces.values()))
 		self.ws_state.closed.clear()
 		for cache in True, False:
 			if cache:
@@ -2911,7 +2918,7 @@ class DiscordSession:
 			self.state('connecting.ws')
 			try: # ws_connect(timeout=...) is NOT a connection timeout!
 				async with aio_timeout(self.conf.discord_ws_conn_timeout):
-					self.ws = await ctx.enter_async_context(self.ws_http.ws_connect(
+					ws.conn = await ws.enter_async_context(ws.http.ws_connect(
 						ws_url, headers={'User-Agent': self.conf.discord_api_user_agent},
 						heartbeat=self.conf.discord_ws_heartbeat, max_msg_size=20 * 2**20 ))
 			except (aiohttp.ClientError, asyncio.TimeoutError) as err:
@@ -2920,13 +2927,13 @@ class DiscordSession:
 				self.state('connecting.ws.error')
 				self.log.info('Gateway connection error: {}', err_str)
 				if cache: continue # try fetching new gw url
-			else: break
-		else: self.ws = None
+			else: ws.push_async_callback(ws.conn.close); break
+		else: ws.conn = None
 		if self.ws_state.closed.is_set():
-			self.ws_state.closed.clear() # to have it do cleanup again
+			self.ws_state.closed.clear() # +1 cleanup if close caused conn-error
 			await self.ws_close()
 			raise DiscordSessionError('Close-command issued while connecting')
-		if not self.ws:
+		if not ws.conn:
 			self.state('connecting.ws.fail')
 			await self.ws_close()
 			raise DiscordSessionError('Failed to connect to discord')
@@ -2935,18 +2942,18 @@ class DiscordSession:
 		self.ws_add_handler(self.c.xi_reconnect, self.op_reconnect)
 		self.ws_add_handler(self.c.xi_hello, self.op_hello)
 		self.ws_add_handler(self.c.xi_invalid_session, self.op_invalid_session)
-		self.ws_tasks.add(self.ws_poller())
-		self.ws_tasks.add(self.ws_auth_timeout())
+		self.ws.tasks.add(self.ws_poller())
+		self.ws.tasks.add(self.ws_auth_timeout())
 
 	_ws_handler = cs.namedtuple('ws_handler', 'op t func')
 	def ws_add_handler(self, op=None, func=None, t=None, replace=False, remove=False):
 		if replace or remove:
-			for k, wsh in list(self.ws_handlers.items()):
-				if wsh.op == op and wsh.t == t: del self.ws_handlers[k]
+			for k, wsh in list(self.ws.handlers.items()):
+				if wsh.op == op and wsh.t == t: del self.ws.handlers[k]
 			if remove: return
 		if not func: raise ValueError(func)
 		wsh = self._ws_handler(op, t, func)
-		self.ws_handlers[wsh] = wsh
+		self.ws.handlers[wsh] = wsh
 
 	async def ws_poller(self):
 		try: await self.ws_poller_loop()
@@ -2958,7 +2965,7 @@ class DiscordSession:
 		# {op=0**, s=**42, d={...}, t=**'GATEWAY_EVENT_NAME'}
 		# {op=...[, d={...}]}
 		inflator, buff, buff_end = zlib.decompressobj(), bytearray(), b'\x00\x00\xff\xff'
-		async for msg in self.ws:
+		async for msg in self.ws.conn:
 			msg_type, msg_str = msg.type, getattr(msg, 'data', '')
 			if msg_type == aiohttp.WSMsgType.binary:
 				buff.extend(msg_str or b'')
@@ -2979,7 +2986,7 @@ class DiscordSession:
 					if self.conf.ws_dump_file and (chk := self.conf.ws_dump_filter):
 						if chk.get('op') in [msg_op, None] and chk.get('t') in [msg_ev, None]:
 							with path_filter(self.conf.ws_dump_file).open('w') as dst: dst.write(msg_str)
-				for k, h in list(self.ws_handlers.items()):
+				for k, h in list(self.ws.handlers.items()):
 					if h.op is not None and msg_data.get('op') != h.op: continue
 					if h.t is not None and (msg_data.get('t') or '').lower() != h.t: continue
 					handled = True
@@ -2989,7 +2996,7 @@ class DiscordSession:
 							' [{}]: {}', err.__class__.__name__, self._repr(msg_str) )
 						raise
 					if status is self.c.oneshot: hs_discard.add(k)
-				for k in hs_discard: self.ws_handlers.pop(k, None)
+				for k in hs_discard: self.ws.handlers.pop(k, None)
 				if not handled:
 					err, msg_repr = 'unhandled-text', self._repr(msg_str)
 					self.log_ws.debug( 'xxx {} {}', err,
@@ -3005,12 +3012,12 @@ class DiscordSession:
 			else: self.log.warning('Unhandled ws msg type {}, ignoring: {}', msg.type, msg)
 
 	def ws_send_check(self):
-		'Returns True if sending data on websocket should work currently'
+		'Returns whether sending data on websocket should currently work'
 		return self.ws and not self.ws_state.closed.is_set() and self.ws_state.usable.is_set()
 
 	async def ws_send_task(self, msg_data):
 		if not self.ws_send_check(): return
-		try: await self.ws.send_str(msg_data)
+		try: await self.ws.conn.send_str(msg_data)
 		except ConnectionError as err: # not handled by aiohttp in some cases
 			if not self.ws_send_check(): return # already failed, maybe in other ws_send
 			self.log.info('Conn error when trying to send last protocol data: {}', err_fmt(err))
@@ -3025,7 +3032,7 @@ class DiscordSession:
 		self.tasks.add(self.ws_send_task(msg_data))
 
 	def ws_close_later(self):
-		'Wrapper to schedule ws_close() from one of ws_tasks or synchronously.'
+		'Wrapper to schedule ws_close() from one of ws.tasks or synchronously.'
 		# Idea here is just to avoid ws_close_task() cancelling itself
 		self.tasks.add(self.ws_close())
 
@@ -3049,12 +3056,7 @@ class DiscordSession:
 				return self.log.warning('BUG: ws_close with websocket already closed')
 			self.log_ws.debug('--- -close-', extra=('---', 'close'))
 			self.state('closing')
-			if self.ws_nonces:
-				for fut in self.ws_nonces.values(): fut.cancel()
-			if self.ws_tasks: await self.ws_tasks.close()
-			if self.ws: await self.ws.close()
-			if ws_ctx := self.ws_ctx: self.ws_ctx = None; await ws_ctx.aclose()
-			self.ws = self.ws_tasks = self.ws_http =self.ws_handlers = self.ws_nonces = None
+			if self.ws: self.ws.conn = self.ws = await self.ws.aclose()
 			self.st_da.ts_disconnect = time.monotonic()
 			self.state('disconnected')
 			self.ws_state.closed.set()
@@ -3101,9 +3103,10 @@ class DiscordSession:
 
 	async def ws_req_users_query(self, gid, query, limit=None):
 		'Query/return member objects indexed by gid.uid for specified guild(s)'
+		if not self.ws: raise DiscordSessionError('Not connected to discord')
 		if not limit: limit = self.conf.discord_user_query_limit
 		nonce = self.discord.flake_build(time.time())
-		fut = self.ws_nonces[nonce] = asyncio.Future()
+		fut = self.ws.nonces[nonce] = asyncio.Future()
 		if not isinstance(gid, list): gid = [gid]
 		fut.results, fut.queries = dict(), dict.fromkeys(gid)
 		self.ws_send( self.c.ox_guild_members,
@@ -3113,7 +3116,7 @@ class DiscordSession:
 			self.log.warning( 'User-query results timeout ({:.1f}s):'
 				' query={!r} gids={} limit={} missing={}', to, query, gid, limit, fut.queries )
 			return fut.results
-		finally: del self.ws_nonces[nonce]
+		finally: del self.ws.nonces[nonce]
 
 	def ws_req_guild_sync(self):
 		'Fetches a list of threads and enables message events in large guilds (>10K users)'
@@ -3207,7 +3210,7 @@ class DiscordSession:
 		td_sess, td_conn = ((repr_duration(self.st_da.get(
 			'ts_disconnect' ) or ts, ts0, ext='') if ts0 else '-') for ts0 in ts_start)
 		level = 'warning' if self.conf.discord_ws_reconnect_warn_always else 'debug'
-		ws_addr = ws_ep[0] if (ws_ep := self.ws.get_extra_info('peername')) else '?'
+		ws_addr = ws_ep[0] if (ws_ep := self.ws.conn.get_extra_info('peername')) else '?'
 		getattr(self.log, level)( 'Discord session (re-)connected{}: id={} gw-addr={}{}',
 			' [resumed]' if resume else ' [new]', self.st_da.session_id[:6], ws_addr,
 			'' if not (td_sess + td_conn).strip('-') else ' {}sess-lifetime=[{}]{}'.format(
@@ -3217,7 +3220,7 @@ class DiscordSession:
 		self.state('ready')
 		self.ws_add_handler(self.c.xi_dispatch, func=self.op_ev)
 		self.ws_add_handler(self.c.oi_heartbeat, func=self.op_heartbeat_req)
-		self.ws_tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
+		self.ws.tasks.add(self.op_heartbeat_task(self.st_da.hb_interval))
 		if not resume: self.ws_req_guild_sync()
 		return self.c.oneshot
 
@@ -3309,7 +3312,7 @@ class DiscordSession:
 
 	def op_ev_member_chunk(self, d):
 		for m in (ms := d.get('members', list())): self.op_ev_member(m, d.guild_id)
-		if not (fut := self.ws_nonces.get(d.get('nonce'))):
+		if not (fut := self.ws.nonces.get(d.get('nonce'))):
 			return self.log.warning( 'Unexpected member-chunk'
 				' response: {}', str_cut(d, self.conf.debug_msg_cut) )
 		fut.results.setdefault(d.guild_id, dict()).update((m.user.id, m) for m in ms)
@@ -4456,7 +4459,7 @@ class RDIRCD:
 	async def _irc_cmd_query_username(self, nick, gid):
 		# Getting user-id from user_mentions cache isn't
 		#  useful here - need to query nick on all guilds anyway
-		info = await self.discord.session.ws_req_users_query(gid, nick, 5)
+		info = await self.discord.cmd_user_query(gid, nick)
 		guilds = cs.defaultdict(list)
 		for gid in list(info):
 			if not (users := info.pop(gid)): continue
