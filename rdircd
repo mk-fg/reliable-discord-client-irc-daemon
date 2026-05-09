@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.05.1' # git-version: py-str
+	version = '26.05.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2852,7 +2852,9 @@ class DiscordSession:
 				self.log.warning( 'Detected persistent discord server connection failures'
 					' at max delay between attempts - there is likely some persistent problem,'
 					' see info/debug/protocol logs for details' )
-			try: await self.ws_connect()
+			try:
+				try: await self.ws_connect()
+				except asyncio.CancelledError: raise DiscordSessionError('Connection aborted')
 			except DiscordSessionError as err:
 				self.log.info('Connection failure, retrying in {:.1f}s: {}', interval, err)
 				await asyncio.sleep(interval)
@@ -2896,6 +2898,8 @@ class DiscordSession:
 		ws.http = await ws.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
 		ws.handlers, ws.nonces = dict(), dict()
 		ws.callback(lambda: list(fut.cancel() for fut in ws.nonces.values()))
+		ws.conn_task = asyncio.current_task()
+		ws.callback(lambda: (t := ws.conn_task) and not t.done() and t.cancel())
 		self.ws_state.closed.clear()
 		for cache in True, False:
 			if cache:
@@ -2926,13 +2930,9 @@ class DiscordSession:
 					err_str := err_fmt(err), extra=('---', f'conn-fail {err_str}') )
 				self.state('connecting.ws.error')
 				self.log.info('Gateway connection error: {}', err_str)
-				if cache: continue # try fetching new gw url
 			else: ws.push_async_callback(ws.conn.close); break
 		else: ws.conn = None
-		if self.ws_state.closed.is_set():
-			self.ws_state.closed.clear() # +1 cleanup if close caused conn-error
-			await self.ws_close()
-			raise DiscordSessionError('Close-command issued while connecting')
+		ws.conn_task = None
 		if not ws.conn:
 			self.state('connecting.ws.fail')
 			await self.ws_close()
@@ -3056,11 +3056,10 @@ class DiscordSession:
 				return self.log.warning('BUG: ws_close with websocket already closed')
 			self.log_ws.debug('--- -close-', extra=('---', 'close'))
 			self.state('closing')
-			if self.ws: self.ws.conn = self.ws = await self.ws.aclose()
+			if self.ws: await self.ws.aclose()
 			self.st_da.ts_disconnect = time.monotonic()
 			self.state('disconnected')
-			self.ws_state.closed.set()
-		finally: self.ws_state.usable.set()
+		finally: self.ws = None; self.ws_state.closed.set(); self.ws_state.usable.set()
 
 	async def ws_auth_timeout(self):
 		await asyncio.sleep(timeout := self.conf.discord_ws_auth_timeout)
