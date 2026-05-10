@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.05.2' # git-version: py-str
+	version = '26.05.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -2854,7 +2854,9 @@ class DiscordSession:
 					' see info/debug/protocol logs for details' )
 			try:
 				try: await self.ws_connect()
-				except asyncio.CancelledError: raise DiscordSessionError('Connection aborted')
+				except asyncio.CancelledError as err:
+					if not (err := str(err)): raise # only handle "conn aborted" cancel here
+					raise DiscordSessionError(str(err))
 			except DiscordSessionError as err:
 				self.log.info('Connection failure, retrying in {:.1f}s: {}', interval, err)
 				await asyncio.sleep(interval)
@@ -2899,7 +2901,7 @@ class DiscordSession:
 		ws.handlers, ws.nonces = dict(), dict()
 		ws.callback(lambda: list(fut.cancel() for fut in ws.nonces.values()))
 		ws.conn_task = asyncio.current_task()
-		ws.callback(lambda: (t := ws.conn_task) and not t.done() and t.cancel())
+		ws.callback(lambda: (t := ws.conn_task) and t.cancel('Connection aborted'))
 		self.ws_state.closed.clear()
 		for cache in True, False:
 			if cache:

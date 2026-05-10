@@ -275,7 +275,7 @@ You have been warned! :)
 <a name=hdr-requirements></a>
 ### Requirements
 
-* [Python 3.8+](https://python.org/)
+* [Python 3.9+](https://python.org/)
 * [aiohttp](https://aiohttp.readthedocs.io/en/stable/)
 * (Optional) [python-systemd] - only if using tweaks mentioned in [systemd integration] below.
 
@@ -283,9 +283,8 @@ On OpenBSD platform, when using scrypt-encoded IRC `password-hash=`, might
 also need to install [scrypt module] separately (via e.g. `pkg_add py3-scrypt`),
 as python port there doesn't seem to have [hashlib.scrypt] in its stdlib.
 
-aiohttp and its dependencies might also require installing
-[typing_extensions module] when using non-latest major python versions
-(e.g. 3.10.x or earlier).
+aiohttp and its dependencies might also require installing [typing_extensions module]
+when using older major python versions (e.g. 3.10.x or earlier).
 Seem to also be an issue with OpenBSD's aiohttp or aiosignal packages
 (run `pkg_add py3-typing_extensions` to fix).
 
