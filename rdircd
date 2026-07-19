@@ -629,7 +629,7 @@ class LogProtoDebugFilter(logging.Filter):
 	debug_re = re.compile(rb'^:\S+ (PRIVMSG|NOTICE) #rdircd\.debug :')
 	def filter(self, record):
 		try: st, msg = record.extra
-		except: return True
+		except Exception: return True
 		return not ( st == ' >>'
 			and isinstance(msg, bytes)
 			and self.debug_re.search(msg) )
@@ -2049,7 +2049,7 @@ class DiscordHTTPError(DiscordError):
 		self.status, self._body = status, err_body; super().__init__(msg)
 	def get_key(self, k):
 		try: return json.loads(self._body)[k]
-		except: pass
+		except Exception: pass
 
 
 
