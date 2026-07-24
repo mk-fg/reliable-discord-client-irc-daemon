@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.07.1' # git-version: py-str
+	version = '26.07.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -150,7 +150,6 @@ class RDIRCDConfigBase:
 	irc_topic_voice_guild = 'rdircd: [ {guild_name} ] read-only voice-chat events for discord'
 	irc_topic_channel = '{guild_name}: {chan_tags}{chan_topic}'
 	irc_topic_hide_tags = '' # space-separated channel tag names to hide in IRC topics
-	irc_topic_update_timeout = 30.0 # how long to wait for thread-info replies from discord
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -222,6 +221,7 @@ class RDIRCDConfigBase:
 	discord_user_query_timeout = 60.0
 	discord_user_query_limit = 5 # max results to return for mentions and /who queries
 	discord_media_info_timeout = '30m' # ignore no-author attachment updates for old msgs
+	discord_chan_info_timeout = 30.0 # how long to wait for thread-info replies from discord
 	discord_msg_history_fetch_limit = 300 # limit on fetching channel history noise
 	discord_msg_misc_events = False # forward misc no-content event-messages, about nitros and such
 
@@ -4274,7 +4274,8 @@ class RDIRCD:
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
 		self.discord, self.conn_id = None, 1
-		self.tasks, self.tasks_merge = StacklessContext(self.log), TimedCacheDict(60)
+		self.tasks, self.tasks_dedup = ( StacklessContext(self.log),
+			dict(chan_info=TimedCacheDict(self.conf.discord_chan_info_timeout * 2)) )
 		self.st_br = adict( chan_map=None, line_dedup=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover/voice channels
@@ -4679,22 +4680,22 @@ class RDIRCD:
 
 	def cmd_discord_online(self, online):
 		'Called when discord state flips between connected/disconnected'
-		if online: self.cmd_delay( 'chan_map',
-			self.cmd_chan_map_sync, key=self.conn_id )
+		if online: self.cmd_delay('chan_map', self.cmd_chan_map_sync)
 		else: self.last_ts_discord = time.monotonic(); self.conn_id += 1
 
 	def cmd_delay(self, delay, func=None, key=None):
 		'Runs async task after an optional delay, waiting/monitoring it for errors.'
 		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
-			if key: key = delay, key
+			if (dedup := self.tasks_dedup.get(delay)) is not None:
+				if (task := dedup.get(key := key or self.conn_id)) and not task.done(): return
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			elif delay == 'chan_map': delay = 1.0
 			else: raise ValueError(delay)
-		if key and (task := self.tasks_merge.get(key)) and not task.done(): return
+		else: dedup = None
 		task = ( self.tasks.add(asyncio.sleep(delay), func)
 			if delay else self.tasks.add(aio_await_wrap(func)) )
-		if key: self.tasks_merge[key] = task
+		if dedup is not None and key: dedup[key] = task
 		return task
 
 	def cmd_conn_map(self):
@@ -4748,8 +4749,7 @@ class RDIRCD:
 				raise RDIRCDError( 'Duplicate channel-name(s) produced'
 					f' by guild/channel naming (mis-)configuration: {cm_repeats}' )
 		cm.ø_online = self.discord.st_eris.online
-		if not cm0 and cm.ø_online: self.cmd_delay(
-			'chan_map', self.cmd_chan_map_sync, key=self.conn_id )
+		if not cm0 and cm.ø_online: self.cmd_delay('chan_map', self.cmd_chan_map_sync)
 		return cm
 
 	def cmd_chan_map_flush(self):
@@ -4757,7 +4757,7 @@ class RDIRCD:
 		# Sync is scheduled for topic updates or something eventful like that
 		if self.st_br.chan_map is None: return
 		self.st_br.chan_map = None
-		self.cmd_delay('chan_map', self.cmd_chan_map_sync, key=self.conn_id)
+		self.cmd_delay('chan_map', self.cmd_chan_map_sync)
 
 	async def cmd_chan_map_sync(self, cm=None):
 		'''Sends IRC topic updates, marks channels as working/removed,
@@ -4766,7 +4766,7 @@ class RDIRCD:
 		reconn_check = self.conn_id
 		if gss := list( gg.synced.wait()
 				for gg in self.discord.st_da.guilds.values() if gg.get('synced') ):
-			try: await asyncio.wait_for(asyncio.gather(*gss), self.conf.irc_topic_update_timeout)
+			try: await asyncio.wait_for(asyncio.gather(*gss), self.conf.discord_chan_info_timeout)
 			except asyncio.TimeoutError: pass # sync can be abandoned due to some state reset
 		if not self.discord.st_eris.online or reconn_check != self.conn_id: return
 		if not cm: cm = self.cmd_chan_map()
