@@ -1933,6 +1933,7 @@ Few other datapoints and anecdotes on the subject:
     - Trying incorrect password in config multiple times.
     - Using invalidated auth token multiple times.
     - Replying to private messages from other people.
+    - Just sending message on a server you joined recently.
 
     Resetting password as suggested in such email sometimes fixes the issue.
     But not always, as sometimes Discord just resets password again when rdircd
