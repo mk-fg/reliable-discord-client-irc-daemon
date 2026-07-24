@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.06.0' # git-version: py-str
+	version = '26.07.0' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -504,7 +504,7 @@ Commands:
     "re"/"subst" patterns work same as in python's re.sub() function.
     If last "-> subst" part is omitted, "<block!>" value will be used.
     Run without arguments to print current contents of that config section.
-    Usage example: repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ
+    Usage example: send-repl XYZ.kaomoji-smiley-tail = ( ):\)$ ->  ツ
 
   recv-repl [-s|--save] [-r|--rm] [ prefix.comment = re [ -> subst ] ]
     Add/remove regexp-replacements/blocks for incoming (received) IRC lines.
@@ -2126,7 +2126,7 @@ class Discord:
 			async def conn_req_wrapper(conn_req):
 				try: await conn_req
 				except (aiohttp.ClientError, DiscordHTTPError, DiscordSessionError) as err:
-					self.log.error(err_tpl.format(err=err_fmt(err)))
+					self.log.error(err_tpl, err=err_fmt(err))
 			conn_req = conn_req_wrapper(conn_req)
 		self.session.tasks.add(conn_req)
 
@@ -3097,7 +3097,7 @@ class DiscordSession:
 		if not msg: return
 		msg = ( 'Discord account is marked as requiring'
 			f' user action(s) - login/check via official client(s): {msg}' )
-		self.discord.cmd_guild_event(1, msg); self.log.warning(msg)
+		self.discord.cmd_guild_event(1, msg); self.log.warning('{}', msg)
 
 
 	### Gateway Websocket request wrappers (rare)
