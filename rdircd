@@ -28,7 +28,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.07.0' # git-version: py-str
+	version = '26.07.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -150,6 +150,7 @@ class RDIRCDConfigBase:
 	irc_topic_voice_guild = 'rdircd: [ {guild_name} ] read-only voice-chat events for discord'
 	irc_topic_channel = '{guild_name}: {chan_tags}{chan_topic}'
 	irc_topic_hide_tags = '' # space-separated channel tag names to hide in IRC topics
+	irc_topic_update_timeout = 30.0 # how long to wait for thread-info replies from discord
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
@@ -3132,7 +3133,7 @@ class DiscordSession:
 			# typing=true activities=true is required to get MESSAGE_CREATE in large guilds
 			self.ws_send(self.c.ox_guild_sub, dict( guild_id=gid,
 				threads=True, typing=True, activities=True, channels=dict([chan_req[0]]) ))
-			gg.synced = True
+			gg.synced = asyncio.Event() # set when op_ev_thread_list arrives
 
 	### Gateway Websocket event handlers
 
@@ -3309,7 +3310,10 @@ class DiscordSession:
 		self.log.warning('Unhandled event: {}', self._repr(m))
 
 	def op_ev_req_actions(self, d): self.ws_auth_req_action_check(d)
-	def op_ev_thread_list(self, d): self.op_ev_chans(d.guild_id, d.threads, sync=False)
+	def op_ev_thread_list(self, d):
+		if not (gg := self.st_da.guilds.get(gid := d.guild_id)): return
+		self.op_ev_chans(gid, d.threads, sync=False)
+		if gs := gg.get('synced'): gs.set()
 
 	def op_ev_member_chunk(self, d):
 		for m in (ms := d.get('members', list())): self.op_ev_member(m, d.guild_id)
@@ -4269,7 +4273,8 @@ class RDIRCD:
 		self.irc_auth_tbf = token_bucket(self.conf.irc_auth_tbf)
 		self.irc_msg_queue = asyncio.Queue()
 		self.irc_chans_sys = adict() # populated when building channel map
-		self.discord, self.tasks = None, StacklessContext(self.log)
+		self.discord, self.conn_id = None, 1
+		self.tasks, self.tasks_merge = StacklessContext(self.log), TimedCacheDict(60)
 		self.st_br = adict( chan_map=None, line_dedup=None, uid=dict(),
 			# Xid_chan - lookup caches for monitor/leftover/discord irc chan-names for that id
 			# None is used as an id for global monitor/leftover/voice channels
@@ -4674,18 +4679,23 @@ class RDIRCD:
 
 	def cmd_discord_online(self, online):
 		'Called when discord state flips between connected/disconnected'
-		if online: self.cmd_chan_map_sync()
-		else: self.last_ts_discord = time.monotonic()
+		if online: self.cmd_delay( 'chan_map',
+			self.cmd_chan_map_sync, key=self.conn_id )
+		else: self.last_ts_discord = time.monotonic(); self.conn_id += 1
 
-	def cmd_delay(self, delay, func=None):
+	def cmd_delay(self, delay, func=None, key=None):
 		'Runs async task after an optional delay, waiting/monitoring it for errors.'
 		if func is None: delay, func = 0, delay
 		if delay and not isinstance(delay, (int, float)):
+			if key: key = delay, key
 			if delay == 'irc_auth': delay = next(self.irc_auth_tbf)
 			elif delay == 'chan_map': delay = 1.0
 			else: raise ValueError(delay)
-		return ( self.tasks.add(asyncio.sleep(delay), func)
+		if key and (task := self.tasks_merge.get(key)) and not task.done(): return
+		task = ( self.tasks.add(asyncio.sleep(delay), func)
 			if delay else self.tasks.add(aio_await_wrap(func)) )
+		if key: self.tasks_merge[key] = task
+		return task
 
 	def cmd_conn_map(self):
 		return irc_name_dict( (conn.st_irc.nick, conn)
@@ -4738,7 +4748,8 @@ class RDIRCD:
 				raise RDIRCDError( 'Duplicate channel-name(s) produced'
 					f' by guild/channel naming (mis-)configuration: {cm_repeats}' )
 		cm.ø_online = self.discord.st_eris.online
-		if not cm0 and cm.ø_online: self.cmd_chan_map_sync(cm)
+		if not cm0 and cm.ø_online: self.cmd_delay(
+			'chan_map', self.cmd_chan_map_sync, key=self.conn_id )
 		return cm
 
 	def cmd_chan_map_flush(self):
@@ -4746,12 +4757,18 @@ class RDIRCD:
 		# Sync is scheduled for topic updates or something eventful like that
 		if self.st_br.chan_map is None: return
 		self.st_br.chan_map = None
-		self.cmd_delay('chan_map', self.cmd_chan_map_sync)
+		self.cmd_delay('chan_map', self.cmd_chan_map_sync, key=self.conn_id)
 
-	def cmd_chan_map_sync(self, cm=None):
+	async def cmd_chan_map_sync(self, cm=None):
 		'''Sends IRC topic updates, marks channels as working/removed,
 				enables discord msg delivery if it is configured to be selective.
 			Called at least once on reconnect, when discord goes online.'''
+		reconn_check = self.conn_id
+		if gss := list( gg.synced.wait()
+				for gg in self.discord.st_da.guilds.values() if gg.get('synced') ):
+			try: await asyncio.wait_for(asyncio.gather(*gss), self.conf.irc_topic_update_timeout)
+			except asyncio.TimeoutError: pass # sync can be abandoned due to some state reset
+		if not self.discord.st_eris.online or reconn_check != self.conn_id: return
 		if not cm: cm = self.cmd_chan_map()
 		for conn in self.irc_conns.values(): conn.cmd_chan_list_sync(cm)
 		self.cmd_chan_map_sync_tracking(cm=cm)
