@@ -26,7 +26,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.09.0' # git-version: py-str
+	version = '26.09.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -151,8 +151,9 @@ class RDIRCDConfigBase:
 
 	discord_auto_connect = True
 	discord_api_url = 'https://discord.com/api/v{api_ver}/'
-	# Auto-set to e.g. "rdircd/26.07.2 (reliable-discord-irc-client) aiohttp/3.13.5" by default
-	discord_api_user_agent = ''
+	discord_api_user_agent = ( 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+		' AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' )
+	discord_api_user_agent_ver = '126.0.0.0'
 	discord_ws_conn_timeout = 20.0
 	discord_ws_heartbeat = 15.0
 	discord_ws_auth_timeout = 60.0 # reconnect websocket if auth process lags too badly
@@ -2800,12 +2801,13 @@ class DiscordSession:
 		if not self.ws: raise DiscordSessionError('Not connected to discord')
 		if not re.search(r'^https?:', url): url = up.urljoin(self.api_url, url.lstrip('/'))
 		if route is None: route = url
-		kws.setdefault('headers', dict()).setdefault(
-			'User-Agent', self.conf.discord_api_user_agent )
+		(headers := kws.setdefault('headers', dict())) \
+			.setdefault('User-Agent', self.conf.discord_api_user_agent)
+		if hdr := self.ws.client_props_hdr: headers.setdefault('X-Super-Properties', hdr)
 		for att in 'normal', 'token_refresh':
 			if auth:
 				token = await self.req_auth_token()
-				kws.setdefault('headers', dict()).update(Authorization=token)
+				headers.update(Authorization=token)
 			req_func = ft.partial(self.ws.http.request, m, url, **kws)
 			self.log_http.debug(' >> {} {}', m, url, extra=(' >>', f'{m} {url}'))
 			res = await self.rate_limit_wrapper(route, req_func)
@@ -2897,7 +2899,7 @@ class DiscordSession:
 		if self.conf.debug_proto_aiohttp:
 			aiohttp_opts.trace_configs = [setup_aiohttp_trace_logging(self.log_http_reqres)]
 		ws.http = await ws.enter_async_context(aiohttp.ClientSession(**aiohttp_opts))
-		ws.handlers, ws.nonces = dict(), dict()
+		ws.handlers, ws.nonces, ws.client_props_hdr = dict(), dict(), None
 		ws.callback(lambda: list(fut.cancel() for fut in ws.nonces.values()))
 		ws.conn_task = asyncio.current_task()
 		ws.callback(lambda: (t := ws.conn_task) and t.cancel('Connection aborted'))
@@ -3156,10 +3158,19 @@ class DiscordSession:
 			self.state('hello.auth.identify')
 			self.ws_add_handler( self.c.xi_dispatch,
 				t='ready', func=self.op_ready, replace=True )
+			# https://docs.discord.food/reference#client-properties
+			client_props = dict( # same order as browser sends
+				os='Linux', browser='Chrome', device='', system_locale='en-US',
+				browser_user_agent=self.conf.discord_api_user_agent,
+				browser_version=self.conf.discord_api_user_agent_ver,
+				os_version='', referrer='', referring_domain='',
+				referrer_current='', referring_domain_current='',
+				release_channel='stable', client_build_number=96355, client_event_source=None )
+			self.ws.client_props_hdr = base64.b64encode(
+				json.dumps(client_props).encode() ).decode()
 			# Note: sending API intents seem to strip "contents" from other people's messages!
 			self.ws_send(self.c.ox_identify, dict(
-				properties={'os': 'Linux', 'browser': 'rdircd', 'device': ''},
-				token=token, compress=False ))
+				properties=client_props, token=token, compress=False ))
 		else:
 			self.state('hello.auth.resume')
 			self.ws_add_handler( self.c.xi_dispatch,
