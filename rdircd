@@ -26,7 +26,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.09.1' # git-version: py-str
+	version = '26.09.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -3166,8 +3166,8 @@ class DiscordSession:
 				os_version='', referrer='', referring_domain='',
 				referrer_current='', referring_domain_current='',
 				release_channel='stable', client_build_number=96355, client_event_source=None )
-			self.ws.client_props_hdr = base64.b64encode(
-				json.dumps(client_props).encode() ).decode()
+			self.ws.client_props_hdr = \
+				base64.b64encode(json.dumps(client_props).encode()).decode()
 			# Note: sending API intents seem to strip "contents" from other people's messages!
 			self.ws_send(self.c.ox_identify, dict(
 				properties=client_props, token=token, compress=False ))

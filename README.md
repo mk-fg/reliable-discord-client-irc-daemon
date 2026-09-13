@@ -1969,22 +1969,14 @@ Few other datapoints and anecdotes on the subject:
     maybe one should be more careful with private chats anyway, as that seem to be
     a major spam vector, so is more likely to be heavily-monitored, I think.
 
--   In the #rdircd IRC channel, a person mentioned that their discord account got
-    some anti-spam mechanism enabled on it, disallowing to log-in without
-    providing a phone number and SMS challenge (and services like Google Voice
-    don't work there), immediately after they've initiated private chat with
-    someone in [Ripcord] client.
+-   On 2022-11-07, in the #rdircd IRC channel, a person mentioned that their
+    discord account got some anti-spam mechanism enabled on it, disallowing to
+    log-in without providing a phone number and SMS challenge (and services like
+    Google Voice don't work there), immediately after they've initiated private
+    chat with someone in [Ripcord] client.
 
     "I contacted support at the time and they just responded that they can't
     undo the phone number requirement once it has been engaged"
-
-    It also seems like Ripcord currently might be trying to mimic official client
-    way more closely than rdircd script here does (where latter even sends
-    "client"/"User-Agent" fields as "rdircd" and appears that way under Devices in
-    User Settings webui), and such similarity might look like Terms of Service
-    violation to Discord (modifying official client), instead of Community
-    Guidelines violation (third-party client), but obviously it's just a guess
-    on my part as to whether it matters.
 
 -   Running rdircd on a VPS with different IP address than other clients
     [might trigger captcha to "authorize" IP address], which can be bypassed
