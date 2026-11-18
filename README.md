@@ -1921,10 +1921,11 @@ Few other datapoints and anecdotes on the subject:
     > your access token to someone else.
 
     In which case Discord asks for a password reset, and can apply temporary
-    restrictions on the account afterwards (which seem to get lifted
-    with notification after a few hours), like showing up your messages as
+    restrictions on the account afterwards (which seem to get lifted with
+    notification after a few hours), like showing up your messages as
     `N message(s) hidden from likely spammer -- [Show]` in channels/DMs,
-    or disallow initiating new DMs.
+    or disallow initiating new DMs -  check "account strikes" under
+    "User Settings > Account > Account Standing".
 
     Unclear when/why this triggers, but was reported (in separate cases) after:
 
