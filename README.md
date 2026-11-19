@@ -3,9 +3,10 @@
 Table of Contents
 
 - [Description](#hdr-description)
+- [Development and maintenance status]
 - [WARNING]
-- [Features](#hdr-features)
-- [Limitations](#hdr-limitations)
+- [Features]
+- [Limitations]
 - [Files in this git repository](#hdr-files_in_this_git_repository)
 - [Usage](#hdr-usage)
 
@@ -55,7 +56,11 @@ Table of Contents
 - [More info on third-party client blocking]
 - [API and Implementation Notes]
 
+[Development and maintenance status]:
+  #hdr-does_it_work_actively_developed_maintain.I46r
 [WARNING]: #hdr-warning
+[Features]: #hdr-features
+[Limitations]: #hdr-limitations
 [Installation]: #hdr-installation
 [systemd integration]: #hdr-systemd_integration
 [#rdircd.monitor and #rdircd.leftover channels]:
@@ -136,6 +141,22 @@ Repository URLs:
 [Discord]: https://discord.gg/
 [IRC]: https://en.wikipedia.org/wiki/Internet_Relay_Chat
 [#rdircd at libera.chat]: https://web.libera.chat/?channels=#rdircd
+
+
+<a name=hdr-does_it_work_actively_developed_maintain.I46r></a>
+## Does it work? Actively developed/maintained? Is it AI?
+
+Should work, within [Features] / [Limitations] sets below at least.
+
+It's a single-dev "scratch your own itch" / [dogfooding] project.\
+Still using it myself, so works for me at least. No "AI" of any kind afaik.
+
+There's a long [TODO.md] with nice-to-have features that occasionally
+get brought up by other users, but there's little progress on these over time tbh,
+mostly because of the usual time/priorities constraints.
+
+[dogfooding]: https://en.wikipedia.org/wiki/Dogfooding
+[TODO.md]: TODO.md
 
 
 <a name=hdr-warning></a>
@@ -2139,7 +2160,6 @@ Last updated: 2024-11-26
     so more monitoring and anomaly detection is likely done there, leading to
     potentially higher risk for users.
 
-[TODO.md]: TODO.md
 [Discord API docs]: https://discord.com/developers/docs/reference
 [discord/discord-api-spec repo]: https://github.com/discord/discord-api-spec/
 [Change Log page of the API docs]: https://discord.com/developers/docs/change-log
