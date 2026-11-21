@@ -26,7 +26,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.11.1' # git-version: py-str
+	version = '26.11.2' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4960,10 +4960,13 @@ class RDIRCD:
 		up_td = repr_duration(self.uptime_ts, time.monotonic())
 		up_dt = self.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
 		try:
-			acc, flags = acc + st.user.username, list()
-			if (d := st.user.get('global_name')) != acc: acc += f' [ {d} ]'
-			if d := st.user.get('mfa_enabled'): flags.append('mfa-login')
-			if d := st.user.get('age_verification_status', 0) > 1:
+			u, flags = st.user, list(); acc += u.username
+			if (d := u.get('global_name')) != acc: acc += f' [ {d} ]'
+			for k, flag in it_pairwise(( 'mfa_enabled mfa-login'
+					' linked_users family-center bot marked-as-bot'
+					' has_bounced_email email-verification-issues' ).split()):
+				if d := u.get(k): flags.append(flag)
+			if (d := u.get('age_verification_status', 0)) > 1:
 				if d := ['teen', 'adult', 'assumed-adult', *['']*10][d-1]: flags.append('age=' + d)
 			if flags: acc += ' :: ' + ' '.join(flags)
 		except KeyError: pass
