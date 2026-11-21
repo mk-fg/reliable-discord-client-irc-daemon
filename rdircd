@@ -26,7 +26,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.11.0' # git-version: py-str
+	version = '26.11.1' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -4952,19 +4952,28 @@ class RDIRCD:
 
 	def _cmd_chan_sys_status(self, conn_ts):
 		'Implementation for status display in control-channel'
-		st, ts = self.discord.st_da, time.monotonic()
+		st, ts, acc = self.discord.st_da, time.monotonic(), ''
 		sess_st, sess_id = st.get('state', 'none'), st.get('session_id', '')
 		irc_td, dsess_td, dconn_td = ( (v and repr_duration(ts, v, ext=''))
 			for v in [conn_ts, *(st.get(k, '') for k in ('ts_session', 'ts_connect'))] )
 		if sess_st != 'ready': conn_td = ''
 		up_td = repr_duration(self.uptime_ts, time.monotonic())
 		up_dt = self.uptime_dt.strftime('%Y-%m-%d %H:%M:%S %z')
+		try:
+			acc, flags = acc + st.user.username, list()
+			if (d := st.user.get('global_name')) != acc: acc += f' [ {d} ]'
+			if d := st.user.get('mfa_enabled'): flags.append('mfa-login')
+			if d := st.user.get('age_verification_status', 0) > 1:
+				if d := ['teen', 'adult', 'assumed-adult', *['']*10][d-1]: flags.append('age=' + d)
+			if flags: acc += ' :: ' + ' '.join(flags)
+		except KeyError: pass
 		return '\n'.join([ 'Status:',
 			f'  discord-state: {sess_st}',
 			f'  discord-session-id: {sess_id}',
 			f'  discord-session-time: {dsess_td}',
 			f'  discord-connection-time: {dconn_td}',
 			f'  discord-connection-gateway: {self.conf.discord_gateway}',
+			f'  discord-account: {acc}',
 			f'  irc-connection-time: {irc_td}',
 			f'  rdircd-version: {self.conf.version}',
 			f'  rdircd-uptime: {self.cmd_chan_sys_uptime()}',

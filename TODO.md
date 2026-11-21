@@ -102,8 +102,6 @@ Loose suggestions, ideas and to-fix bugs mentioned in #rdircd and such.
 
     Can indicate via channel topics or some other irc mechanism which would be easier to silence in clients.
 
-- Check user flags that discord sets on you, to notify about ones like "spammer".
-
 - Test/fix interop with alt discord implementations, like spacebar.chat.
 
 - Keep IRC state for all joined channels, to either (A) replay msgs on IRC reconnect,
