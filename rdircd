@@ -26,7 +26,7 @@ class RDIRCDConfigBase:
 	#  for example: 1/4:5 (interval=0.25s, rate=4/s, burst=5), 5 (burst=1), 0.5:10, 20:30,
 	#  and also special "0" value can be used as "no rate limit", or "inf" for "always block".
 
-	version = '26.11.2' # git-version: py-str
+	version = '26.11.3' # git-version: py-str
 
 	auth_email = '' # discord account email, used to login there
 	auth_password = ''
@@ -1880,6 +1880,7 @@ class IRCProtocol(asyncio.Protocol):
 	def recv_cmd_list(self, chan=None, cond=None):
 		self.send(321, 'Channel :Users  Name')
 		for c in self.bridge.cmd_chan_map().values():
+			if c.get('hidden'): continue
 			names = self.bridge.cmd_chan_names(c.name)
 			topic = str_cut(c.topic, self.conf.irc_len_topic, len_bytes=True)
 			self.send(322, self.chan_spec(c.name), len(names) or 1, f':{topic}')
@@ -3370,7 +3371,8 @@ class DiscordSession:
 		elif not cc or not cc.tid:
 			self.log.debug( 'Channel delete event'
 				' [id={} gid={}]: {}', m.id, gid, chan or '-no-channel-info-for-id-' )
-			if cc: self.discord.cmd_guild_event(gid, f'Discord channel deleted: {chan}')
+			if cc and not cc.get('hidden'):
+				self.discord.cmd_guild_event(gid, f'Discord channel deleted: {chan}')
 		else:
 			self.log.debug( 'Deleted thread-channel {}'
 				' [id={} gid={}]: {!r} [ {!r} ]', cc.tid, cc.id, gid, cc.name, cc.topic )
@@ -3417,6 +3419,7 @@ class DiscordSession:
 
 		rename_list = list() # sent after chan_map is updated
 		for cc, name_old in self.op_ev_chans_rename_list(chans_updated, gg.chans):
+			if cc.get('hidden'): continue # should report removed access via topic
 			rename_list.append(self.discord.cmd_chan_rename_func(cc, name_old))
 
 		for cc in chans_updated.values():
@@ -3450,6 +3453,7 @@ class DiscordSession:
 			if (c_hash := data_hash(c, c=8)) == cc.get('dedup_hash') and dedup: continue
 			cc.dedup_hash = c_hash # some bots spam no-op chan-updates, hence dedup
 			cc.names.update(raw=name or '', old=cc.get('name', '')) # for various renames
+			if name == '___hidden___': cc.hidden = True # inaccessible with current user roles
 
 			if c.type in [ct.group, ct.store]: continue
 			try: cc_type = ct(c.type)
@@ -4858,8 +4862,8 @@ class RDIRCD:
 				topic = _topic_fmt('channel', gi, cid=cc.id, tags=tags, topic=topic)
 				self.st_br.did_chan[cc.did] = name
 				yield (name, adict(
-					bt=self.c_bc_type.proxy, cc=cc, did=cc.did,
-					name=name, topic=topic, ts_created=gi.gg.ts_joined ))
+					bt=self.c_bc_type.proxy, cc=cc, did=cc.did, name=name,
+					topic=topic, ts_created=gi.gg.ts_joined, hidden=cc.get('hidden') ))
 
 	def cmd_chan_watch_replay(self, *args, **kws):
 		self.cmd_delay(self._cmd_chan_watch_replay(*args, **kws))
